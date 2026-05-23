@@ -145,10 +145,24 @@ def _social_surge(session, ticker: str, now: datetime) -> int:
     return len(set(ids))
 
 
+RESEARCH_WALLET_NAME = "research"
+RESEARCH_WALLET_MANDATE = (
+    "🔬 Research — user-directed: opens positions only when the user "
+    "explicitly executes a Research Desk recommendation. No autonomous "
+    "policy (`_POLICIES` skips this fund), so the autonomous cycle "
+    "leaves it alone; its track record measures user-driven research."
+)
+
+
 def seed_funds() -> None:
     """Create any configured fund that's absent. New funds start from the
     *current* call cursor so they trade forward, not backfill history — so
-    adding a wallet to _POLICIES auto-seeds it on the next cycle/boot."""
+    adding a wallet to _POLICIES auto-seeds it on the next cycle/boot.
+
+    The `research` wallet is seeded here too, but kept *out* of
+    `_POLICIES` so the autonomous `_run()` loop skips it (see the
+    `_POLICIES.get(fund.name)` guard in `_run`). It only trades when
+    `research_desk.execute()` opens a position on it."""
     now = datetime.now(timezone.utc)
     with session_scope() as s:
         latest = s.exec(
@@ -169,6 +183,22 @@ def seed_funds() -> None:
                 )
             )
             logger.info("fund seeded: {}", name)
+        # Research wallet — same starting cash, no policy entry.
+        if not s.exec(
+            select(Fund).where(Fund.name == RESEARCH_WALLET_NAME)
+        ).first():
+            s.add(
+                Fund(
+                    name=RESEARCH_WALLET_NAME,
+                    mandate=RESEARCH_WALLET_MANDATE,
+                    starting_cash=settings.FUND_STARTING_CASH,
+                    cash=settings.FUND_STARTING_CASH,
+                    last_call_id=cursor,
+                    created_at=now,
+                )
+            )
+            logger.info("fund seeded: {} (user-directed, no autonomous policy)",
+                        RESEARCH_WALLET_NAME)
 
 
 def _mark(session, ticker: str) -> float | None:

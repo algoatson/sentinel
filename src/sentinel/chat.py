@@ -656,6 +656,37 @@ async def _handle_command(msg: discord.Message, body: str) -> None:
         from . import health
 
         emb = _embed(None, health.health_text(), color=_COL_INFO)
+    elif cmd in ("research", "desk"):
+        # `!research <prompt>` — kicks off a Research Desk task. The user
+        # then opens the dashboard's Research tab to read the dossier and
+        # (optionally) execute. Discord-side stays read-only on this for
+        # the same reason browser-only audio works fine: the *confirm* UX
+        # belongs on the dashboard where a single tap settles it.
+        from . import research_desk
+
+        text = arg.strip()
+        if not text:
+            emb = _embed(
+                "🔬 Research desk",
+                ("Usage: `!research <prompt>` — kicks off a research task. "
+                 "Read the dossier and execute (or not) from the dashboard's "
+                 "Research tab. "
+                 f"Limits: ≤{research_desk._RATE_LIMIT_PER_DAY}/day · "
+                 f"conviction floor {research_desk._CONVICTION_FLOOR}/5."),
+                color=_COL_INFO,
+            )
+        else:
+            try:
+                task_id = await research_desk.run_research(text)
+                emb = _embed(
+                    "🔬 Research desk",
+                    (f"Task **#{task_id}** running. Open the dashboard's "
+                     "Research tab to see the dossier when it's ready "
+                     "(~10-30s) and (if applicable) execute."),
+                    color=_COL_OK,
+                )
+            except Exception as e:
+                emb = _ack(f"research failed: {e}", ok=False)
     elif cmd in ("world", "anchor", "grounding"):
         # Dumps the LLM grounding preamble — the date-stamped "trust the
         # data" rules + world anchor that's prepended to every reasoning

@@ -250,6 +250,38 @@ class NewsAnalysis(SQLModel, table=True):
     model: str = Field(default="", max_length=120)
 
 
+class ResearchTask(SQLModel, table=True):
+    """One Research Desk request — full audit trail from prompt to trade.
+
+    The user types a free-form research prompt; the bot runs the heavy
+    LLM with current data and returns a verdict (TRADE / WATCHLIST /
+    PASS) + a markdown dossier. If TRADE and the user clicks Execute,
+    the trade lands on the dedicated `research` Fund (separate from
+    autonomous wallets so its P&L doesn't pollute their experiment).
+
+    One row per request. The dossier is cached after generation — clicks
+    that re-open the modal don't re-bill the LLM."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    prompt: str = Field(max_length=2000)
+    created_at: datetime = Field(index=True)
+    # Generated dossier (markdown body that the modal renders).
+    dossier: Optional[str] = Field(default=None)
+    dossier_at: Optional[datetime] = Field(default=None)
+    # Parsed recommendation
+    verdict: Optional[str] = Field(default=None, index=True)  # TRADE/WATCHLIST/PASS
+    rec_ticker: Optional[str] = Field(default=None)
+    rec_direction: Optional[str] = Field(default=None)  # long/short
+    rec_conviction: Optional[int] = Field(default=None)
+    rec_size_pct: Optional[float] = Field(default=None)
+    rec_thesis: Optional[str] = Field(default=None, max_length=1000)
+    rec_risks: Optional[str] = Field(default=None, max_length=1000)
+    # Execution
+    executed_at: Optional[datetime] = Field(default=None, index=True)
+    executed_trade_id: Optional[int] = Field(default=None)
+    execution_note: Optional[str] = Field(default=None, max_length=400)
+    model: str = Field(default="", max_length=120)
+
+
 class JobRun(SQLModel, table=True):
     """One scheduler job execution. Powers the !health heartbeat."""
     id: Optional[int] = Field(default=None, primary_key=True)

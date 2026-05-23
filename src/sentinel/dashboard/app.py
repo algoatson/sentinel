@@ -1976,6 +1976,7 @@ _NAV: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
         ("overview",  "📊", "Overview"),
         ("portfolio", "💼", "Portfolio"),
         ("markets",   "📈", "Markets"),
+        ("research",  "🔬", "Research"),
         ("intel",     "🛰", "Intel"),
         ("calls",     "🎯", "Calls"),
     )),
@@ -1998,6 +1999,9 @@ _TAB_META: dict[str, tuple[str, str, str]] = {
                   "Autonomous wallets, paper book, holdings, manual entry."),
     "markets":   ("📈", "Markets",
                   "Ticker chart with entry markers; watchlist gauges."),
+    "research":  ("🔬", "Research desk",
+                  "Ask the bot to research a topic and recommend a trade. "
+                  "You confirm the execution — nothing fires autonomously."),
     "intel":     ("🛰", "Intel",
                   "Filings + news feed and the forward catalyst calendar."),
     "calls":     ("🎯", "Calls",
@@ -2052,8 +2056,9 @@ def _tab_header(ui, tab: str) -> None:
 # coming from a "click a category" mental model.
 _TAB_NAV_JS = """
 (()=>{
-  const KNOWN = new Set(["overview","portfolio","markets","intel","calls",
-                          "watches","lookup","copilot","system"]);
+  const KNOWN = new Set(["overview","portfolio","markets","research",
+                          "intel","calls","watches","lookup","copilot",
+                          "system"]);
   const activate = (raw) => {
     let id = (raw || location.hash || '#overview').replace(/^#/, '');
     if (!KNOWN.has(id)) id = 'overview';
@@ -2184,6 +2189,17 @@ def _build_page(ui) -> None:
                     with ui.element("div").classes("fr-grid"):
                         _ticker_chart_panel(ui, span="c12")
                         _watchlist_panel(ui, span="c12")
+
+                # ── RESEARCH ─────────────────────────────────────────────
+                # User-prompted research with confirm-before-trade. Goes
+                # to the dedicated `research` wallet so its P&L curve sits
+                # alongside (but separate from) the seven autonomous funds.
+                with ui.element("div").classes("fr-tab").props(
+                    "data-tab=research"
+                ):
+                    _tab_header(ui, "research")
+                    with ui.element("div").classes("fr-grid"):
+                        _research_panel(ui, span="c12")
 
                 # ── INTEL ────────────────────────────────────────────────
                 # News + filings get full-width rows — they carry the most
@@ -2903,6 +2919,361 @@ async def _open_news_dialog(ui, news_id: int) -> None:
     await _load_dossier_into(
         ui, summary_host, dossier.news_dossier, news_id
     )
+
+
+# ── research desk dialog ──────────────────────────────────────────────────
+
+
+async def _open_research_dialog(ui, task_id: int) -> None:
+    """Click handler on a research task row → modal with dossier + execute.
+
+    Anchored to `_MODAL_PARENT` so the panel's refresh tick can't close it.
+    Re-pulls the task on open so a recently-executed row reflects that
+    state (status badge, link to trade). The dossier itself is cached on
+    the row — opening is instant after generation, no re-LLM."""
+    from .. import research_desk
+
+    try:
+        t = await asyncio.to_thread(research_desk.get_task, task_id)
+    except Exception as e:
+        ui.notify(f"research load failed: {e}", type="negative")
+        return
+    if t is None:
+        ui.notify(f"task #{task_id} not found", type="warning")
+        return
+
+    verdict = (t.get("verdict") or "—").upper()
+    icon = (
+        "🟢" if verdict == "TRADE"
+        else "🟡" if verdict == "WATCHLIST"
+        else "⚪"
+    )
+    title = (t.get("prompt") or "")[:80]
+    subtitle = f"task #{task_id} · {verdict}"
+    if t.get("rec_ticker"):
+        subtitle += f" · ${t['rec_ticker']}"
+
+    with (_MODAL_PARENT or ui.element("div")):
+        dlg = ui.dialog()
+    with dlg, ui.element("div").classes("fr-card fr-dlg"):
+        _dossier_header(ui, dlg, icon, title, subtitle=subtitle)
+        body = ui.element("div").classes("fr-bd")
+        with body:
+            # ── original prompt strip ────────────────────────────────────
+            with ui.element("div").style(
+                "background:var(--surface2);border:1px solid var(--border);"
+                "border-radius:8px;padding:.55rem .75rem;margin-bottom:.7rem"
+            ):
+                ui.html(
+                    f'<div class="fnt" style="font-size:10.5px;'
+                    f'letter-spacing:.1em;text-transform:uppercase;'
+                    f'margin-bottom:.25rem">Original prompt</div>'
+                    f'<div style="font-size:13px;line-height:1.5">'
+                    f'{html.escape(t["prompt"])}</div>'
+                )
+
+            # ── recommendation summary + action ──────────────────────────
+            _render_research_action(ui, dlg, t)
+
+            # ── dossier (markdown) ───────────────────────────────────────
+            ui.html(
+                '<div class="fnt" style="font-size:10.5px;'
+                'letter-spacing:.13em;text-transform:uppercase;'
+                'margin:.85rem 0 .35rem">Dossier</div>'
+            )
+            ui.markdown(t.get("dossier") or "_no dossier produced_").classes(
+                "lookup-out"
+            ).style("max-height:32rem")
+
+            # ── audit footer ─────────────────────────────────────────────
+            ui.html(
+                f'<div class="fnt" style="font-size:10.5px;margin-top:.75rem">'
+                f'created {html.escape(t["created_at"][:19])} UTC · '
+                f'model: {html.escape(t.get("model") or "—")}</div>'
+            )
+    dlg.open()
+
+
+def _render_research_action(ui, dlg, t: dict) -> None:
+    """The actionable block under the prompt — shows the recommendation
+    + an Execute button when applicable, OR explains why nothing's
+    actionable (verdict, conviction floor, already executed, cap hit)."""
+    from .. import research_desk
+
+    verdict = (t.get("verdict") or "").upper()
+    conv = t.get("rec_conviction") or 0
+    executed_at = t.get("executed_at")
+    ticker = t.get("rec_ticker")
+    direction = (t.get("rec_direction") or "").upper()
+    size_pct = t.get("rec_size_pct")
+    thesis = t.get("rec_thesis") or ""
+    risks = t.get("rec_risks") or ""
+
+    # Already executed → show what landed.
+    if executed_at:
+        note = t.get("execution_note") or ""
+        with ui.element("div").classes("fr-alert").style(
+            "background:rgba(61,220,151,.08);"
+            "border:1px solid rgba(61,220,151,.32);color:var(--good);"
+            "margin-bottom:.7rem"
+        ):
+            ui.html(
+                f"✅&nbsp;&nbsp;<b>Executed</b> · {html.escape(note)}<br>"
+                f'<span class="fnt" style="font-size:11px">at '
+                f"{html.escape(executed_at[:19])} UTC · trade "
+                f"#{t.get('executed_trade_id') or '—'} on the research wallet"
+                "</span>"
+            )
+        return
+
+    # Non-TRADE verdicts → no execution path. Show why.
+    if verdict != "TRADE":
+        msg = {
+            "WATCHLIST": (
+                "🟡 Bot says <b>WATCHLIST</b> — interesting but not "
+                "actionable. Re-run the prompt later when there's a "
+                "specific catalyst."
+            ),
+            "PASS": (
+                "⚪ Bot says <b>PASS</b> — noise or no clear connection "
+                "to a tradable name."
+            ),
+        }.get(verdict, "—")
+        with ui.element("div").classes("fr-alert").style(
+            "background:var(--surface2);border:1px solid var(--border);"
+            "color:var(--muted);margin-bottom:.7rem"
+        ):
+            ui.html(msg)
+        return
+
+    # TRADE but below conviction floor → show + refuse.
+    if conv < research_desk._CONVICTION_FLOOR:
+        with ui.element("div").classes("fr-alert warn").style(
+            "margin-bottom:.7rem"
+        ):
+            ui.html(
+                f'🟡 <b>{direction} ${html.escape(ticker or "—")}</b> · '
+                f'conviction {conv}/5 — below the floor of '
+                f"{research_desk._CONVICTION_FLOOR}/5. Won't execute."
+            )
+        return
+
+    # Actionable: Execute button + summary.
+    side_cls = "pos" if (t.get("rec_direction") == "long") else "neg"
+    remaining = research_desk.executions_remaining_today()
+    with ui.element("div").style(
+        "background:rgba(102,153,255,.08);border:1px solid rgba(102,153,255,.32);"
+        "border-radius:8px;padding:.65rem .85rem;margin-bottom:.7rem"
+    ):
+        ui.html(
+            f'<div style="display:flex;align-items:baseline;gap:.7rem;'
+            f'flex-wrap:wrap">'
+            f'<span style="font-size:18px;font-weight:700" class="{side_cls}">'
+            f'{html.escape(direction)} ${html.escape(ticker or "")}</span>'
+            f'<span class="fnt" style="font-size:12px">'
+            f'conviction {conv}/5 · size {size_pct:.1f}% of wallet'
+            f'</span></div>'
+            f'<div style="font-size:12.5px;margin-top:.4rem;line-height:1.45">'
+            f'<b>Thesis:</b> {html.escape(thesis)}</div>'
+            f'<div style="font-size:12px;margin-top:.3rem;line-height:1.4;'
+            f'color:var(--muted)"><b>Risk:</b> {html.escape(risks)}</div>'
+        )
+        with ui.element("div").classes("fr-row").style(
+            "margin-top:.6rem;gap:.5rem;align-items:center"
+        ):
+            exec_btn = ui.button(
+                f"Execute as recommended  ({remaining} left today)"
+            ).props("color=primary unelevated")
+            ui.html(
+                '<span class="fnt" style="font-size:11px">'
+                'Lands on the <code>research</code> wallet. One-tap; can\'t '
+                'be undone except by manually closing the position later.'
+                '</span>'
+            )
+
+    async def _do_execute() -> None:
+        exec_btn.disable()
+        exec_btn.props("loading")
+        try:
+            res = await asyncio.to_thread(research_desk.execute, t["id"])
+        except Exception as e:
+            ui.notify(f"execution failed: {e}", type="negative")
+            exec_btn.enable()
+            exec_btn.props(remove="loading")
+            return
+        if res["ok"]:
+            ui.notify(f"🟢 {res['message']}", type="positive")
+            dlg.close()
+        else:
+            ui.notify(res["message"], type="warning")
+            exec_btn.enable()
+            exec_btn.props(remove="loading")
+
+    exec_btn.on_click(_do_execute)
+
+
+# ── research desk panel (Research tab) ────────────────────────────────────
+
+
+def _research_panel(ui, span: str = "c12") -> None:
+    """The Research Desk surface: prompt → recommendation → confirm trade.
+
+    Top row: prompt textarea + Run button + remaining-executions badge.
+    Below: chronological task list. Click any row → modal with the
+    dossier + (if applicable) the Execute button. The bot never auto-
+    fires; nothing trades without the user clicking Execute."""
+    from .. import research_desk
+
+    state: dict = {"in_flight": False}
+
+    with _Panel(ui, "Research desk", "🔬", span, anchor="research-desk"):
+        # Input row.
+        prompt = ui.textarea(
+            placeholder=(
+                "Ask the bot to look into something specific. e.g.:\n"
+                "'There's a Reddit thread on Trump's $2B quantum investment "
+                "— is there a tradable name here?'"
+            ),
+        ).props("dense outlined dark rows=3").classes("fr-w")
+
+        with ui.element("div").classes("fr-row").style(
+            "margin-top:.55rem;gap:.6rem;align-items:center"
+        ):
+            run_btn = ui.button("Run research").props(
+                "color=primary unelevated"
+            )
+            remaining_label = ui.label("").classes("fnt").style(
+                "font-size:11.5px"
+            )
+            ui.html(
+                '<span class="fnt" style="font-size:11px;margin-left:auto">'
+                f'Limits: ≤{research_desk._RATE_LIMIT_PER_DAY} executions/day · '
+                f'conviction floor {research_desk._CONVICTION_FLOOR}/5 · '
+                f'size {research_desk._MIN_SIZE_PCT:g}–{research_desk._MAX_SIZE_PCT:g}% '
+                'of the research wallet'
+                '</span>'
+            )
+
+        # History.
+        ui.html(
+            '<div class="fnt" style="font-size:10.5px;letter-spacing:.13em;'
+            'text-transform:uppercase;margin:1rem 0 .35rem">History</div>'
+        )
+        host = ui.element("div").classes("fr-feed")
+
+    def _update_remaining() -> None:
+        n = research_desk.executions_remaining_today()
+        remaining_label.set_text(f"{n} execution(s) left today")
+        if n <= 0:
+            remaining_label.classes(replace="fnt neg")
+        elif n == 1:
+            remaining_label.classes(replace="fnt warn")
+        else:
+            remaining_label.classes(replace="fnt")
+
+    async def _run() -> None:
+        if state["in_flight"]:
+            return
+        text = (prompt.value or "").strip()
+        if not text:
+            ui.notify("type a prompt first", type="warning")
+            return
+        state["in_flight"] = True
+        run_btn.disable()
+        run_btn.props("loading")
+        ui.notify("researching…", type="info")
+        task_id = None
+        try:
+            task_id = await research_desk.run_research(text)
+        except Exception as e:
+            ui.notify(f"research failed: {e}", type="negative")
+        finally:
+            state["in_flight"] = False
+            run_btn.enable()
+            run_btn.props(remove="loading")
+        if task_id is None:
+            return
+        prompt.value = ""
+        await refresh()
+        # Auto-open the freshly-created task so the user doesn't have to
+        # hunt for it in the list. The modal carries its own dossier
+        # render path so this is safe even on a duplicate (cached) task.
+        await _open_research_dialog(ui, task_id)
+
+    run_btn.on_click(_run)
+
+    async def refresh() -> None:
+        _update_remaining()
+        try:
+            rows = await asyncio.to_thread(research_desk.list_recent, 30)
+        except Exception as e:
+            host.clear()
+            with host:
+                ui.label(f"research unavailable: {e}").classes("fnt")
+            return
+        host.clear()
+        with host:
+            if not rows:
+                ui.label(
+                    "No research tasks yet — type a prompt above to start."
+                ).classes("mut").style("font-size:13px")
+                return
+            now = datetime.now(timezone.utc)
+            for r in rows:
+                ts = datetime.fromisoformat(r["created_at"])
+                ago = _ago_short(now - ts)
+                v = (r.get("verdict") or "").upper()
+                kind_cls = (
+                    "call" if v == "TRADE"
+                    else "filing" if v == "WATCHLIST"
+                    else "news"
+                )
+                label = v or "…"
+                if not r.get("has_dossier"):
+                    label = "…"
+                    kind_cls = "news"
+                with ui.element("div").classes("fr-feed-row").style(
+                    "cursor:pointer"
+                ).on(
+                    "click",
+                    lambda _e, tid=r["id"]:
+                        _open_research_dialog(ui, tid),
+                ):
+                    ui.html(
+                        f'<span class="kind {kind_cls}">'
+                        f'{html.escape(label)}</span>'
+                    )
+                    with ui.element("div").classes("body"):
+                        ui.html(
+                            f'<span style="color:var(--text)">'
+                            f'{html.escape(r["prompt"][:140])}</span>'
+                        )
+                        meta_bits = []
+                        if r.get("rec_ticker"):
+                            tk = r["rec_ticker"]
+                            d = (r.get("rec_direction") or "").upper()
+                            meta_bits.append(
+                                f'<span class="tk">'
+                                f'{d} ${html.escape(tk)}</span>'
+                            )
+                        if r.get("rec_conviction"):
+                            meta_bits.append(f'conv {r["rec_conviction"]}/5')
+                        if r.get("executed_at"):
+                            meta_bits.append(
+                                '<span class="pos">✓ executed</span>'
+                            )
+                        elif v == "TRADE":
+                            meta_bits.append(
+                                '<span class="warn">pending execute</span>'
+                            )
+                        if meta_bits:
+                            ui.html(
+                                '<div class="meta">' + " · ".join(meta_bits)
+                                + "</div>"
+                            )
+                    ui.html(f'<span class="ts">{ago}</span>')
+
+    _tick_now(ui, refresh, 30.0)
 
 
 # ── scorecard ───────────────────────────────────────────────────────────────
