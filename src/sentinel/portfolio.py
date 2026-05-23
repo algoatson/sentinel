@@ -124,6 +124,172 @@ def realized_curve() -> list[dict]:
     return out
 
 
+def watchlist_returns() -> list[dict]:
+    """Watchlist enriched with multi-period returns + day-of stats.
+
+    Returns per ticker: ``{ticker, asset_class, last_price, change_1d_pct,
+    change_1w_pct, change_1m_pct, change_1y_pct, volume_vs_avg, day_low,
+    day_high, high_52w, low_52w}``. Multi-period returns are computed
+    from `PriceBar` — fall back to None when the history is too thin.
+
+    ONE batch query pulls 400d of bars across the whole watchlist, then
+    grouping happens in Python. This is much cheaper than N queries
+    (one per ticker) and well under SQLite's capacity at our scale
+    (~50 tickers × ~250 bars = ~12k rows). Bars are sorted ts-DESC by
+    ticker so the first one is "latest" and binary-search-style lookups
+    by days-ago are just linear scans through ≤400 entries."""
+    from collections import defaultdict
+    from .models import Watchlist
+    now = datetime.now(timezone.utc)
+    cutoff_naive = (now - timedelta(days=400)).replace(tzinfo=None)
+    with session_scope() as s:
+        watchlist = s.exec(select(Watchlist).order_by(Watchlist.ticker)).all()
+        tickers = [w.ticker for w in watchlist if w.ticker]
+        if not tickers:
+            return []
+        bars_rows = s.exec(
+            select(PriceBar)
+            .where(PriceBar.ticker.in_(tickers))
+            .where(PriceBar.ts >= cutoff_naive)
+            .order_by(PriceBar.ticker, PriceBar.ts.desc())
+        ).all()
+        contexts = {
+            pc.ticker: pc
+            for pc in s.exec(select(PriceContext)).all()
+        }
+
+    by_ticker: dict[str, list] = defaultdict(list)
+    for b in bars_rows:
+        by_ticker[b.ticker].append(b)
+
+    def _change_pct(bars: list, days_ago: int) -> float | None:
+        """Latest close vs the close from ~days_ago days ago. Picks the
+        oldest bar within (days_ago-3 .. days_ago+3) to dodge weekends/
+        holidays; None when no bar in that window."""
+        if not bars:
+            return None
+        latest_close = bars[0].close
+        target = bars[0].ts - timedelta(days=days_ago)
+        tolerance = timedelta(days=3 if days_ago <= 7 else 5)
+        ref = None
+        for b in bars[1:]:
+            if abs(b.ts - target) <= tolerance:
+                ref = b.close
+                break
+            if b.ts < target - tolerance:
+                break  # bars are ts-DESC so we're past the window
+        if ref is None or ref == 0:
+            return None
+        return round((latest_close - ref) / ref * 100, 2)
+
+    out: list[dict] = []
+    for w in watchlist:
+        if not w.ticker:
+            continue
+        bars = by_ticker.get(w.ticker, [])
+        pc = contexts.get(w.ticker)
+        # day range = today's bar high/low; 52w range across the year window
+        day_low = day_high = None
+        if bars:
+            latest = bars[0]
+            day_low, day_high = latest.low, latest.high
+        if bars:
+            year_bars = [b for b in bars
+                         if (bars[0].ts - b.ts) <= timedelta(days=365)]
+            highs = [b.high for b in year_bars]
+            lows = [b.low for b in year_bars]
+            high_52w = max(highs) if highs else None
+            low_52w = min(lows) if lows else None
+        else:
+            high_52w = low_52w = None
+
+        out.append({
+            "ticker": w.ticker,
+            "asset_class": w.asset_class or "—",
+            "last_price": pc.last_price if pc else (
+                bars[0].close if bars else None
+            ),
+            # PriceContext.change_1d_pct stores as fraction (0.045 == 4.5%);
+            # everything else here is in percent — normalise to percent so
+            # the column reads consistently in the UI.
+            "change_1d_pct": (
+                round((pc.change_1d_pct or 0) * 100, 2) if pc else None
+            ),
+            "change_1w_pct": _change_pct(bars, 7),
+            "change_1m_pct": _change_pct(bars, 30),
+            "change_1y_pct": _change_pct(bars, 365),
+            "volume_vs_avg": (
+                round(pc.volume_vs_20d_avg, 2) if pc else None
+            ),
+            "day_low": day_low, "day_high": day_high,
+            "high_52w": high_52w, "low_52w": low_52w,
+        })
+    return out
+
+
+def ticker_stats(ticker: str, days: int = 365) -> dict | None:
+    """TradingView-style summary stats for the right-rail card. Returns
+    None when the ticker isn't recognised at all (no PriceBar OR
+    PriceContext); otherwise fields may individually be None when their
+    underlying data is sparse."""
+    ticker = (ticker or "").upper().lstrip("$").strip()
+    if not ticker:
+        return None
+    cutoff_naive = (
+        datetime.now(timezone.utc) - timedelta(days=days)
+    ).replace(tzinfo=None)
+    with session_scope() as s:
+        bars = s.exec(
+            select(PriceBar)
+            .where(PriceBar.ticker == ticker)
+            .where(PriceBar.ts >= cutoff_naive)
+            .order_by(PriceBar.ts.desc())
+        ).all()
+        pc = s.get(PriceContext, ticker)
+    if not bars and pc is None:
+        return None
+    last_price = pc.last_price if pc else (bars[0].close if bars else None)
+    change_1d = (
+        round((pc.change_1d_pct or 0) * 100, 2) if pc else None
+    )
+    change_5d = (
+        round((pc.change_5d_pct or 0) * 100, 2) if pc else None
+    )
+    day_low = bars[0].low if bars else None
+    day_high = bars[0].high if bars else None
+    volume_today = bars[0].volume if bars else None
+
+    # 52w window + averages
+    if bars:
+        year_bars = [b for b in bars
+                     if (bars[0].ts - b.ts) <= timedelta(days=365)]
+        high_52w = max(b.high for b in year_bars) if year_bars else None
+        low_52w = min(b.low for b in year_bars) if year_bars else None
+        avg_vol = (
+            round(sum(b.volume for b in year_bars[:20]) / 20)
+            if len(year_bars) >= 20 else None
+        )
+    else:
+        high_52w = low_52w = avg_vol = None
+
+    return {
+        "ticker": ticker,
+        "last_price": last_price,
+        "change_1d_pct": change_1d,
+        "change_5d_pct": change_5d,
+        "volume": volume_today,
+        "avg_volume_20d": avg_vol,
+        "day_low": day_low,
+        "day_high": day_high,
+        "high_52w": high_52w,
+        "low_52w": low_52w,
+        "bars_count": len(bars),
+        "earliest_bar": (
+            bars[-1].ts.isoformat() if bars else None
+        ),
+    }
+
+
 def position_chart(ticker: str, days: int | None = 60) -> dict:
     """Everything the dashboard needs to plot a chart for `ticker`: OHLC
     bars from PriceBar, the open paper position (if any) for the entry

@@ -185,7 +185,11 @@ def candlestick_spec(data: dict) -> dict:
             _axis_y(grid_index=1, show_label=False),
         ],
         "dataZoom": [
-            {"type": "inside", "xAxisIndex": [0, 1], "start": 55, "end": 100},
+            # X-axis: mouse-wheel (default) + slider at bottom. The slider
+            # tracks both grids (candles + volume) so the volume panel
+            # stays aligned with whatever window is in view above.
+            {"type": "inside", "xAxisIndex": [0, 1],
+             "start": 55, "end": 100},
             {
                 "show": True,
                 "xAxisIndex": [0, 1],
@@ -200,9 +204,34 @@ def candlestick_spec(data: dict) -> dict:
                 "textStyle": {"color": _LABEL, "fontSize": 9},
                 "start": 55, "end": 100,
             },
+            # Y-axis: shift+wheel zooms / drag pans. `filterMode: none` is
+            # critical — without it, zooming the price range would HIDE
+            # the bars outside it (breaking the candlesticks) instead of
+            # just rescaling the axis. With `none`, all bars stay drawn,
+            # just outside the viewport.
+            {"type": "inside", "yAxisIndex": [0],
+             "filterMode": "none",
+             "zoomOnMouseWheel": "shift",
+             "moveOnMouseMove": "shift"},
         ],
         "series": [
             candle_series,
+            # 20-day simple moving average — only drawn when we have ≥20
+            # bars; calling SMA on fewer points would produce a series of
+            # nulls and a partial line that looks broken.
+            *(
+                [{
+                    "name": "MA20",
+                    "type": "line",
+                    "data": _sma(candles, 20),
+                    "smooth": True,
+                    "showSymbol": False,
+                    "lineStyle": {"width": 1.2, "color": "#a78bfa",
+                                  "opacity": 0.85},
+                    "z": 5,
+                }]
+                if len(candles) >= 20 else []
+            ),
             {
                 "name": "Volume",
                 "type": "bar",
@@ -213,6 +242,26 @@ def candlestick_spec(data: dict) -> dict:
             },
         ],
     }
+
+
+def _sma(candles: list[list], window: int) -> list[float | None]:
+    """Simple moving average over the candle CLOSES (index 1 in the
+    [open, close, low, high] tuples ECharts uses). Returns a list the
+    same length as `candles` with `None` for the first `window-1`
+    positions — ECharts gaps those automatically so the line just
+    starts where it has enough data behind it."""
+    out: list[float | None] = []
+    acc = 0.0
+    for i, c in enumerate(candles):
+        close = c[1]
+        acc += close
+        if i >= window:
+            acc -= candles[i - window][1]
+        if i + 1 >= window:
+            out.append(round(acc / window, 4))
+        else:
+            out.append(None)
+    return out
 
 
 # ── multi-line equity curve (one line per fund) ───────────────────────────

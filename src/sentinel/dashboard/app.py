@@ -365,6 +365,27 @@ table.fr-tb tbody tr:hover td{background:rgba(255,255,255,.022);}
 .fr-dlg{min-width:min(46rem,92vw);max-width:92vw;}
 .fr-dlg .fr-bd{max-height:70vh;overflow-y:auto;}
 
+/* ── Quasar q-table dark theme override — aligns built-in sort/pagi/search
+   with the rest of the dashboard so the watchlist doesn't look like a
+   visitor from the default Material world. */
+.q-table__container.q-table--dark{background:transparent!important;
+  color:var(--text);box-shadow:none!important;}
+.q-table--dark .q-table thead tr{background:transparent;}
+.q-table--dark .q-table th{font-size:10px!important;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--faint)!important;font-weight:600;
+  padding:.45rem .55rem!important;
+  border-bottom:1px solid var(--border)!important;}
+.q-table--dark .q-table td{padding:.42rem .55rem!important;font-size:12.5px;
+  font-variant-numeric:tabular-nums;
+  border-bottom:1px solid var(--border-soft)!important;}
+.q-table--dark .q-table tbody tr{cursor:pointer;
+  transition:background .12s ease;}
+.q-table--dark .q-table tbody tr:hover{background:rgba(255,255,255,.035);}
+.q-table__bottom{border-top:1px solid var(--border)!important;
+  color:var(--muted)!important;font-size:11px;min-height:2.6rem;}
+.q-table__top{padding:.3rem 0!important;}
+.q-table__sort-icon{color:var(--faint)!important;font-size:1rem!important;}
+
 /* ── tabs (click-to-show-tab, driven by `data-tab` on sidebar items and
    `.fr-tab.active` on the content). Hidden tabs stay in DOM so their
    timers keep refreshing in the background and switching feels instant. */
@@ -937,15 +958,56 @@ def _ticker_chart_panel(ui, span: str = "c12") -> None:
 
 
 def _render_stats(host, ticker: str, d: dict) -> None:
-    """Right-rail stats card — last price, 1d/5d change, open-position
-    summary, recent-closed count. Rebuilt fully each load to avoid stale
-    references; the chart's data is in `d`."""
-    from nicegui import ui  # local import — host may be from a different ui
+    """TradingView-style right-rail stat card. Shows (in order):
+
+    - Big ticker symbol + asset class chip
+    - Last price + 1d % change (colour-coded)
+    - Day's range bar (low → last → high), 1d / 5d % cluster
+    - 52-week range bar
+    - Volume vs 20d avg
+    - Open paper position summary, if any
+    - Closed-trade tally in the window
+
+    All numbers derive from `d` (which is `position_chart` output) plus a
+    `portfolio.ticker_stats(ticker)` overlay for the 52w + day-range info.
+    The card is rebuilt fully each load so refs to stale labels can't leak."""
+    from nicegui import ui
+    from .. import portfolio
     host.clear()
+    ctx = d.get("context") or {}
+    last = ctx.get("last_price")
+    change_1d = ctx.get("change_1d_pct")
+    change_5d = ctx.get("change_5d_pct")
+    vva = ctx.get("volume_vs_20d_avg")
+
+    # Pull richer day-range / 52w from PriceBar; tolerate missing rows.
+    try:
+        stats = portfolio.ticker_stats(ticker) or {}
+    except Exception:
+        stats = {}
+
     with host:
-        ctx = d.get("context") or {}
-        last = ctx.get("last_price")
-        change_1d = ctx.get("change_1d_pct")
+        # ── Title row: $TICKER + asset class chip ────────────────────────
+        asset_class = (stats.get("asset_class") or "").lower()
+        # We don't have asset_class on ticker_stats yet — pull from chart
+        # context if possible; otherwise blank. Best-effort.
+        with ui.element("div").style(
+            "display:flex;align-items:baseline;gap:.45rem;"
+            "margin-bottom:.35rem"
+        ):
+            ui.html(
+                f'<span style="font-family:ui-monospace,Menlo,monospace;'
+                f'font-weight:700;font-size:18px;letter-spacing:.01em">'
+                f'${html.escape(ticker)}</span>'
+            )
+            if asset_class:
+                ui.html(
+                    f'<span class="fr-pill idle" '
+                    f'style="font-size:9.5px;padding:.12rem .45rem">'
+                    f'{html.escape(asset_class)}</span>'
+                )
+
+        # ── Big price + 1d % ─────────────────────────────────────────────
         if last is not None:
             ui.html(
                 f'<div class="big {_tone(change_1d)}">{last:.4g}</div>'
@@ -956,22 +1018,15 @@ def _render_stats(host, ticker: str, d: dict) -> None:
                     f'<span class="{_tone(change_1d)}">'
                     f'{_pct(change_1d)} 1d</span>'
                 )
-            change_5d = ctx.get("change_5d_pct")
             if change_5d is not None:
                 sub_bits.append(
                     f'<span class="{_tone(change_5d)}">'
                     f'{_pct(change_5d)} 5d</span>'
                 )
-            vva = ctx.get("volume_vs_20d_avg")
-            if vva is not None:
-                tone = ("pos" if vva >= 1.8
-                        else "neg" if vva < 0.5 else "mut")
-                sub_bits.append(
-                    f'<span class="{tone}">×{vva:.2f} vol</span>'
-                )
             if sub_bits:
                 ui.html(
-                    '<div class="row" style="border:0;padding:0">'
+                    '<div style="font-size:11.5px;color:var(--muted);'
+                    'font-variant-numeric:tabular-nums">'
                     + " · ".join(sub_bits)
                     + "</div>"
                 )
@@ -980,133 +1035,288 @@ def _render_stats(host, ticker: str, d: dict) -> None:
                 f"No price context for ${ticker}"
             ).classes("fnt").style("font-size:12px")
 
-        ui.element("div").style(
-            "height:1px;background:var(--border);margin:.55rem 0"
-        )
+        # ── Range bars: day + 52w ────────────────────────────────────────
+        day_low = stats.get("day_low")
+        day_high = stats.get("day_high")
+        if day_low is not None and day_high is not None and last is not None \
+                and day_high > day_low:
+            ui.element("div").style(
+                "height:1px;background:var(--border);margin:.55rem 0 .35rem"
+            )
+            _range_row(ui, "Day range", day_low, last, day_high)
+        hi52 = stats.get("high_52w")
+        lo52 = stats.get("low_52w")
+        if hi52 is not None and lo52 is not None and last is not None \
+                and hi52 > lo52:
+            _range_row(ui, "52w range", lo52, last, hi52)
 
+        # ── Volume row ───────────────────────────────────────────────────
+        vol = stats.get("volume")
+        avg_vol = stats.get("avg_volume_20d")
+        if vol is not None or vva is not None:
+            ui.element("div").style(
+                "height:1px;background:var(--border);margin:.55rem 0 .35rem"
+            )
+            if vol is not None:
+                ui.html(
+                    f'<div class="row" style="border:0;padding:0;'
+                    f'font-size:12px">'
+                    f'<span class="k">Volume</span>'
+                    f'<span class="v">{_humansize(vol)}</span></div>'
+                )
+            if avg_vol is not None:
+                ui.html(
+                    f'<div class="row" style="border:0;padding:0;'
+                    f'font-size:12px">'
+                    f'<span class="k">Avg 20d</span>'
+                    f'<span class="v">{_humansize(avg_vol)}</span></div>'
+                )
+            if vva is not None:
+                tone = ("pos" if vva >= 1.8
+                        else "neg" if vva < 0.5 else "mut")
+                ui.html(
+                    f'<div class="row" style="border:0;padding:0;'
+                    f'font-size:12px">'
+                    f'<span class="k">Today vs avg</span>'
+                    f'<span class="v {tone}">×{vva:.2f}</span></div>'
+                )
+
+        # ── Open position ────────────────────────────────────────────────
         op = d.get("open_position")
+        ui.element("div").style(
+            "height:1px;background:var(--border);margin:.55rem 0 .35rem"
+        )
         if op:
             side_lbl = op["side"].upper()
             side_cls = "pos" if op["side"] == "long" else "neg"
             ui.html(
-                f'<div class="row"><span class="k">Position</span>'
+                f'<div class="row" style="font-size:12.5px">'
+                f'<span class="k">Position</span>'
                 f'<span class="v {side_cls}">{side_lbl} {op["qty"]:g}</span>'
                 "</div>"
             )
             ui.html(
-                f'<div class="row"><span class="k">Entry</span>'
+                f'<div class="row" style="font-size:12.5px">'
+                f'<span class="k">Entry</span>'
                 f'<span class="v">{op["entry"]:.4g}</span></div>'
             )
             if op.get("pnl") is not None:
+                pnl_label = _susd(op["pnl"])
+                if op.get("pnl_pct") is not None:
+                    pnl_label += f' ({_pct(op["pnl_pct"])})'
                 ui.html(
-                    f'<div class="row"><span class="k">uPnL</span>'
+                    f'<div class="row" style="font-size:12.5px">'
+                    f'<span class="k">uPnL</span>'
                     f'<span class="v {_tone(op["pnl"])}">'
-                    f'{_susd(op["pnl"])}'
-                    + (f' ({_pct(op["pnl_pct"])})' if op.get("pnl_pct")
-                       is not None else "")
-                    + "</span></div>"
+                    f'{pnl_label}</span></div>'
                 )
         else:
             ui.html(
-                '<div class="row"><span class="k">Position</span>'
+                '<div class="row" style="font-size:12.5px">'
+                '<span class="k">Position</span>'
                 '<span class="v fnt">none open</span></div>'
             )
 
         closed = d.get("closed") or []
-        wins = sum(1 for c in closed if (c.get("pnl") or 0) > 0)
-        total = sum(c.get("pnl") or 0 for c in closed)
         if closed:
+            wins = sum(1 for c in closed if (c.get("pnl") or 0) > 0)
+            total = sum(c.get("pnl") or 0 for c in closed)
             ui.html(
-                f'<div class="row"><span class="k">Closed (60d)</span>'
-                f'<span class="v">{wins}/{len(closed)} won'
-                f' · {_susd(total)}</span></div>'
+                f'<div class="row" style="font-size:12.5px">'
+                f'<span class="k">Closed (window)</span>'
+                f'<span class="v">{wins}/{len(closed)} won · '
+                f'{_susd(total)}</span></div>'
             )
+
+        # ── Data scope footer (tells the user how deep history goes) ─────
+        bars_n = stats.get("bars_count")
+        earliest = stats.get("earliest_bar")
+        if bars_n:
+            ui.element("div").style(
+                "height:1px;background:var(--border);margin:.55rem 0 .35rem"
+            )
+            scope_label = f"{bars_n} bars"
+            if earliest:
+                scope_label += f" · from {earliest[:10]}"
+            ui.html(
+                f'<div class="fnt" style="font-size:10.5px;'
+                f'letter-spacing:.05em">{html.escape(scope_label)}</div>'
+            )
+
+
+def _range_row(ui, label: str, lo: float, here: float, hi: float) -> None:
+    """A min──●──max range visualisation (TV-style). `here` is the current
+    price; we render it as a marker between `lo` (left) and `hi` (right).
+    Used for both the day range and the 52-week range."""
+    span = hi - lo
+    if span <= 0:
+        return
+    pct = max(0.0, min(100.0, (here - lo) / span * 100))
+    ui.html(
+        '<div class="row" style="border:0;padding:0;font-size:11.5px;'
+        'margin-top:.25rem">'
+        f'<span class="k">{html.escape(label)}</span>'
+        '<span class="v" style="display:flex;align-items:center;gap:.4rem">'
+        f'<span class="fnt num">{lo:.4g}</span>'
+        '<span style="position:relative;height:4px;width:6rem;'
+        'background:var(--surface2);border-radius:2px;'
+        'border:1px solid var(--border)">'
+        f'<i style="position:absolute;left:{pct:.0f}%;top:50%;'
+        'transform:translate(-50%,-50%);width:7px;height:7px;'
+        'border-radius:50%;background:var(--primary);'
+        'box-shadow:0 0 6px rgba(102,153,255,.55)"></i>'
+        '</span>'
+        f'<span class="num">{hi:.4g}</span>'
+        '</span></div>'
+    )
+
+
+def _humansize(n: int | float | None) -> str:
+    """K/M/B short formatting for volume cells. Not a measurement of
+    bytes — same shape, but for share counts."""
+    if n is None:
+        return "—"
+    n = float(n)
+    if abs(n) >= 1_000_000_000:
+        return f"{n / 1_000_000_000:.2f}B"
+    if abs(n) >= 1_000_000:
+        return f"{n / 1_000_000:.2f}M"
+    if abs(n) >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return f"{n:,.0f}"
 
 
 # ── watchlist (Markets tab) ────────────────────────────────────────────────
 
 
 def _watchlist_panel(ui, span: str = "c12") -> None:
-    """Watchlist tickers with PriceContext stats. Clicking a row pumps the
-    ticker into the chart above via `_TICKER_LOAD_CB`. Sorted by abs(1d %)
-    descending so the most active names sit on top."""
-    from ..db import session_scope
-    from ..models import PriceContext, Watchlist
-    from sqlmodel import select
+    """Watchlist with multi-period returns (1d/1w/1m/1y %) and built-in
+    sort/paginate/search via Quasar's q-table. Click a row → load that
+    ticker into the chart above via `_TICKER_LOAD_CB`.
+
+    Returns are computed once per refresh by `portfolio.watchlist_returns`
+    (single batch query over PriceBar + PriceContext). 1d % comes from
+    PriceContext (already normalised by the price ingester); 1w/1m/1y are
+    derived from PriceBar with a small day-window tolerance to dodge
+    weekends/holidays."""
+    from .. import portfolio
+
+    # Per-% column renderer. `props.value` is the numeric pct; we color by
+    # sign and clamp display to 2 decimals. Null → em-dash without colour.
+    _PCT_SLOT = """
+        <q-td :props="props" style="text-align:right;
+            font-variant-numeric:tabular-nums">
+            <span :style="`color: ${
+                props.value === null || props.value === undefined ? 'inherit'
+                : (props.value > 0 ? '#3ddc97'
+                : (props.value < 0 ? '#ff6b6b' : 'inherit'))}`">
+                {{ props.value === null || props.value === undefined ? '—'
+                : ((props.value > 0 ? '+' : '') +
+                   props.value.toFixed(2) + '%') }}
+            </span>
+        </q-td>
+    """
+    _VOL_SLOT = """
+        <q-td :props="props" style="text-align:right;
+            font-variant-numeric:tabular-nums">
+            <span :style="`color: ${
+                props.value === null || props.value === undefined ? 'inherit'
+                : (props.value >= 1.8 ? '#3ddc97'
+                : (props.value < 0.5 ? 'rgba(255,255,255,.42)'
+                : 'rgba(255,255,255,.62)'))}`">
+                {{ props.value === null || props.value === undefined ? '—'
+                : ('×' + props.value.toFixed(2)) }}
+            </span>
+        </q-td>
+    """
+    _TICKER_SLOT = """
+        <q-td :props="props" style="text-align:left">
+            <span style="font-family:ui-monospace,Menlo,monospace;
+                font-weight:600;color:#f0f0f1">
+                ${{ props.value }}
+            </span>
+        </q-td>
+    """
+    _LAST_SLOT = """
+        <q-td :props="props" style="text-align:right;
+            font-variant-numeric:tabular-nums">
+            {{ props.value === null || props.value === undefined ? '—'
+                : props.value.toFixed(props.value < 10 ? 4 : 2) }}
+        </q-td>
+    """
+
+    columns = [
+        {"name": "ticker", "label": "Ticker", "field": "ticker",
+         "sortable": True, "align": "left"},
+        {"name": "asset_class", "label": "Class", "field": "asset_class",
+         "sortable": True, "align": "left"},
+        {"name": "last_price", "label": "Last", "field": "last_price",
+         "sortable": True, "align": "right"},
+        {"name": "change_1d_pct", "label": "1d %",
+         "field": "change_1d_pct", "sortable": True, "align": "right"},
+        {"name": "change_1w_pct", "label": "1w %",
+         "field": "change_1w_pct", "sortable": True, "align": "right"},
+        {"name": "change_1m_pct", "label": "1m %",
+         "field": "change_1m_pct", "sortable": True, "align": "right"},
+        {"name": "change_1y_pct", "label": "1y %",
+         "field": "change_1y_pct", "sortable": True, "align": "right"},
+        {"name": "volume_vs_avg", "label": "Vol×",
+         "field": "volume_vs_avg", "sortable": True, "align": "right"},
+    ]
 
     with _Panel(ui, "Watchlist", "📋", span, anchor="watchlist"):
-        host = ui.element("div").classes("fr-w")
+        # Search input above the table — bound to the table's `filter`
+        # property so Quasar filters client-side without a round-trip.
+        with ui.element("div").classes("fr-row").style(
+            "gap:.5rem;margin-bottom:.55rem;align-items:center"
+        ):
+            search = ui.input(
+                placeholder="Filter…  (ticker / class)"
+            ).props("dense outlined dark clearable").style("width:18rem")
+            empty_label = ui.label("").classes("fnt").style(
+                "font-size:11px;margin-left:auto"
+            )
 
-    def _load() -> list[dict]:
-        out: list[dict] = []
-        with session_scope() as s:
-            for w in s.exec(
-                select(Watchlist).order_by(Watchlist.ticker)
-            ).all():
-                if not w.ticker:
-                    continue
-                pc = s.get(PriceContext, w.ticker)
-                out.append({
-                    "ticker": w.ticker,
-                    "asset_class": w.asset_class or "—",
-                    "last_price": pc.last_price if pc else None,
-                    "change_1d_pct": pc.change_1d_pct if pc else None,
-                    "change_5d_pct": pc.change_5d_pct if pc else None,
-                    "volume_vs_avg": pc.volume_vs_20d_avg if pc else None,
-                })
-        out.sort(key=lambda r: abs(r["change_1d_pct"] or 0), reverse=True)
-        return out
+        table = ui.table(
+            columns=columns, rows=[], row_key="ticker", pagination=20,
+        ).props("dark dense flat").classes("fr-w")
+
+        table.add_slot("body-cell-ticker", _TICKER_SLOT)
+        table.add_slot("body-cell-last_price", _LAST_SLOT)
+        table.add_slot("body-cell-change_1d_pct", _PCT_SLOT)
+        table.add_slot("body-cell-change_1w_pct", _PCT_SLOT)
+        table.add_slot("body-cell-change_1m_pct", _PCT_SLOT)
+        table.add_slot("body-cell-change_1y_pct", _PCT_SLOT)
+        table.add_slot("body-cell-volume_vs_avg", _VOL_SLOT)
+
+        # Bind search → table filter (Quasar's text filter is whole-row,
+        # case-insensitive substring across all visible columns).
+        table.bind_filter_from(search, "value")
+
+        # Row click → load the ticker into the chart panel.
+        # The Quasar `row-click` event signature on the JS side is
+        # `(evt, row, index)`; NiceGUI surfaces `e.args` as `[evt, row, idx]`.
+        def _on_row_click(e) -> None:
+            row = (e.args[1] if isinstance(e.args, list) and len(e.args) >= 2
+                   else e.args.get("row") if isinstance(e.args, dict) else None)
+            if row and "ticker" in row:
+                _click_load(row["ticker"])
+        table.on("row-click", _on_row_click)
 
     async def refresh() -> None:
         try:
-            rows = await asyncio.to_thread(_load)
+            rows = await asyncio.to_thread(portfolio.watchlist_returns)
         except Exception as e:
-            host.clear()
-            with host:
-                ui.label(f"watchlist unavailable: {e}").classes("fnt")
+            empty_label.set_text(f"unavailable: {e}")
             return
-        host.clear()
-        with host:
-            if not rows:
-                ui.label(
-                    "Watchlist is empty — !add a ticker to start tracking."
-                ).classes("mut").style("font-size:13px")
-                return
-            with ui.element("div").classes("fr-watchlist"):
-                with ui.element("div").classes("fr-wlh"):
-                    for h in ("Ticker", "Class", "Last", "1d %", "5d %",
-                              "Vol/20d"):
-                        ui.html(html.escape(h))
-                for r in rows:
-                    with ui.element("div").classes("fr-wlrow").on(
-                        "click",
-                        lambda _e, t=r["ticker"]: _click_load(t),
-                    ):
-                        ui.html(
-                            f'<span class="tk">${html.escape(r["ticker"])}'
-                            "</span>"
-                        )
-                        ui.html(
-                            f'<span class="fnt">'
-                            f'{html.escape(r["asset_class"])}</span>'
-                        )
-                        if r["last_price"] is not None:
-                            ui.html(f'{r["last_price"]:.4g}')
-                        else:
-                            ui.html("—").classes("fnt")
-                        for k in ("change_1d_pct", "change_5d_pct"):
-                            v = r[k]
-                            if v is not None:
-                                ui.html(_pct(v)).classes(_tone(v))
-                            else:
-                                ui.html("—").classes("fnt")
-                        v = r["volume_vs_avg"]
-                        if v is not None:
-                            tone = ("pos" if v >= 1.8
-                                    else "fnt" if v < 0.5 else "mut")
-                            ui.html(f'×{v:.2f}').classes(tone)
-                        else:
-                            ui.html("—").classes("fnt")
+        table.rows = rows
+        table.update()
+        if rows:
+            empty_label.set_text(f"{len(rows)} symbol(s)")
+        else:
+            empty_label.set_text(
+                "Watchlist is empty — !add a ticker to start tracking."
+            )
 
     _tick_now(ui, refresh, 30.0)
 
