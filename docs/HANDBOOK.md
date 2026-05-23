@@ -117,19 +117,27 @@ backfill) — the structural fix is bulk-insert in the price poller (see §15).
 | Var | Purpose |
 |---|---|
 | `DISCORD_TOKEN`, `DISCORD_GUILD_ID` | Bot auth / server |
-| `DISCORD_PRIORITY_CHANNEL_ID` | High-importance signals |
-| `DISCORD_FILINGS_CHANNEL_ID` | SEC filing posts |
-| `DISCORD_INSIDERS_CHANNEL_ID` | Form 4 / 13F |
-| `DISCORD_PULSE_CHANNEL_ID` | Social pulse |
-| `DISCORD_DIGEST_CHANNEL_ID` | EOD digest, fallback for several |
-| `DISCORD_META_CHANNEL_ID` | Ops/health/errors — the bot's console |
-| `DISCORD_NEWS_CHANNEL_ID` | News alerts + macro desk (→ pulse if unset) |
-| `DISCORD_CRYPTO_CHANNEL_ID` | Crypto content (→ news if unset) |
-| `DISCORD_GENERAL_CHANNEL_ID` | The Lounge (→ digest if unset) |
-| `DISCORD_REDDIT_CHANNEL_ID` | Reddit-stream (skips entirely if unset) |
-| `DISCORD_CALLS_CHANNEL_ID` | Call verdicts (→ digest → meta) |
-| `DISCORD_RISK_CHANNEL_ID` | Book-risk alerts (→ priority → meta) |
-| `DISCORD_FUNDS_CHANNEL_ID` | Wallet reasoning + meta (→ digest → meta) |
+| `DISCORD_USER_ID` | The owner — receives `@mention` on priority posts |
+| **Streams (raw-ish, time-ordered):** | |
+| `DISCORD_FILINGS_CHANNEL_ID` | All SEC filings (with materiality scoring) |
+| `DISCORD_INSIDERS_CHANNEL_ID` | Form 4 / 13F insider activity |
+| `DISCORD_NEWS_CHANNEL_ID` | Per-ticker news + breaking alerts (→ pulse) |
+| `DISCORD_MACRO_CHANNEL_ID` | Macro/geopolitical news ONLY (→ news → pulse) |
+| `DISCORD_CRYPTO_CHANNEL_ID` | All per-coin crypto content (→ news) |
+| `DISCORD_REDDIT_CHANNEL_ID` | Notable r/ posts — *skips* when unset (firehose) |
+| `DISCORD_PULSE_CHANNEL_ID` | Social-mention spikes only |
+| **Curated (bot's reasoning, lower volume):** | |
+| `DISCORD_PRIORITY_CHANNEL_ID` | Material 8-Ks + high-conviction signals |
+| `DISCORD_CONVERGENCE_CHANNEL_ID` | Multi-source agreement (→ priority) |
+| `DISCORD_HOT_CHANNEL_ID` | Watchlist movers NOW — *skips* when unset (opt-in) |
+| `DISCORD_CALLS_CHANNEL_ID` | Call-resolution verdicts (→ digest → meta) |
+| `DISCORD_RISK_CHANNEL_ID` | Book-risk alerts on OPEN positions (→ priority → meta) |
+| `DISCORD_FUNDS_CHANNEL_ID` | Autonomous-wallet trade narrations (→ digest → meta) |
+| **Daily / scheduled / system:** | |
+| `DISCORD_DIGEST_CHANNEL_ID` | EOD digest |
+| `DISCORD_CATALYSTS_CHANNEL_ID` | Forward catalyst calendar (→ digest → news → pulse) |
+| `DISCORD_GENERAL_CHANNEL_ID` | The Lounge — geopolitics↔market musings (→ digest) |
+| `DISCORD_META_CHANNEL_ID` | Ops / health / errors — the bot's console |
 | `OLLAMA_BASE_URL`, `LLM_MODEL_LIGHT`, `LLM_MODEL_HEAVY` | Local LLM |
 | `HEAVY_LLM_API_BASE/KEY/MODEL` | Optional remote heavy model |
 | `REDDIT_USER_AGENT` | Override the rotating UA pool (leave blank) |

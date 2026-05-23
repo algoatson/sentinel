@@ -154,10 +154,15 @@ async def _run() -> None:
         description=clean[:4000],
         color=0x16A085,
     )
-    news_channel = (
-        settings.DISCORD_NEWS_CHANNEL_ID or settings.DISCORD_PULSE_CHANNEL_ID
+    # Prefer the dedicated macro channel so per-ticker news on #news stays
+    # focused; fall back through #news → #pulse so an unconfigured macro
+    # channel doesn't silently drop posts.
+    macro_channel = (
+        settings.DISCORD_MACRO_CHANNEL_ID
+        or settings.DISCORD_NEWS_CHANNEL_ID
+        or settings.DISCORD_PULSE_CHANNEL_ID
     )
-    if not await discord_client.post_embed(news_channel, embed, importance=3):
+    if not await discord_client.post_embed(macro_channel, embed, importance=3):
         logger.warning("macro desk: post failed, will retry next cycle")
         return
 

@@ -219,9 +219,12 @@ async def run_catalyst_radar() -> None:
             description=text,
             color=0x3498DB,
         )
-        # A calendar belongs with the daily digest, not the breaking-news feed.
+        # Prefer the dedicated #catalysts channel — a forward calendar wants
+        # a persistent home users can scroll, not a single daily blip in
+        # #digest. Falls through #digest → #news → #pulse if not configured.
         channel = (
-            settings.DISCORD_DIGEST_CHANNEL_ID
+            settings.DISCORD_CATALYSTS_CHANNEL_ID
+            or settings.DISCORD_DIGEST_CHANNEL_ID
             or settings.DISCORD_NEWS_CHANNEL_ID
             or settings.DISCORD_PULSE_CHANNEL_ID
         )

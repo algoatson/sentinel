@@ -403,6 +403,18 @@ table.fr-tb tbody tr:hover td{background:rgba(255,255,255,.022);}
   text-align:center;}
 .fr-feed-row .kind.news{color:#7fb6ff;border-color:rgba(127,182,255,.32);
   background:rgba(127,182,255,.08);}
+/* Sentiment-coloured NEWS chips — green for bullish, red for bearish,
+   blue (default) for neutral/untagged. The sentiment pipeline scores
+   -1/0/+1; only the non-zero sides get a recolour so neutral noise
+   doesn't compete visually with directional reads. */
+.fr-feed-row .kind.news.bull{color:var(--good);
+  border-color:rgba(61,220,151,.32);background:rgba(61,220,151,.08);}
+.fr-feed-row .kind.news.bear{color:var(--bad);
+  border-color:rgba(255,107,107,.32);background:rgba(255,107,107,.08);}
+/* Social pulse chip — its own colour family so it's distinguishable
+   from a NEWS row at a glance even when both share the same ticker. */
+.fr-feed-row .kind.pulse{color:#fbbf24;
+  border-color:rgba(251,191,36,.32);background:rgba(251,191,36,.08);}
 .fr-feed-row .kind.filing{color:#a78bfa;
   border-color:rgba(167,139,250,.32);
   background:rgba(167,139,250,.08);}
@@ -1163,6 +1175,7 @@ def _news_feed_panel(ui, span: str = "c6") -> None:
                 "source": r.source,
                 "ts": _aware(r.published_at).isoformat(),
                 "impact_1d": r.impact_1d_pct,
+                "sentiment": r.sentiment,
             } for r in rows
         ]
 
@@ -1186,8 +1199,16 @@ def _news_feed_panel(ui, span: str = "c6") -> None:
                 ts = datetime.fromisoformat(r["ts"])
                 ago = _ago_short(now - ts)
                 tk = (r.get("ticker") or "—").upper()
+                # Sentiment colour — neutral/None keeps the default blue chip
+                # so we don't drown directional reads in mid-tone variants.
+                sent = r.get("sentiment") or 0
+                chip_cls = (
+                    "news bull" if sent > 0
+                    else "news bear" if sent < 0
+                    else "news"
+                )
                 with ui.element("div").classes("fr-feed-row"):
-                    ui.html('<span class="kind news">NEWS</span>')
+                    ui.html(f'<span class="kind {chip_cls}">NEWS</span>')
                     with ui.element("div").classes("body"):
                         ui.html(
                             f'<a href="{html.escape(r["url"])}" '
@@ -1211,6 +1232,81 @@ def _news_feed_panel(ui, span: str = "c6") -> None:
                     ui.html(f'<span class="ts">{ago}</span>')
 
     _tick_now(ui, refresh, 45.0)
+
+
+# ── social pulse (Intel tab) ───────────────────────────────────────────────
+
+
+def _social_pulse_panel(ui, span: str = "c12") -> None:
+    """Tickers the crowd is suddenly louder about. Backed by `SocialPulse`
+    (the social_pulse pipeline writes one row per "mention-count surge
+    above baseline" event). Sorted by ratio descending so the biggest
+    spikes sit on top; bot's summary is the LLM gloss of *what* they're
+    talking about."""
+    from ..db import session_scope
+    from ..models import SocialPulse
+    from sqlmodel import select
+
+    with _Panel(ui, "Social pulse (48h)", "📣", span,
+                anchor="social-pulse"):
+        host = ui.element("div").classes("fr-feed")
+
+    def _load() -> list[dict]:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+        cutoff_naive = cutoff.replace(tzinfo=None)
+        with session_scope() as s:
+            rows = s.exec(
+                select(SocialPulse)
+                .where(SocialPulse.created_at >= cutoff_naive)
+                .order_by(SocialPulse.ratio.desc())
+                .limit(30)
+            ).all()
+        return [{
+            "ticker": r.ticker,
+            "ratio": r.ratio,
+            "mentions": r.mention_count,
+            "baseline": r.baseline,
+            "summary": r.summary,
+            "ts": _aware(r.created_at).isoformat(),
+        } for r in rows]
+
+    async def refresh() -> None:
+        try:
+            rows = await asyncio.to_thread(_load)
+        except Exception as e:
+            host.clear()
+            with host:
+                ui.label(f"social pulse unavailable: {e}").classes("fnt")
+            return
+        host.clear()
+        with host:
+            if not rows:
+                ui.label(
+                    "No mention surges in last 48h — quiet crowd."
+                ).classes("mut").style("font-size:13px")
+                return
+            now = datetime.now(timezone.utc)
+            for r in rows:
+                ts = datetime.fromisoformat(r["ts"])
+                ago = _ago_short(now - ts)
+                tk = (r.get("ticker") or "—").upper()
+                ratio = r.get("ratio") or 0
+                with ui.element("div").classes("fr-feed-row"):
+                    ui.html('<span class="kind pulse">PULSE</span>')
+                    with ui.element("div").classes("body"):
+                        ui.html(html.escape(r.get("summary") or "")[:200])
+                        meta = [
+                            f'<span class="tk">${html.escape(tk)}</span>',
+                            f'×{ratio:.1f} vs baseline',
+                            f'{r["mentions"]} mentions',
+                        ]
+                        ui.html(
+                            '<div class="meta">' + " · ".join(meta)
+                            + "</div>"
+                        )
+                    ui.html(f'<span class="ts">{ago}</span>')
+
+    _tick_now(ui, refresh, 60.0)
 
 
 # ── catalyst calendar (Intel tab) ──────────────────────────────────────────
@@ -1703,7 +1799,8 @@ def _build_page(ui) -> None:
                     with ui.element("div").classes("fr-grid"):
                         _filings_feed_panel(ui, span="c6")
                         _news_feed_panel(ui, span="c6")
-                        _catalysts_panel(ui, span="c12")
+                        _social_pulse_panel(ui, span="c7")
+                        _catalysts_panel(ui, span="c5")
 
                 # ── CALLS ────────────────────────────────────────────────
                 with ui.element("div").classes("fr-tab").props(

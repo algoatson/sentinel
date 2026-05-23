@@ -273,9 +273,16 @@ async def _post_convergence(ticker: str, signals: list[str], synthesis: str) -> 
         description=body[:4000],
         color=0xC0392B,
     )
-    # Crypto convergence → #crypto; equities keep #priority.
+    # Crypto convergence → #crypto. Equity convergence has its own dedicated
+    # home (#convergence) so multi-source agreement gets a visible track
+    # instead of mixing into the broader #priority feed; falls back to
+    # #priority when the dedicated channel isn't configured.
     channel = channel_for(
-        ticker, equity_default=settings.DISCORD_PRIORITY_CHANNEL_ID
+        ticker,
+        equity_default=(
+            settings.DISCORD_CONVERGENCE_CHANNEL_ID
+            or settings.DISCORD_PRIORITY_CHANNEL_ID
+        ),
     )
     await discord_client.post_embed(
         channel, embed, importance=level or 3, importance_note=why

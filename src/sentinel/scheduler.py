@@ -38,6 +38,7 @@ from .pipelines import (
     convergence,
     digest,
     filings,
+    hot_movers,
     lounge,
     macro_themes,
     movers,
@@ -152,6 +153,16 @@ def make_scheduler() -> AsyncIOScheduler:
         movers.run_movers_cycle,
         CronTrigger(hour=16, minute=15, timezone=ET),
         id="movers_daily",
+        **_COMMON,
+    )
+    # Hot-movers — terse "what's moving NOW on the watchlist" feed for #hot.
+    # 15 min cadence + 4h per-ticker cooldown keeps the channel readable.
+    # The pipeline itself no-ops when DISCORD_HOT_CHANNEL_ID isn't set and
+    # gates on US market hours (crypto names exempted, 24/7).
+    sched.add_job(
+        hot_movers.run_hot_movers,
+        _every(minutes=15),
+        id="hot_movers",
         **_COMMON,
     )
     sched.add_job(

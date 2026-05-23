@@ -49,6 +49,24 @@ class Settings(BaseSettings):
     # (the triggering thesis + the mechanical exit reason). Falls back to the
     # digest channel, then #meta. Only posts on cycles where something traded.
     DISCORD_FUNDS_CHANNEL_ID: int = 0
+    # Hot movers — gainers/losers from the watchlist with |1d %| above a
+    # threshold AND volume above 20d-avg. Posts a compact embed listing the
+    # top movers, with a per-ticker cooldown so a sustained mover doesn't
+    # respam. Unset (0) → pipeline skips entirely (opt-in).
+    DISCORD_HOT_CHANNEL_ID: int = 0
+    # Multi-source convergence — when filings + news + social/HN all line up
+    # on the same direction for a name within a window. Falls back to the
+    # priority channel when unset; gives the highest-conviction signals
+    # their own visible track instead of mixing into other #priority posts.
+    DISCORD_CONVERGENCE_CHANNEL_ID: int = 0
+    # Macro/geopolitical news ONLY (NewsItem.is_macro=True). Splits this
+    # stream off #news so per-ticker news stays focused. Falls back to the
+    # news channel, then the pulse channel.
+    DISCORD_MACRO_CHANNEL_ID: int = 0
+    # Forward catalyst calendar (earnings + scheduled macro). Splits off
+    # #digest so the catalyst radar lives somewhere persistent and findable.
+    # Falls back to the digest channel, then news, then pulse.
+    DISCORD_CATALYSTS_CHANNEL_ID: int = 0
 
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     LLM_MODEL_LIGHT: str = "gemma4:e4b"
