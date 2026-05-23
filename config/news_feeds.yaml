@@ -1,0 +1,117 @@
+# Macro / geopolitical RSS feeds. Each entry is polled every news cycle.
+# These supply context that's not in SEC filings: Fed talk, China trade,
+# energy markets, Middle East, semiconductor policy, etc.
+#
+# Format:
+#   - name: human-readable label, also used as the source identifier
+#     url:  RSS / Atom URL
+#     macro: true → news has no specific ticker, feeds the macro_themes pipeline
+
+feeds:
+  # Broad financial news
+  - name: cnbc-top
+    url: https://www.cnbc.com/id/100003114/device/rss/rss.html
+    macro: true
+  - name: cnbc-markets
+    url: https://www.cnbc.com/id/15839069/device/rss/rss.html
+    macro: true
+  - name: cnbc-tech
+    url: https://www.cnbc.com/id/19854910/device/rss/rss.html
+    macro: false   # tech feed often has ticker-specific items
+  - name: marketwatch-top
+    url: http://feeds.marketwatch.com/marketwatch/topstories/
+    macro: true
+  - name: yahoo-finance
+    url: https://finance.yahoo.com/news/rssindex
+    macro: false
+  - name: bbc-business
+    url: http://feeds.bbci.co.uk/news/business/rss.xml
+    macro: true
+  - name: seekingalpha-currents
+    url: https://seekingalpha.com/market_currents.xml
+    macro: false
+
+  # Topic-specific via Google News (geopolitical reasoning)
+  - name: google-fed-policy
+    url: https://news.google.com/rss/search?q=Federal+Reserve+rate+inflation&hl=en-US&gl=US
+    macro: true
+  - name: google-semi-policy
+    url: https://news.google.com/rss/search?q=semiconductor+export+controls+chip+ban&hl=en-US&gl=US
+    macro: true
+  - name: google-china-trade
+    url: https://news.google.com/rss/search?q=China+tariffs+trade+restrictions&hl=en-US&gl=US
+    macro: true
+  - name: google-iran-oil
+    url: https://news.google.com/rss/search?q=Iran+sanctions+oil+OPEC&hl=en-US&gl=US
+    macro: true
+  - name: google-ukraine
+    url: https://news.google.com/rss/search?q=Ukraine+Russia+energy+gas&hl=en-US&gl=US
+    macro: true
+  - name: google-ai-policy
+    url: https://news.google.com/rss/search?q=AI+regulation+executive+order&hl=en-US&gl=US
+    macro: true
+
+  # Crypto. macro:false so the per-item alert path picks up coin-specific
+  # moves; crypto cashtag/symbol matching against the crypto watchlist
+  # happens in the news ingester the same as equities.
+  - name: coindesk
+    url: https://www.coindesk.com/arc/outboundfeeds/rss/
+    macro: false
+  - name: cointelegraph
+    url: https://cointelegraph.com/rss
+    macro: false
+  - name: decrypt
+    url: https://decrypt.co/feed
+    macro: false
+  - name: theblock
+    url: https://www.theblock.co/rss.xml
+    macro: false
+  - name: google-crypto-reg
+    url: https://news.google.com/rss/search?q=crypto+SEC+regulation+ETF+bitcoin&hl=en-US&gl=US
+    macro: true
+
+  # ── Expanded macro/geopolitical desk feeds (keyless Google News). Each is
+  # chosen for a distinct cross-asset transmission channel the bot reasons
+  # over — not breadth for its own sake.
+  - name: google-geopolitics
+    url: https://news.google.com/rss/search?q=geopolitical+risk+war+sanctions+markets&hl=en-US&gl=US
+    macro: true
+  - name: google-mideast
+    url: https://news.google.com/rss/search?q=Middle+East+Israel+Iran+conflict+oil&hl=en-US&gl=US
+    macro: true
+  - name: google-taiwan-china
+    url: https://news.google.com/rss/search?q=Taiwan+China+military+tension+chips&hl=en-US&gl=US
+    macro: true
+  - name: google-opec-oil
+    url: https://news.google.com/rss/search?q=OPEC+crude+oil+price+supply+cut&hl=en-US&gl=US
+    macro: true
+  - name: google-natgas-lng
+    url: https://news.google.com/rss/search?q=natural+gas+LNG+Europe+energy+prices&hl=en-US&gl=US
+    macro: true
+  - name: google-gold-haven
+    url: https://news.google.com/rss/search?q=gold+price+safe+haven+dollar+yields&hl=en-US&gl=US
+    macro: true
+  - name: google-central-banks
+    url: https://news.google.com/rss/search?q=ECB+Bank+of+Japan+central+bank+rate+decision&hl=en-US&gl=US
+    macro: true
+  - name: google-us-fiscal
+    url: https://news.google.com/rss/search?q=US+Treasury+debt+deficit+bond+yields+downgrade&hl=en-US&gl=US
+    macro: true
+  - name: google-defense
+    url: https://news.google.com/rss/search?q=defense+spending+military+budget+contractors&hl=en-US&gl=US
+    macro: true
+  - name: google-critical-minerals
+    url: https://news.google.com/rss/search?q=rare+earth+critical+minerals+lithium+export+ban&hl=en-US&gl=US
+    macro: true
+  - name: google-supply-chain
+    url: https://news.google.com/rss/search?q=shipping+Red+Sea+supply+chain+freight+disruption&hl=en-US&gl=US
+    macro: true
+  - name: google-fda-biotech
+    url: https://news.google.com/rss/search?q=FDA+approval+drug+trial+biotech&hl=en-US&gl=US
+    macro: true
+  - name: google-bank-credit
+    url: https://news.google.com/rss/search?q=bank+credit+stress+regional+banks+default&hl=en-US&gl=US
+    macro: true
+  - name: google-labor-housing
+    url: https://news.google.com/rss/search?q=jobs+report+unemployment+housing+mortgage+rates&hl=en-US&gl=US
+    macro: true

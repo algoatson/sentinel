@@ -1,0 +1,51 @@
+# ── secrets ────────────────────────────────────────────────────────────────
+# .env holds the real Discord token + LLM API key + EDGAR contact. Never
+# commit it. `.env.example` is the sanitised template.
+.env
+.env.*
+!.env.example
+
+# ── runtime data (the bot's accumulated DB is its track record — local,
+# never in git; archives live alongside it) ───────────────────────────────
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# ── python ─────────────────────────────────────────────────────────────────
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# ── tooling caches ─────────────────────────────────────────────────────────
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ── editor / OS / Claude scratch ───────────────────────────────────────────
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ── logs (the bot ships journald-based; any *.log left around is local) ───
+*.log
+logs/
+
+# ── misc ───────────────────────────────────────────────────────────────────
+*.bak
+*.tmp

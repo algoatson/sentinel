@@ -1,0 +1,36 @@
+# Non-equity macro instruments: futures + rate/bond proxies.
+#
+# These give the bot a cross-asset read — when equities, rates, oil and gold
+# disagree, that divergence is itself the signal worth surfacing. yfinance
+# carries continuous-front futures (`=F`) and the CBOE rate indices (`^`).
+#
+# asset_class drives scheduling: futures poll 24/5-ish (treated as 24/7 here,
+# yfinance just returns the last session when closed), rates poll on the
+# equity calendar.
+
+# Continuous front-month futures — 24/7 polling.
+futures:
+  - ES=F      # S&P 500 E-mini
+  - NQ=F      # Nasdaq 100 E-mini
+  - YM=F      # Dow E-mini
+  - RTY=F     # Russell 2000 E-mini
+  - CL=F      # WTI crude
+  - BZ=F      # Brent crude
+  - NG=F      # Natural gas
+  - GC=F      # Gold
+  - SI=F      # Silver
+  - HG=F      # Copper
+  - ZB=F      # 30Y T-bond
+  - ZN=F      # 10Y T-note
+
+# Rate / bond / vol proxies — equity-calendar polling.
+rates:
+  - ^TNX      # 10Y Treasury yield
+  - ^TYX      # 30Y Treasury yield
+  - ^IRX      # 13W T-bill yield
+  - ^VIX      # Volatility index
+  - TLT       # 20Y+ Treasury ETF
+  - IEF       # 7-10Y Treasury ETF
+  - HYG       # High-yield corporate ETF
+  - LQD       # Investment-grade corporate ETF
+  - DX-Y.NYB  # US Dollar index

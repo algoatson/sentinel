@@ -1,0 +1,76 @@
+# Smart-money 13F filers the bot mirrors onto the watchlist + tracks for
+# new positions. Curated for CONVICTION (concentrated value/growth managers),
+# not quant shops (Renaissance/Citadel/Two Sigma file thousands of positions
+# = noise). Every CIK below was verified against EDGAR's submissions API and
+# confirmed to have a *live* 13F-HR (most recent quarter, 2026-05). The
+# watchlist builder also re-validates each CIK at boot and skips any that
+# 404, so a stale row degrades quietly rather than mistracking.
+#
+# To add: find the manager on https://www.sec.gov/cgi-bin/browse-edgar
+# (type=13F), copy the CIK, and confirm the conformed-name matches.
+entities:
+  # ── original six ──────────────────────────────────────────────────────
+  - name: Berkshire Hathaway          # Warren Buffett
+    cik: "0001067983"
+    type: fund
+  - name: Scion Asset Management      # Michael Burry
+    cik: "0001649339"
+    type: fund
+  - name: Pershing Square Capital     # Bill Ackman
+    cik: "0001336528"
+    type: fund
+  - name: Greenlight Capital          # David Einhorn
+    cik: "0001079114"
+    type: fund
+  - name: Appaloosa LP                # David Tepper
+    cik: "0001656456"
+    type: fund
+  - name: Baupost Group               # Seth Klarman — CIK corrected: the old
+    cik: "0001061768"                 # 0001061165 was actually Lone Pine's
+    type: fund                        # (BAUPOST GROUP LLC/MA is the live filer)
+  # ── added: concentrated superinvestors, all live 13F filers ───────────
+  - name: Tiger Global Management     # Chase Coleman
+    cik: "0001167483"
+    type: fund
+  - name: Coatue Management           # Philippe Laffont
+    cik: "0001135730"
+    type: fund
+  - name: Lone Pine Capital           # Stephen Mandel
+    cik: "0001061165"
+    type: fund
+  - name: Third Point                 # Dan Loeb
+    cik: "0001040273"
+    type: fund
+  - name: Icahn Carl C                # Carl Icahn
+    cik: "0000921669"
+    type: fund
+  - name: ValueAct Capital Management  # Jeff Ubben / Mason Morfit
+    cik: "0001351069"
+    type: fund
+  - name: Viking Global Investors     # Andreas Halvorsen
+    cik: "0001103804"
+    type: fund
+  - name: Altimeter Capital           # Brad Gerstner
+    cik: "0001541617"
+    type: fund
+  - name: Duquesne Family Office      # Stanley Druckenmiller
+    cik: "0001536411"
+    type: fund
+  - name: Soros Fund Management       # George Soros
+    cik: "0001029160"
+    type: fund
+  - name: Himalaya Capital            # Li Lu
+    cik: "0001709323"
+    type: fund
+  - name: Maverick Capital            # Lee Ainslie
+    cik: "0000934639"
+    type: fund
+  - name: Gotham Asset Management     # Joel Greenblatt
+    cik: "0001510387"
+    type: fund
+  - name: Point72 Asset Management    # Steve Cohen
+    cik: "0001603466"
+    type: fund
+  - name: Dalal Street (Pabrai)       # Mohnish Pabrai
+    cik: "0001549575"
+    type: fund

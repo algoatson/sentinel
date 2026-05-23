@@ -1,0 +1,23 @@
+# Fixed-date macro catalysts. OPEX (3rd Friday), quad-witching and NFP
+# (1st Friday) are computed automatically — don't list them here. Add
+# anything with a known scheduled date: FOMC decisions, CPI prints, big
+# product events, expirations, etc. Keep it current; stale rows just age out.
+#
+#   - date: YYYY-MM-DD
+#     label: short description
+
+events:
+  # FOMC rate-decision days (2026 scheduled meeting end dates).
+  - { date: 2026-01-28, label: "FOMC rate decision" }
+  - { date: 2026-03-18, label: "FOMC rate decision + SEP" }
+  - { date: 2026-04-29, label: "FOMC rate decision" }
+  - { date: 2026-06-17, label: "FOMC rate decision + SEP" }
+  - { date: 2026-07-29, label: "FOMC rate decision" }
+  - { date: 2026-09-16, label: "FOMC rate decision + SEP" }
+  - { date: 2026-10-28, label: "FOMC rate decision" }
+  - { date: 2026-12-09, label: "FOMC rate decision + SEP" }
+  # CPI release days (BLS schedule, 2026 — 08:30 ET).
+  - { date: 2026-05-12, label: "CPI (April)" }
+  - { date: 2026-06-10, label: "CPI (May)" }
+  - { date: 2026-07-14, label: "CPI (June)" }
+  - { date: 2026-08-12, label: "CPI (July)" }

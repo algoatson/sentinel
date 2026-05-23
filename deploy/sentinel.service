@@ -1,0 +1,37 @@
+[Unit]
+Description=Sentinel — Discord paper-trading intelligence bot
+# Wait for real network (DNS + routes) before starting: the bot hits Discord,
+# EDGAR, the LLM API and yfinance the moment it boots.
+After=network-online.target
+Wants=network-online.target
+# If it crash-loops (bad config, dead API key), back off instead of thrashing
+# the network: at most 5 starts per 5 minutes, then systemd gives up until
+# `systemctl reset-failed`.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# ── adjust these three for your Pi ──────────────────────────────────────────
+User=algoatson
+WorkingDirectory=/home/algoatson/Work/tradingbot
+ExecStart=/home/algoatson/Work/tradingbot/.venv/bin/python -m sentinel.main
+# ─────────────────────────────────────────────────────────────────────────────
+# Run the venv's python directly (robust under systemd — no `uv`/PATH lookup).
+# Create the venv once with `uv sync` before enabling the service.
+# WorkingDirectory must be the repo root so pydantic-settings finds .env.
+Restart=always
+RestartSec=10
+# SIGINT/SIGTERM are handled by main.py for a clean scheduler+bot shutdown.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+# Logs go to journald → `journalctl -u sentinel -f`
+StandardOutput=journal
+StandardError=journal
+# Light hardening (the bot only needs its repo dir + outbound network).
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,50 @@
+# Crypto watchlist. yfinance notation: BASE-USD.
+#
+# This is the small-account volatility surface — the bot surfaces moves and
+# news here the same way it does for equities. It does NOT recommend trades
+# (SPEC §12). Memecoins are intentionally included: that's where fast,
+# asymmetric moves happen, which is the whole point for a $100 account.
+#
+# Keep this list curated. yfinance silently returns empty frames for symbols
+# it doesn't carry — verify a symbol exists before adding.
+
+majors:
+  - BTC-USD
+  - ETH-USD
+  - SOL-USD
+  - BNB-USD
+  - XRP-USD
+  - ADA-USD
+  - AVAX-USD
+  - DOT-USD
+  - LINK-USD
+  - TRX-USD
+  - TON-USD
+  - LTC-USD
+  - BCH-USD
+
+memecoins:
+  - DOGE-USD
+  - SHIB-USD
+  - PEPE-USD
+  - WIF-USD
+  - BONK-USD
+  - FLOKI-USD
+
+defi:
+  - UNI-USD
+  - AAVE-USD
+  - MKR-USD
+  - LDO-USD
+  - CRV-USD
+
+layer2:
+  - ARB-USD
+  - OP-USD
+  - POL-USD        # ex-MATIC (Polygon rebrand); fetched as POL28321-USD
+
+ai:
+  - RENDER-USD     # ex-RNDR
+  - FET-USD
+  - TAO-USD        # fetched as TAO22974-USD
+  - GRT-USD        # fetched as GRT6719-USD

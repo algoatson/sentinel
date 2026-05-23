@@ -1,0 +1,71 @@
+# Subreddits polled via Reddit's public .rss feeds (no API key needed).
+# Dead / private / banned subs (e.g. BBBY) just 404 and are skipped.
+# Order doesn't matter; duplicates are de-duped at load.
+subreddits:
+  # Core equity / trading
+  - wallstreetbets
+  - stocks
+  - investing
+  - options
+  - thetagang
+  - SecurityAnalysis
+  - ValueInvesting
+  - Daytrading
+  - swingtrading
+  - StockMarket
+  - pennystocks
+  - Shortsqueeze
+  - SPACs
+  - Bogleheads
+  - algotrading
+  - quant
+  - QuantFinance
+  - finance
+  - Trading
+  - technicalanalysis
+  # Squeeze / single-name communities
+  - BBBY
+  - Superstonk
+  - NVDA_Stock
+  - teslainvestorsclub
+  - apple
+  - AMD_Stock
+  - PLTR
+  - AltStreetBets
+  # Crypto
+  - CryptoCurrency
+  - BitcoinMarkets
+  - ethfinance
+  - defi
+  - CryptoMarkets
+  - binance
+  - ethereum
+  - Bitcoin
+  # Futures / FX
+  - FuturesTrading
+  - Forex
+  # Brokers (sentiment / outage signal)
+  - RobinHood
+  - Webull
+  - interactivebrokers
+  # Macro / geopolitics / economy
+  - macroeconomics
+  - geopolitics
+  - economics
+  - Economy
+  - finance
+  # Personal finance / FIRE (flow + sentiment backdrop)
+  - fatFIRE
+  - personalfinance
+  - financialindependence
+  # Tech / AI (thesis + secular-trend signal)
+  - SaaS
+  - startups
+  - OpenAI
+  - singularity
+  - LocalLLaMA
+  - ChatGPT
+  - MachineLearning
+  - datascience
+  - artificial
+  - dataisbeautiful

@@ -1,0 +1,64 @@
+# ETFs to track in addition to index constituents.
+# Format: ticker per entry. Resolved to CIK via EDGAR ticker map.
+# ETFs file mostly routine NPORT-P / N-CSR — most posts to #filings will be
+# noise — but having them on the watchlist means:
+#   1. Reddit/HN cashtag mentions for these tickers actually get ingested
+#   2. PriceContext is maintained, so price-driven enrichment works
+#   3. They appear in mover-detection and convergence outputs
+etfs:
+  # Leveraged Nasdaq / broad-market
+  - TQQQ      # 3x Nasdaq 100
+  - SQQQ      # -3x Nasdaq 100
+  - UPRO      # 3x S&P 500
+  - SPXU      # -3x S&P 500
+
+  # Semiconductors
+  - SOXL      # 3x semi bull
+  - SOXS      # 3x semi bear
+  - SMH       # VanEck Semiconductor
+  - SOXX      # iShares Semiconductor
+  - PSI       # Invesco Dynamic Semi
+
+  # Sector
+  - XLF       # Financials
+  - XLE       # Energy
+  - XLK       # Technology
+  - XLV       # Healthcare
+  - XLU       # Utilities
+  - XLI       # Industrials
+  - XLY       # Consumer Discretionary
+  - XLP       # Consumer Staples
+  - XLB       # Materials
+  - XLRE      # Real Estate
+  - XLC       # Communications
+
+  # Country / regional (leveraged + unleveraged)
+  - KORU      # 3x South Korea bull
+  - EWZ       # Brazil
+  - EWY       # South Korea
+  - EWJ       # Japan
+  - INDA      # India
+  - FXI       # China large-cap
+  - YINN      # 3x China bull
+  - YANG      # 3x China bear
+
+  # Commodities / macro
+  - USO       # US Oil
+  - UCO       # 2x Oil bull
+  - GLD       # Gold
+  - SLV       # Silver
+  - TLT       # 20y Treasuries
+  - TBT       # -2x 20y Treasuries
+  - UVXY      # 1.5x VIX
+  - VXX       # VIX short-term futures
+
+  # Thematic
+  - ARKK      # ARK Innovation
+  - ARKG      # ARK Genomic
+  - ARKW      # ARK Next Gen Internet
+  - ICLN      # Clean Energy
+  - LIT       # Lithium / Battery Tech
+  - URA       # Uranium
+  - DRIV      # Autonomous & EV
+  - HACK      # Cybersecurity
+  - BOTZ      # Robotics / AI
