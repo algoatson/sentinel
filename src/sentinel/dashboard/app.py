@@ -754,6 +754,17 @@ def _ago_short(delta) -> str:
 _TICKER_LOAD_CB: "callable | None" = None
 
 
+# Stable mount for popups (dialog overlays). `ui.dialog()` parents itself
+# to the *active slot at construction time* — when a click handler is
+# invoked from inside a panel row and creates the dialog there, the
+# dialog ends up parented to that row. The next time the panel's refresh
+# timer clears its host (e.g. activity feed every 30s), the row goes
+# away and the dialog goes with it. That's the "modal closes after a
+# random number of seconds" bug. Fix: page-level container that never
+# gets cleared; dialog openers `with _MODAL_PARENT: ui.dialog()`.
+_MODAL_PARENT = None  # set by `cockpit()` once per page render
+
+
 def _swap_chart(chart, spec: dict) -> None:
     """Replace an EChart's options in place.
 
@@ -2119,6 +2130,14 @@ def _build_page(ui) -> None:
         _tick()
         ui.timer(1.0, _tick)
 
+        # Stable mount for popups — parented at the page root so panel
+        # refresh timers can't unmount whatever dialog is currently open.
+        # See `_MODAL_PARENT` doc above for the failure mode this prevents.
+        global _MODAL_PARENT
+        _MODAL_PARENT = ui.element("div").style(
+            "position:absolute;width:0;height:0;overflow:visible"
+        )
+
         # ── shell: sticky sidebar (categorised tab nav) + main content ───
         # Each `.fr-tab` is one logical page worth of content. Hidden tabs
         # stay in the DOM so their refresh timers keep running in the
@@ -2361,9 +2380,26 @@ def _kpi_ribbon(ui, uptime_lbl) -> None:
 
 
 def _tick_now(ui, coro, interval: float) -> None:
-    """Run an async refresh immediately, then on an interval."""
-    ui.timer(0.1, coro, once=True)
-    ui.timer(interval, coro)
+    """Run an async refresh immediately, then on an interval.
+
+    Wraps the caller's coroutine in a try/except so a single bad refresh
+    doesn't propagate out and (under some NiceGUI / uvicorn / Quasar
+    interactions) cascade into the WebSocket closing with "connection
+    lost". A dropped panel is a much better failure mode than a dropped
+    page. Errors are logged with the panel callable's name so they're
+    findable in the live journal.
+    """
+    async def _safe() -> None:
+        try:
+            await coro()
+        except Exception as e:
+            logger.warning(
+                "dashboard refresh failed in {}: {}",
+                getattr(coro, "__qualname__", "?"), e,
+            )
+
+    ui.timer(0.1, _safe, once=True)
+    ui.timer(interval, _safe)
 
 
 # ── wallets / funds ─────────────────────────────────────────────────────────
@@ -2543,10 +2579,17 @@ def _render_wallet_detail(ui, d: dict) -> None:
 async def _open_wallet_dialog(ui, name: str) -> None:
     """Click handler on a wallets-list row — opens a NiceGUI dialog with
     the wallet's open positions and per-position stats. Snapshot-on-open
-    (close & re-open for a fresh read); cheap and avoids timer leaks."""
+    (close & re-open for a fresh read); cheap and avoids timer leaks.
+
+    Dialog is parented to the page-level `_MODAL_PARENT` (set in
+    `cockpit()`) — NOT the click handler's slot. Without that anchor,
+    the panel's refresh timer would clear its host and take the dialog
+    with it (≈60s on the wallets panel, faster on others)."""
     from .. import funds
 
-    with ui.dialog() as dlg, ui.element("div").classes("fr-card fr-dlg"):
+    with (_MODAL_PARENT or ui.element("div")):
+        dlg = ui.dialog()
+    with dlg, ui.element("div").classes("fr-card fr-dlg"):
         with ui.element("div").classes("fr-hd"):
             ui.html(
                 f'<span class="ic">🏦</span>'
@@ -2722,7 +2765,11 @@ async def _open_call_dialog(ui, call_id: int) -> None:
         return
 
     icon = "🟢" if side == "LONG" else "🔴"
-    with ui.dialog() as dlg, ui.element("div").classes("fr-card fr-dlg"):
+    # Anchor the dialog to the page-level mount so the call-history /
+    # activity panel's refresh tick can't yank it out from under us.
+    with (_MODAL_PARENT or ui.element("div")):
+        dlg = ui.dialog()
+    with dlg, ui.element("div").classes("fr-card fr-dlg"):
         _dossier_header(
             ui, dlg, icon, f"{side} ${tk}",
             subtitle=f"{source} · conv {conv}/5",
@@ -2814,7 +2861,9 @@ async def _open_news_dialog(ui, news_id: int) -> None:
 
     sent_icon = ("🟢" if (sentiment or 0) > 0
                  else "🔴" if (sentiment or 0) < 0 else "📰")
-    with ui.dialog() as dlg, ui.element("div").classes("fr-card fr-dlg"):
+    with (_MODAL_PARENT or ui.element("div")):
+        dlg = ui.dialog()
+    with dlg, ui.element("div").classes("fr-card fr-dlg"):
         _dossier_header(
             ui, dlg, sent_icon, title,
             subtitle=f"${tk or 'macro'} · {source}",
