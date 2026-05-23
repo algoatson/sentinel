@@ -19,7 +19,7 @@ import asyncio
 
 from sentinel import chat
 from sentinel.dashboard import logbuf, sysinfo
-from sentinel.dashboard.app import _log_html, _verdict_marker
+from sentinel.dashboard.app import _log_html, _swap_chart, _verdict_marker
 
 
 # ── sysinfo ─────────────────────────────────────────────────────────────────
@@ -51,6 +51,35 @@ def test_snapshot_is_total_and_never_raises():
 
 
 # ── verdict marker ──────────────────────────────────────────────────────────
+
+
+def test_swap_chart_mutates_dict_in_place_and_updates():
+    """Regression: NiceGUI 3.12's `EChart.options` is read-only — direct
+    assignment raises 'property has no setter' and the chart never updates.
+    `_swap_chart` must mutate the dict in place and trigger `update()`.
+
+    Caught live on 2026-05-23 — every chart refresh on the Pi was logging
+    the setter error; charts were frozen on initial empty specs."""
+    class _FakeChart:
+        def __init__(self) -> None:
+            self._opts = {"old": True, "stale": 1}
+            self.updated = 0
+
+        @property
+        def options(self) -> dict:  # mirrors NiceGUI's getter-only property
+            return self._opts
+
+        def update(self) -> None:
+            self.updated += 1
+
+    c = _FakeChart()
+    _swap_chart(c, {"backgroundColor": "transparent", "series": []})
+    # dict identity preserved (clear+update, not replace) → anyone holding
+    # a ref to the old options sees the new content
+    assert "old" not in c.options
+    assert c.options["backgroundColor"] == "transparent"
+    assert c.options["series"] == []
+    assert c.updated == 1
 
 
 def test_verdict_marker_picks_worst_then_defaults():

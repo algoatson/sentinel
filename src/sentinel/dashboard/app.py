@@ -733,6 +733,22 @@ def _ago_short(delta) -> str:
 _TICKER_LOAD_CB: "callable | None" = None
 
 
+def _swap_chart(chart, spec: dict) -> None:
+    """Replace an EChart's options in place.
+
+    NiceGUI 3.12's `ui.echart` exposes `options` as a *read-only* property
+    (`@property def options(self): return self._props['options']`) — direct
+    assignment raises `property has no setter`. The supported pattern is to
+    mutate the underlying dict and then call `.update()` so the diff ships
+    to the client. We keep the dict identity (clear + update) rather than
+    poking `_props` so we don't depend on private state.
+    """
+    opts = chart.options
+    opts.clear()
+    opts.update(spec)
+    chart.update()
+
+
 # ── equity curve (Overview tab) ────────────────────────────────────────────
 
 
@@ -753,8 +769,7 @@ def _equity_curve_panel(ui, span: str = "c7") -> None:
             logger.debug("equity_curve_panel: {}", e)
             return
         try:
-            chart.options = charts.equity_curve_spec(data)
-            chart.update()
+            _swap_chart(chart, charts.equity_curve_spec(data))
         except Exception as e:
             logger.debug("equity chart render: {}", e)
 
@@ -781,8 +796,7 @@ def _realized_curve_panel(ui, span: str = "c5") -> None:
             logger.debug("realized_curve_panel: {}", e)
             return
         try:
-            chart.options = charts.realized_curve_spec(pts)
-            chart.update()
+            _swap_chart(chart, charts.realized_curve_spec(pts))
         except Exception as e:
             logger.debug("realized chart render: {}", e)
 
@@ -832,8 +846,7 @@ def _ticker_chart_panel(ui, span: str = "c12") -> None:
             ui.notify(f"chart load failed: {e}", type="negative")
             return
         try:
-            chart.options = charts.candlestick_spec(d)
-            chart.update()
+            _swap_chart(chart, charts.candlestick_spec(d))
         except Exception as e:
             logger.debug("candle render: {}", e)
         _render_stats(stats_host, ticker, d)
