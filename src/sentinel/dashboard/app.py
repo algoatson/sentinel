@@ -811,13 +811,27 @@ def _ticker_chart_panel(ui, span: str = "c12") -> None:
     is picked via the input or by clicking a chip (current open positions);
     other panels (Watchlist) can call `_TICKER_LOAD_CB` to push a ticker in.
 
+    Range picker (1w / 1m / 3m / 6m / 1y / all) lives next to the ticker
+    input and just re-calls `load()` with a different `days=` value —
+    `all` passes `days=None` to fetch the full PriceBar history. State is
+    held in `state["current"]` (ticker) and `state["days"]` (range).
+
     Layout: chart (flex) | stats card (17rem). Stacks below the chart on
     narrow viewports — the CSS grid auto-collapses past 900px."""
     global _TICKER_LOAD_CB
     from .. import portfolio
     from . import charts
 
-    state: dict = {"current": ""}
+    # Range presets — value is the `days` arg to position_chart; None = all.
+    _RANGES: tuple[tuple[str, int | None], ...] = (
+        ("1w", 7),
+        ("1m", 30),
+        ("3m", 90),
+        ("6m", 180),
+        ("1y", 365),
+        ("All", None),
+    )
+    state: dict = {"current": "", "days": 30}  # default 1m
 
     with _Panel(ui, "Ticker chart", "📈", span, anchor="ticker-chart"):
         with ui.element("div").classes("fr-pick"):
@@ -826,6 +840,9 @@ def _ticker_chart_panel(ui, span: str = "c12") -> None:
                 "dense outlined dark"
             ).style("width:11rem")
             chips_box = ui.element("div").classes("chips")
+        with ui.element("div").classes("fr-pick"):
+            ui.label("Range").classes("label")
+            range_box = ui.element("div").classes("chips")
 
         wrap = ui.element("div").style(
             "display:grid;grid-template-columns:1fr 17rem;"
@@ -835,13 +852,26 @@ def _ticker_chart_panel(ui, span: str = "c12") -> None:
             chart = ui.echart({}).classes("fr-chart tall")
             stats_host = ui.element("div").classes("fr-pos-summary")
 
-    async def load(ticker: str) -> None:
-        ticker = (ticker or "").strip().upper().lstrip("$")
-        if not ticker:
+    async def load(ticker: str | None = None,
+                   days: int | None | object = ...) -> None:
+        """Re-render the chart. Either arg can be omitted (`...`) to keep
+        the current value — so a range chip click only changes the days,
+        and a ticker input only changes the ticker."""
+        if ticker is not None:
+            t = (ticker or "").strip().upper().lstrip("$")
+            if not t:
+                return
+            state["current"] = t
+        if days is not ...:
+            state["days"] = days   # may be None for "All"
+
+        tk = state["current"]
+        if not tk:
             return
-        state["current"] = ticker
         try:
-            d = await asyncio.to_thread(portfolio.position_chart, ticker, 60)
+            d = await asyncio.to_thread(
+                portfolio.position_chart, tk, state["days"]
+            )
         except Exception as e:
             ui.notify(f"chart load failed: {e}", type="negative")
             return
@@ -849,34 +879,59 @@ def _ticker_chart_panel(ui, span: str = "c12") -> None:
             _swap_chart(chart, charts.candlestick_spec(d))
         except Exception as e:
             logger.debug("candle render: {}", e)
-        _render_stats(stats_host, ticker, d)
+        _render_stats(stats_host, tk, d)
+        # repaint active states on chips since `state` just changed
+        _paint_chips()
 
     async def _on_enter(_e=None) -> None:
-        await load((box.value or "").strip())
+        await load(ticker=(box.value or "").strip())
 
     box.on("keydown.enter", _on_enter)
-    _TICKER_LOAD_CB = load  # picked up by Watchlist rows
 
-    async def _refresh_chips() -> None:
-        try:
-            opens = await asyncio.to_thread(portfolio.open_positions)
-        except Exception:
-            opens = []
+    # Watchlist rows call `_TICKER_LOAD_CB(ticker)` (single positional arg);
+    # forward into `load(ticker=…)` without touching the days state.
+    async def _load_from_external(t: str) -> None:
+        await load(ticker=t)
+
+    _TICKER_LOAD_CB = _load_from_external
+
+    def _paint_chips() -> None:
+        # Render the ticker chips + range chips with `active` reflecting
+        # current state. Cheap, no LLM/DB work.
         chips_box.clear()
+        opens = state.get("_opens") or []
         with chips_box:
-            for p in opens[:8]:
-                tk = p["ticker"]
-                chip_cls = "chip active" if tk == state["current"] else "chip"
+            for tk in opens[:8]:
+                chip_cls = (
+                    "chip active" if tk == state["current"] else "chip"
+                )
                 ui.html(
                     f'<span class="{chip_cls}">${html.escape(tk)}</span>'
-                ).on("click", lambda _e, t=tk: load(t))
-            # always offer a couple of high-liquidity defaults so the panel
-            # is usable on day-one before any positions exist
+                ).on("click", lambda _e, t=tk: load(ticker=t))
             if not opens:
                 for tk in ("SPY", "QQQ", "BTC", "ETH"):
                     ui.html(
                         f'<span class="chip">${html.escape(tk)}</span>'
-                    ).on("click", lambda _e, t=tk: load(t))
+                    ).on("click", lambda _e, t=tk: load(ticker=t))
+        range_box.clear()
+        with range_box:
+            for label, d in _RANGES:
+                chip_cls = (
+                    "chip active" if d == state["days"] else "chip"
+                )
+                ui.html(
+                    f'<span class="{chip_cls}">{label}</span>'
+                ).on("click", lambda _e, dd=d: load(days=dd))
+
+    async def _refresh_chips() -> None:
+        # Pull open positions for the ticker quick-pick chips. Cached in
+        # state so `_paint_chips` doesn't need its own DB call.
+        try:
+            opens = await asyncio.to_thread(portfolio.open_positions)
+            state["_opens"] = [p["ticker"] for p in opens]
+        except Exception:
+            state["_opens"] = []
+        _paint_chips()
 
     _tick_now(ui, _refresh_chips, 60.0)
 
@@ -1184,6 +1239,7 @@ def _news_feed_panel(ui, span: str = "c6") -> None:
             ).all()
         return [
             {
+                "id": r.id,
                 "ticker": r.ticker, "title": r.title, "url": r.url,
                 "source": r.source,
                 "ts": _aware(r.published_at).isoformat(),
@@ -1220,13 +1276,21 @@ def _news_feed_panel(ui, span: str = "c6") -> None:
                     else "news bear" if sent < 0
                     else "news"
                 )
-                with ui.element("div").classes("fr-feed-row"):
+                # Whole row opens the AI dossier modal — the article URL
+                # lives in the modal header so a single click intent
+                # ("learn more about this") doesn't ambiguate between
+                # browser-navigate vs. open-dialog.
+                with ui.element("div").classes("fr-feed-row").style(
+                    "cursor:pointer"
+                ).on(
+                    "click",
+                    lambda _e, nid=r["id"]: _open_news_dialog(ui, nid),
+                ):
                     ui.html(f'<span class="kind {chip_cls}">NEWS</span>')
                     with ui.element("div").classes("body"):
                         ui.html(
-                            f'<a href="{html.escape(r["url"])}" '
-                            f'target="_blank" rel="noopener">'
-                            f'{html.escape(r["title"][:140])}</a>'
+                            f'<span style="color:var(--text)">'
+                            f'{html.escape(r["title"][:140])}</span>'
                         )
                         meta = [
                             f'<span class="tk">${html.escape(tk)}</span>',
@@ -1406,7 +1470,7 @@ def _activity_panel(ui, span: str = "c12") -> None:
                 .limit(25)
             ).all():
                 items.append({
-                    "kind": "call", "ticker": c.ticker,
+                    "kind": "call", "id": c.id, "ticker": c.ticker,
                     "ts": _aware(c.created_at).isoformat(),
                     "title": (c.thesis or "")[:160],
                     "side": c.direction, "src": c.source,
@@ -1431,7 +1495,7 @@ def _activity_panel(ui, span: str = "c12") -> None:
                 .limit(20)
             ).all():
                 items.append({
-                    "kind": "news", "ticker": n.ticker,
+                    "kind": "news", "id": n.id, "ticker": n.ticker,
                     "ts": _aware(n.published_at).isoformat(),
                     "title": (n.title or "")[:160],
                     "url": n.url, "src": n.source,
@@ -1470,7 +1534,27 @@ def _activity_panel(ui, span: str = "c12") -> None:
                 else:
                     label = "NEWS"
                     kind_cls = "news"
-                with ui.element("div").classes("fr-feed-row"):
+                # Calls + news open their AI dossier; filings open the SEC
+                # document directly (no LLM dossier for raw filings yet —
+                # the filings pipeline already writes its own summary).
+                if kind == "call" and it.get("id"):
+                    row = ui.element("div").classes(
+                        "fr-feed-row"
+                    ).style("cursor:pointer").on(
+                        "click",
+                        lambda _e, cid=it["id"]: _open_call_dialog(ui, cid),
+                    )
+                elif kind == "news" and it.get("id"):
+                    row = ui.element("div").classes(
+                        "fr-feed-row"
+                    ).style("cursor:pointer").on(
+                        "click",
+                        lambda _e, nid=it["id"]: _open_news_dialog(ui, nid),
+                    )
+                else:
+                    row = ui.element("div").classes("fr-feed-row")
+
+                with row:
                     ui.html(
                         f'<span class="kind {kind_cls}">'
                         f'{html.escape(label)}</span>'
@@ -1478,14 +1562,20 @@ def _activity_panel(ui, span: str = "c12") -> None:
                     with ui.element("div").classes("body"):
                         url = it.get("url")
                         title_html = html.escape(it.get("title") or "")
-                        if url:
+                        if kind == "filing" and url:
+                            # Filings still link directly — no dossier yet
                             ui.html(
                                 f'<a href="{html.escape(url)}" '
                                 f'target="_blank" rel="noopener">'
                                 f'{title_html}</a>'
                             )
                         else:
-                            ui.html(title_html or "(no title)")
+                            # Call / news → the row click opens the dialog,
+                            # title is plain text to make that single intent
+                            ui.html(
+                                f'<span style="color:var(--text)">'
+                                f'{title_html or "(no title)"}</span>'
+                            )
                         meta = [f'<span class="tk">${html.escape(tk)}</span>']
                         if kind == "call":
                             meta.append(html.escape(it.get("src") or ""))
@@ -1557,7 +1647,12 @@ def _calls_history_panel(ui, span: str = "c12") -> None:
                 kind_cls = ("call short" if r["direction"] == "short"
                             else "call")
                 label = (r["direction"] or "").upper()
-                with ui.element("div").classes("fr-feed-row"):
+                with ui.element("div").classes("fr-feed-row").style(
+                    "cursor:pointer"
+                ).on(
+                    "click",
+                    lambda _e, cid=r["id"]: _open_call_dialog(ui, cid),
+                ):
                     ui.html(
                         f'<span class="kind {kind_cls}">'
                         f'{html.escape(label)}</span>'
@@ -1777,20 +1872,20 @@ def _build_page(ui) -> None:
                         _activity_panel(ui, span="c12")
 
                 # ── PORTFOLIO ────────────────────────────────────────────
-                # Wallets sit side-by-side with the open-position form so
-                # the user can take action without leaving the overview of
-                # what's already trading. Holds gets co-equal billing with
-                # the paper book since they're both "things I want to
-                # track" but one is sized and one isn't.
+                # Wallets take a full row so the 6-column wallets table
+                # has room to breathe; paper book + holds each get their
+                # own full-width rows for the same reason (their grid
+                # column templates are wide and squished at <c12).
+                # Open-position form lives narrow alongside the holds.
                 with ui.element("div").classes("fr-tab").props(
                     "data-tab=portfolio"
                 ):
                     _tab_header(ui, "portfolio")
                     with ui.element("div").classes("fr-grid"):
-                        _funds_panel(ui, span="c7")
+                        _funds_panel(ui, span="c12")
+                        _book_panel(ui, span="c12")
+                        _holds_panel(ui, span="c7")
                         _open_form_panel(ui, span="c5")
-                        _book_panel(ui, span="c8")
-                        _holds_panel(ui, span="c4")
 
                 # ── MARKETS ──────────────────────────────────────────────
                 # Star feature: the candlestick + position-summary card
@@ -1805,15 +1900,19 @@ def _build_page(ui) -> None:
                         _watchlist_panel(ui, span="c12")
 
                 # ── INTEL ────────────────────────────────────────────────
+                # News + filings get full-width rows — they carry the most
+                # text per row and their 3-column meta line wraps awkwardly
+                # at half-width. Social pulse + catalysts are denser so
+                # they share the bottom row at c6/c6.
                 with ui.element("div").classes("fr-tab").props(
                     "data-tab=intel"
                 ):
                     _tab_header(ui, "intel")
                     with ui.element("div").classes("fr-grid"):
-                        _filings_feed_panel(ui, span="c6")
-                        _news_feed_panel(ui, span="c6")
-                        _social_pulse_panel(ui, span="c7")
-                        _catalysts_panel(ui, span="c5")
+                        _news_feed_panel(ui, span="c12")
+                        _filings_feed_panel(ui, span="c12")
+                        _social_pulse_panel(ui, span="c6")
+                        _catalysts_panel(ui, span="c6")
 
                 # ── CALLS ────────────────────────────────────────────────
                 with ui.element("div").classes("fr-tab").props(
@@ -2206,6 +2305,287 @@ async def _open_wallet_dialog(ui, name: str) -> None:
             ui.label("This wallet isn't seeded yet.").classes("mut")
             return
         _render_wallet_detail(ui, d)
+
+
+# ── call / news dossier dialogs ────────────────────────────────────────────
+
+
+def _dossier_chat(ui, ask_fn, item_id: int) -> None:
+    """Render the follow-up chat section inside a dossier dialog. Builds
+    a tiny chat feed + input row using the existing `.bub.a/.bub.u` styles
+    so the look matches the Copilot tab. State is local — closing the
+    modal drops history, which is intentional (the cached dossier sticks,
+    but iterative Qs are scratch). `ask_fn(item_id, question)` is the
+    backend (e.g. `dossier.ask_about_call`)."""
+    ui.html(
+        '<div class="fnt" style="font-size:10.5px;'
+        'letter-spacing:.13em;text-transform:uppercase;margin:.85rem 0 .35rem">'
+        'Follow-up</div>'
+    )
+    feed = ui.element("div").classes("chat-feed").style(
+        "height:auto;max-height:18rem;flex:0 0 auto;gap:.55rem"
+    )
+    with ui.element("div").classes("fr-row").style(
+        "margin-top:.5rem;gap:.4rem"
+    ):
+        box = ui.input(
+            placeholder="Ask a follow-up…  (Enter to send)"
+        ).props("outlined dense dark").classes("fr-grow")
+        send_btn = ui.button(icon="send").props(
+            "round dense unelevated color=primary"
+        )
+
+    async def _send() -> None:
+        q = (box.value or "").strip()
+        if not q:
+            return
+        box.value = ""
+        box.disable()
+        send_btn.disable()
+        now = datetime.now().strftime("%H:%M")
+        with feed:
+            with ui.element("div").classes("bub u"):
+                ui.html(
+                    f'<div class="rl">you</div>'
+                    f'<div>{html.escape(q)}</div>'
+                    f'<div class="ts">{now}</div>'
+                )
+            pending = ui.element("div").classes("bub a")
+            with pending:
+                ui.html(
+                    '<div class="rl">copilot</div>'
+                    '<div class="typing"><i></i><i></i><i></i></div>'
+                )
+        try:
+            reply = await asyncio.to_thread(ask_fn, item_id, q)
+        except Exception as e:
+            reply = f"_LLM error: {e}_"
+        pending.clear()
+        with pending:
+            ui.html('<div class="rl">copilot</div>')
+            ui.markdown(reply or "_no reply_")
+            ui.html(
+                f'<div class="ts">{datetime.now().strftime("%H:%M")}</div>'
+            )
+        box.enable()
+        send_btn.enable()
+        box.run_method("focus")
+
+    send_btn.on_click(_send)
+    box.on("keydown.enter", _send)
+
+
+def _dossier_header(
+    ui, dlg, icon: str, title: str, subtitle: str = "",
+    href: str | None = None,
+) -> None:
+    """Shared dialog header — icon + title + (optional clickable subtitle)
+    + close button. Keeps the call and news modals visually consistent."""
+    with ui.element("div").classes("fr-hd"):
+        ui.html(
+            f'<span class="ic">{icon}</span>'
+            f'<span class="ti">{html.escape(title)[:90]}</span>'
+        )
+        if subtitle:
+            sub_html = (
+                f'<a href="{html.escape(href)}" target="_blank" '
+                f'rel="noopener" style="color:#8fb6ff;text-decoration:none">'
+                f'{html.escape(subtitle)[:60]}</a>'
+                if href else
+                f'<span>{html.escape(subtitle)[:60]}</span>'
+            )
+            ui.html(
+                f'<span class="rt" style="margin-left:.6rem">{sub_html}</span>'
+            )
+        ui.button(icon="close", on_click=dlg.close).props(
+            "round dense flat size=sm"
+        ).style("margin-left:auto")
+
+
+async def _load_dossier_into(
+    ui, summary_host, get_dossier_fn, item_id: int, *, refresh: bool = False,
+) -> None:
+    """Fetch (or refresh) a dossier off the loop and render it into the
+    summary section of the dialog. Markdown rendered through `ui.markdown`
+    so headings/bullets format properly."""
+    summary_host.clear()
+    with summary_host:
+        ui.spinner(size="md").classes("mut").style("margin:1rem auto")
+    try:
+        body = await asyncio.to_thread(
+            get_dossier_fn, item_id, refresh=refresh
+        )
+    except Exception as e:
+        summary_host.clear()
+        with summary_host:
+            ui.label(f"dossier failed: {e}").classes("fnt")
+        return
+    summary_host.clear()
+    with summary_host:
+        ui.markdown(body or "_no dossier_").classes("lookup-out").style(
+            "max-height:32rem"
+        )
+
+
+async def _open_call_dialog(ui, call_id: int) -> None:
+    """Click a call row → modal with cached LLM dossier + follow-up chat.
+    The dossier is read from cache on every open; the *first* open ever
+    generates it (one LLM round-trip), subsequent opens are instant."""
+    from .. import dossier
+    from ..db import session_scope
+    from ..models import TradingCall
+
+    try:
+        with session_scope() as s:
+            c = s.get(TradingCall, call_id)
+            if c is None:
+                ui.notify(f"call #{call_id} not found", type="warning")
+                return
+            tk = c.ticker
+            side = c.direction.upper()
+            conv = c.conviction
+            source = c.source
+            thesis = c.thesis
+            px = c.price_at_call
+            r1d = c.ret_1d_pct
+            r5d = c.ret_5d_pct
+    except Exception as e:
+        ui.notify(f"call load failed: {e}", type="negative")
+        return
+
+    icon = "🟢" if side == "LONG" else "🔴"
+    with ui.dialog() as dlg, ui.element("div").classes("fr-card fr-dlg"):
+        _dossier_header(
+            ui, dlg, icon, f"{side} ${tk}",
+            subtitle=f"{source} · conv {conv}/5",
+        )
+        body = ui.element("div").classes("fr-bd")
+        with body:
+            # Header strip: the original thesis + realised returns so far,
+            # so the dossier is in CONTEXT (this is what the model wrote
+            # against, this is what's happened since).
+            with ui.element("div").style(
+                "background:var(--surface2);border:1px solid var(--border);"
+                "border-radius:8px;padding:.55rem .75rem;margin-bottom:.7rem"
+            ):
+                bits = []
+                if px is not None:
+                    bits.append(f"@ {px:.4g}")
+                if r1d is not None:
+                    bits.append(
+                        f'<span class="{_tone(r1d)}">{_pct(r1d)} 1d</span>'
+                    )
+                if r5d is not None:
+                    bits.append(
+                        f'<span class="{_tone(r5d)}">{_pct(r5d)} 5d</span>'
+                    )
+                if bits:
+                    ui.html(
+                        f'<div class="fnt" style="font-size:10.5px;'
+                        f'letter-spacing:.1em;text-transform:uppercase;'
+                        f'margin-bottom:.25rem">Thesis</div>'
+                        f'<div style="font-size:13px;line-height:1.5">'
+                        f'{html.escape(thesis or "")}</div>'
+                        f'<div style="font-size:11px;color:var(--muted);'
+                        f'margin-top:.4rem">{" · ".join(bits)}</div>'
+                    )
+                else:
+                    ui.html(
+                        f'<div style="font-size:13px;line-height:1.5">'
+                        f'{html.escape(thesis or "")}</div>'
+                    )
+
+            with ui.element("div").classes("fr-row").style(
+                "margin-bottom:.4rem;gap:.5rem"
+            ):
+                ui.html(
+                    '<div class="fnt" style="font-size:10.5px;'
+                    'letter-spacing:.13em;text-transform:uppercase;flex:1">'
+                    'AI dossier</div>'
+                )
+                ui.button(
+                    "Regenerate",
+                    on_click=lambda: asyncio.create_task(
+                        _load_dossier_into(
+                            ui, summary_host, dossier.call_dossier,
+                            call_id, refresh=True,
+                        )
+                    ),
+                ).props("flat dense size=sm").style("font-size:10px")
+
+            summary_host = ui.element("div").classes("fr-w")
+            _dossier_chat(ui, dossier.ask_about_call, call_id)
+    dlg.open()
+    await _load_dossier_into(
+        ui, summary_host, dossier.call_dossier, call_id
+    )
+
+
+async def _open_news_dialog(ui, news_id: int) -> None:
+    """Click a news row → modal with cached LLM dossier + follow-up chat.
+    Same caching philosophy as `_open_call_dialog`."""
+    from .. import dossier
+    from ..db import session_scope
+    from ..models import NewsItem
+
+    try:
+        with session_scope() as s:
+            n = s.get(NewsItem, news_id)
+            if n is None:
+                ui.notify(f"news #{news_id} not found", type="warning")
+                return
+            title = n.title
+            url = n.url
+            tk = n.ticker
+            source = n.source
+            summary = n.summary or ""
+            sentiment = n.sentiment
+    except Exception as e:
+        ui.notify(f"news load failed: {e}", type="negative")
+        return
+
+    sent_icon = ("🟢" if (sentiment or 0) > 0
+                 else "🔴" if (sentiment or 0) < 0 else "📰")
+    with ui.dialog() as dlg, ui.element("div").classes("fr-card fr-dlg"):
+        _dossier_header(
+            ui, dlg, sent_icon, title,
+            subtitle=f"${tk or 'macro'} · {source}",
+            href=url,
+        )
+        body = ui.element("div").classes("fr-bd")
+        with body:
+            if summary:
+                with ui.element("div").style(
+                    "background:var(--surface2);border:1px solid var(--border);"
+                    "border-radius:8px;padding:.55rem .75rem;margin-bottom:.7rem;"
+                    "font-size:12.5px;line-height:1.5"
+                ):
+                    ui.html(html.escape(summary)[:1000])
+
+            with ui.element("div").classes("fr-row").style(
+                "margin-bottom:.4rem;gap:.5rem"
+            ):
+                ui.html(
+                    '<div class="fnt" style="font-size:10.5px;'
+                    'letter-spacing:.13em;text-transform:uppercase;flex:1">'
+                    'AI dossier</div>'
+                )
+                ui.button(
+                    "Regenerate",
+                    on_click=lambda: asyncio.create_task(
+                        _load_dossier_into(
+                            ui, summary_host, dossier.news_dossier,
+                            news_id, refresh=True,
+                        )
+                    ),
+                ).props("flat dense size=sm").style("font-size:10px")
+
+            summary_host = ui.element("div").classes("fr-w")
+            _dossier_chat(ui, dossier.ask_about_news, news_id)
+    dlg.open()
+    await _load_dossier_into(
+        ui, summary_host, dossier.news_dossier, news_id
+    )
 
 
 # ── scorecard ───────────────────────────────────────────────────────────────

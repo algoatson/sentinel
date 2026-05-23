@@ -228,6 +228,28 @@ class TradingCall(SQLModel, table=True):
     resolved_posted_at: Optional[datetime] = Field(default=None, index=True)
 
 
+class CallSummary(SQLModel, table=True):
+    """Cached LLM dossier for a TradingCall. Generated on first dashboard
+    click; never regenerated automatically (the underlying call data is
+    immutable — thesis, price_at_call). Stale-but-cheap > regen-on-every-
+    click; the user can force a refresh from the modal if desired.
+
+    One row per call; `call_id` is the PK so an upsert just overwrites."""
+    call_id: int = Field(primary_key=True, foreign_key="tradingcall.id")
+    summary: str  # markdown
+    created_at: datetime
+    model: str = Field(default="", max_length=120)
+
+
+class NewsAnalysis(SQLModel, table=True):
+    """Cached LLM dossier for a NewsItem — same philosophy as CallSummary.
+    Per-item read on what it means for the bot's book / watchlist names."""
+    news_id: int = Field(primary_key=True, foreign_key="newsitem.id")
+    summary: str
+    created_at: datetime
+    model: str = Field(default="", max_length=120)
+
+
 class JobRun(SQLModel, table=True):
     """One scheduler job execution. Powers the !health heartbeat."""
     id: Optional[int] = Field(default=None, primary_key=True)

@@ -124,11 +124,16 @@ def realized_curve() -> list[dict]:
     return out
 
 
-def position_chart(ticker: str, days: int = 60) -> dict:
+def position_chart(ticker: str, days: int | None = 60) -> dict:
     """Everything the dashboard needs to plot a chart for `ticker`: OHLC
     bars from PriceBar, the open paper position (if any) for the entry
     marker, and recent closed trades in the same window. Empty bars list
     is fine — a name with no PriceBar history yet renders as "no data".
+
+    `days=None` returns the **full** PriceBar history with no time filter
+    on bars — that's what the dashboard's "All" range chip uses. Closed-
+    trade markers are independently capped at ≤365d so an exit from five
+    years ago doesn't get pinned to a small label on a recent frame.
 
     Returns ``{"ticker", "bars": [{ts, open, high, low, close, volume}],
     "open_position": {...}|None, "closed": [{...}], "context": {...}|None}``.
@@ -137,14 +142,18 @@ def position_chart(ticker: str, days: int = 60) -> dict:
     if not ticker:
         return {"ticker": "", "bars": [], "open_position": None,
                 "closed": [], "context": None}
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    bars_cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=days)
+        if days is not None else None
+    )
+    closed_cutoff = datetime.now(timezone.utc) - timedelta(
+        days=days if days is not None and days <= 365 else 365
+    )
     with session_scope() as s:
-        bars = s.exec(
-            select(PriceBar)
-            .where(PriceBar.ticker == ticker)
-            .where(PriceBar.ts >= cutoff)
-            .order_by(PriceBar.ts)
-        ).all()
+        bars_q = select(PriceBar).where(PriceBar.ticker == ticker)
+        if bars_cutoff is not None:
+            bars_q = bars_q.where(PriceBar.ts >= bars_cutoff)
+        bars = s.exec(bars_q.order_by(PriceBar.ts)).all()
         open_p = s.exec(
             select(PaperTrade)
             .where(PaperTrade.ticker == ticker)
@@ -154,7 +163,7 @@ def position_chart(ticker: str, days: int = 60) -> dict:
             select(PaperTrade)
             .where(PaperTrade.ticker == ticker)
             .where(PaperTrade.status == "closed")
-            .where(PaperTrade.exit_at >= cutoff)
+            .where(PaperTrade.exit_at >= closed_cutoff)
             .order_by(PaperTrade.exit_at)
         ).all()
         pc = s.get(PriceContext, ticker)
