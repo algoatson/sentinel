@@ -23,6 +23,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from . import grounding
 from .config import settings
 
 
@@ -343,17 +344,30 @@ class LLM:
         json_mode: bool = False,
         max_tokens: int = 800,
         fallback_light: bool = False,
+        grounded: bool = True,
     ) -> str:
         """Run a completion. With `fallback_light=True`, a failed *heavy* call
         (timeout / empty / API error) retries once on the local light model
         instead of returning the sentinel — a slow CPU heavy model degrades
         the answer rather than dropping the whole cycle (synthesis/why_moved).
+
+        `grounded=True` (default) prepends the date-stamped trust-rules +
+        world-anchor preamble (`grounding.prepend`) so the LLM doesn't
+        dismiss real 2026 news as fake using its 2024 prior. Pass
+        `grounded=False` for prompts where the preamble would only add
+        noise (self-tests, pure structural extraction without world
+        context).
         """
+        if grounded:
+            prompt = grounding.prepend(prompt)
         out = self._complete_once(
             prompt, model=model, json_mode=json_mode, max_tokens=max_tokens
         )
         if out == LLM_ERROR_SENTINEL and model == "heavy" and fallback_light:
             logger.warning("heavy LLM failed — falling back to light model")
+            # `prompt` is already grounded if it was going to be; don't
+            # re-prepend here or `prepend` (which is idempotent) would
+            # still spend a few CPU cycles re-checking. Skip cleanly.
             out = self._complete_once(
                 prompt, model="light", json_mode=json_mode, max_tokens=max_tokens
             )

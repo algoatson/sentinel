@@ -1803,6 +1803,63 @@ def _activity_panel(ui, span: str = "c12") -> None:
     _tick_now(ui, refresh, 30.0)
 
 
+# ── LLM grounding card (System tab) ────────────────────────────────────────
+
+
+def _grounding_panel(ui, span: str = "c12") -> None:
+    """Show the current LLM grounding preamble — the date-stamped trust
+    rules + world anchor that's prepended to every reasoning call.
+
+    Refreshes every 5 minutes which lines up with the preamble's own
+    cache TTL, so what's rendered here is what calls are actually using.
+    A "Reload" button bypasses the cache for the next call (used after
+    editing `config/world_anchor.yaml` on the Pi without restarting)."""
+
+    with _Panel(ui, "LLM grounding", "🌐", span, anchor="grounding"):
+        host = ui.element("div").classes("fr-w")
+        with ui.element("div").classes("fr-row").style(
+            "margin-top:.6rem;gap:.5rem"
+        ):
+            ui.button(
+                "Reload anchor",
+                on_click=lambda: asyncio.create_task(_force_refresh()),
+            ).props("flat dense size=sm color=primary").style(
+                "font-size:10px"
+            )
+            ui.html(
+                '<span class="fnt" style="font-size:10.5px">'
+                'Hot-edit <code>config/world_anchor.yaml</code> on the Pi '
+                '— the bot picks it up on the next call (cache TTL 5min) '
+                'or sooner if you hit reload.</span>'
+            )
+
+    async def _force_refresh() -> None:
+        from .. import grounding as _g
+        _g.reset_cache()
+        await refresh()
+        ui.notify("anchor reloaded", type="positive")
+
+    async def refresh() -> None:
+        from .. import grounding as _g
+        try:
+            body = await asyncio.to_thread(_g.block)
+        except Exception as e:
+            host.clear()
+            with host:
+                ui.label(f"grounding unavailable: {e}").classes("fnt")
+            return
+        host.clear()
+        with host:
+            ui.html(
+                '<pre style="background:#0a0a0c;border:1px solid var(--border);'
+                'border-radius:8px;padding:.7rem .9rem;font-size:11.5px;'
+                'line-height:1.55;color:var(--text);max-height:24rem;'
+                f'overflow:auto;white-space:pre-wrap">{html.escape(body)}</pre>'
+            )
+
+    _tick_now(ui, refresh, 300.0)
+
+
 # ── recent-calls list (Calls tab) ──────────────────────────────────────────
 
 
@@ -2166,6 +2223,7 @@ def _build_page(ui) -> None:
                     with ui.element("div").classes("fr-grid"):
                         _health_panel(ui, verdict, span="c7")
                         _system_panel(ui, span="c5")
+                        _grounding_panel(ui, span="c12")
                         _scheduler_panel(ui, span="c12")
                         _log_panel(ui, span="c12")
 

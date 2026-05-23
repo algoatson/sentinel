@@ -656,6 +656,18 @@ async def _handle_command(msg: discord.Message, body: str) -> None:
         from . import health
 
         emb = _embed(None, health.health_text(), color=_COL_INFO)
+    elif cmd in ("world", "anchor", "grounding"):
+        # Dumps the LLM grounding preamble — the date-stamped "trust the
+        # data" rules + world anchor that's prepended to every reasoning
+        # call. Useful when the bot is saying weird things and you want
+        # to verify it's running with the world state you expect.
+        from . import grounding
+
+        emb = _embed(
+            "🌐 LLM grounding preamble",
+            "```\n" + grounding.block()[:3800] + "\n```",
+            color=_COL_INFO,
+        )
     elif cmd in ("funds", "leaderboard"):
         from . import funds as _f
 

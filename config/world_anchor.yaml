@@ -1,0 +1,32 @@
+# World anchor — facts the LLM should treat as ground truth so it doesn't
+# dismiss recent news using a stale (~2024) training prior.
+#
+# Rules for what goes in here:
+#   - ONLY list facts robust over months/years; nothing that flips on a
+#     news cycle (rates, index levels, specific deals, sanctions text).
+#   - If you're not 90% sure of a fact, OMIT it — an incorrect anchor
+#     poisons every reasoning call. Silence > a confident lie.
+#   - Categorical themes are fine ("tariff regime active", "AI capex is
+#     a dominant theme"); specific numbers are NOT ("Fed funds at 4.5%").
+#   - Update via PR — `git blame` is the change log.
+#
+# Last reviewed: 2026-05-23.
+
+us_government:
+  president: "Donald J. Trump (47th, sworn in 2025-01-20)"
+  vice_president: "J.D. Vance"
+  treasury_secretary: "Scott Bessent (confirmed Feb 2025)"
+
+# Broad, durable market/geopolitical themes — categorical, not numeric.
+# The bot has live data for specifics; this is just so the LLM doesn't
+# anchor on a 2024 worldview when reasoning about today's headlines.
+themes:
+  - "US tariff regime active under Trump 2.0 — broad-spectrum duties on
+    multiple trading partners with periodic adjustments. US–China trade
+    posture is a routine market-moving theme."
+  - "Russia–Ukraine conflict ongoing; ceasefire/peace-deal talks have
+    been intermittent since 2025."
+  - "AI infrastructure buildout (datacenters, power, semis) is a dominant
+    capex theme; 'hyperscaler capex' headlines are routine."
+  - "Bitcoin spot ETFs have been broadly available in the US since
+    January 2024; crypto moves alongside equities for the marginal trader."
