@@ -77,23 +77,30 @@ $context_json
 
 
 _NEWS_DOSSIER_PROMPT = Template("""\
-You're analysing one news item for a trading bot's user. Write a tight
-markdown dossier covering, IN THIS ORDER:
+You're analysing one news item for a trading bot's user. Read the FULL
+article body in the context below — do NOT reason from the headline alone.
 
-**TL;DR**: 1 line — what's the story, in plain language?
+Write a tight markdown dossier covering, IN THIS ORDER:
+
+**TL;DR**: 1 line — what's the story, in plain language? Use details
+from the article body, not just the title.
 
 **Read**: 2–4 lines — what does this *actually* mean for the named
 ticker(s), if any? Connect dots the headline doesn't. If macro/no
-specific ticker, identify the sectors most affected.
+specific ticker, identify the sectors most affected. Cite specifics
+from the article body where possible (numbers, named entities, dates).
 
 **Watchlist impact**: if any name in the watchlist context below is
 directly affected, name them and say how (positive / negative / neutral
-+ one-line reason).
++ one-line reason). Also identify tickers mentioned in the article body
+that are NOT yet in the watchlist but matter for this story.
 
 **Tradeable angle**: is there a setup here a paper-trader would act on,
 or is it noise? If tradeable, name the direction and rough timeframe.
 
-Be concrete. Don't pad. If thin, say "noise" and stop.
+Be concrete. Don't pad. If the article body in the context is empty or
+a stub (typical of paywalled sources), say so plainly and reason from
+just the headline + summary — but flag the limitation in the TL;DR.
 
 NEWS:
 $news_json
@@ -202,14 +209,25 @@ def _ctx_call(session, call: TradingCall) -> dict:
 
 def _ctx_news(session, item: NewsItem) -> dict:
     """Context for a news dossier — the item's ticker context (if any),
-    plus current open paper positions to highlight watchlist-impact."""
+    current open paper positions to highlight watchlist-impact, AND the
+    fetched article body so the LLM has actual content to reason about
+    instead of just the headline.
+
+    The body fetch is cached in `ArticleBody`, so the second-and-later
+    open of the same news dossier is a single DB read — no re-fetching."""
+    from . import article_fetch
     pc = None
     if item.ticker:
         pc = session.get(PriceContext, item.ticker)
     opens = session.exec(
         select(PaperTrade).where(PaperTrade.status == "open")
     ).all()
+    body = article_fetch.fetch_article_text(item.url) if item.url else None
+    body_meta = article_fetch.cache_meta(item.url) if item.url else None
     return {
+        "article_body": (body or "")[:5500] if body else None,
+        "article_body_source": (body_meta or {}).get("source"),
+        "article_body_chars": (body_meta or {}).get("char_count"),
         "price_context": (
             {
                 "ticker": item.ticker,

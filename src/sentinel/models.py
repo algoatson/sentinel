@@ -228,6 +228,27 @@ class TradingCall(SQLModel, table=True):
     resolved_posted_at: Optional[datetime] = Field(default=None, index=True)
 
 
+class ArticleBody(SQLModel, table=True):
+    """Cached extracted body text for a news article URL.
+
+    Without this, the news dossier only sees the RSS `title` + (often
+    near-empty) `summary` — the LLM ends up reasoning about a headline
+    in isolation and confabulating. `fetch_article_text` populates this
+    on demand; once we have a body, it's effectively immutable so the
+    cache is forever-keyed-by-URL.
+
+    `source` records HOW we got the body so a later "all articles via
+    Jina" or "all articles via direct only" introspection is one query.
+    A "stub" row means we tried, got nothing useful, and we don't want
+    to re-try every dossier open — re-attempted with `force=True`.
+    """
+    url: str = Field(primary_key=True, max_length=1024)
+    body: str
+    source: str = Field(max_length=16)  # "direct" | "jina" | "stub"
+    fetched_at: datetime
+    char_count: int = Field(default=0)
+
+
 class CallSummary(SQLModel, table=True):
     """Cached LLM dossier for a TradingCall. Generated on first dashboard
     click; never regenerated automatically (the underlying call data is

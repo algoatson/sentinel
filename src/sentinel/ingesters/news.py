@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import feedparser
 import yaml
@@ -31,6 +32,77 @@ from ..utils import extract_tickers
 
 
 _FEEDS_PATH = CONFIG_DIR / "news_feeds.yaml"
+
+# Cross-source dedup window. yfinance + RSS often republish the same
+# underlying article URL (typically Reuters/CNBC/etc) under different
+# `external_id`s, so the existing source+id unique constraint doesn't
+# catch them. 24h is generous — most dups land within minutes of each
+# other but news stories can re-syndicate over a day or two.
+_DEDUP_WINDOW_HOURS = 24
+
+# Query tracking-parameter blocklist for canonicalisation. Adapted
+# from the consumer-grade trackers; conservative on what we drop so
+# functional query strings (article_id=…, page=…) survive.
+_TRACKING_PARAMS = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_content",
+    "utm_term", "utm_id", "utm_name", "utm_brand",
+    "fbclid", "gclid", "msclkid", "yclid", "twclid", "dclid",
+    "mc_cid", "mc_eid", "_ga", "_gl",
+    "ref", "ref_src", "ref_url", "source", "via", "ncid",
+    "s_cid", "yptr", "mod", "smid", "smtyp", "guccounter",
+    "soc_src", "soc_trk", "__source", "__twitter_impression",
+    "campaign_id",
+})
+
+
+def canonical_url(url: str) -> str:
+    """Stable form of a URL for cross-source de-dup.
+
+    - Lowercase scheme + host (case sensitivity on those is folklore).
+    - Drop fragment (#section-id) — never disambiguates the article.
+    - Drop tracking query params (utm_*, fbclid, etc.) but KEEP
+      functional ones (article_id, page, etc.) so a legitimate
+      "?id=42 vs ?id=43" stays distinguishable.
+    - Strip trailing slash on the path (so /a and /a/ collapse).
+    Returns the original string on any parse error — safer to keep a
+    poorly-formed URL than to crash the ingester."""
+    if not url:
+        return url
+    try:
+        p = urlparse(url.strip())
+    except Exception:
+        return url
+    if not p.scheme or not p.netloc:
+        return url
+    kept = [
+        (k, v)
+        for k, v in parse_qsl(p.query, keep_blank_values=False)
+        if k.lower() not in _TRACKING_PARAMS
+    ]
+    path = p.path
+    if path.endswith("/") and len(path) > 1:
+        path = path.rstrip("/")
+    return urlunparse((
+        p.scheme.lower(),
+        p.netloc.lower(),
+        path,
+        "",                                     # drop params (rarely used)
+        urlencode(kept, doseq=True),
+        "",                                     # drop fragment
+    ))
+
+
+def _recent_canonicals(session, hours: int = _DEDUP_WINDOW_HOURS) -> set[str]:
+    """Set of canonical URLs ingested in the last `hours`. Used to
+    skip cross-source dups. Built once per ingest cycle; per-item
+    membership check is O(1)."""
+    cutoff_naive = (
+        datetime.now(timezone.utc) - timedelta(hours=hours)
+    ).replace(tzinfo=None)
+    rows = session.exec(
+        select(NewsItem.url).where(NewsItem.fetched_at >= cutoff_naive)
+    ).all()
+    return {canonical_url(u) for u in rows if u}
 
 
 def _stable_id(source: str, identifier: str) -> str:
@@ -69,6 +141,13 @@ def _poll_rss() -> None:
     feeds = cfg.get("feeds") or []
     if not feeds:
         return
+
+    # Lazy-built set of canonical URLs ingested in the last 24h, used to
+    # drop cross-source dups (a yfinance article from earlier this cycle
+    # vs the same URL coming through Reuters RSS now). Built on first
+    # need inside the loop's session_scope.
+    seen_urls: set[str] | None = None
+    skipped_dup = 0
 
     with session_scope() as session:
         watch_tickers = sorted({
@@ -113,6 +192,19 @@ def _poll_rss() -> None:
                 ).first()
                 if existing is not None:
                     continue
+                # Cross-source URL dedup — yfinance + RSS both republish
+                # the same underlying Reuters/CNBC URL under different
+                # `external_id`s, leaving the feed cluttered with
+                # duplicates the user can't easily tell apart.
+                # `_recent_canonicals` is rebuilt per session_scope so
+                # we don't reuse a stale snapshot between iterations.
+                if seen_urls is None:
+                    seen_urls = _recent_canonicals(session)
+                canon = canonical_url(link)
+                if canon in seen_urls:
+                    skipped_dup += 1
+                    continue
+                seen_urls.add(canon)
                 session.add(
                     NewsItem(
                         source=source,
@@ -128,7 +220,10 @@ def _poll_rss() -> None:
                 )
                 new_count += 1
 
-    logger.info("news RSS: inserted {} new items across {} feeds", new_count, len(feeds))
+    logger.info(
+        "news RSS: inserted {} new items across {} feeds (skipped {} url dups)",
+        new_count, len(feeds), skipped_dup,
+    )
 
 
 def _poll_yfinance() -> None:
@@ -136,6 +231,12 @@ def _poll_yfinance() -> None:
     one network call per ticker. We cap at the most-active tickers (those
     with recent watchlist updates) to stay polite.
     """
+    # Same lazy cross-source dedup as `_poll_rss`. Built per-cycle so it
+    # picks up anything `_poll_rss` (which ran first in `poll_news`) just
+    # inserted — that's where 90% of the yfinance↔Reuters/CNBC overlap
+    # actually shows up.
+    seen_urls: set[str] | None = None
+    skipped_dup = 0
     with session_scope() as session:
         rows = session.exec(
             select(Watchlist)
@@ -191,6 +292,13 @@ def _poll_yfinance() -> None:
                 ).first()
                 if existing is not None:
                     continue
+                if seen_urls is None:
+                    seen_urls = _recent_canonicals(session)
+                canon = canonical_url(url)
+                if canon in seen_urls:
+                    skipped_dup += 1
+                    continue
+                seen_urls.add(canon)
                 session.add(
                     NewsItem(
                         source="yfinance",
@@ -206,4 +314,7 @@ def _poll_yfinance() -> None:
                 )
                 new_count += 1
 
-    logger.info("news yfinance: inserted {} new items across {} tickers", new_count, len(tickers))
+    logger.info(
+        "news yfinance: inserted {} new items across {} tickers (skipped {} url dups)",
+        new_count, len(tickers), skipped_dup,
+    )

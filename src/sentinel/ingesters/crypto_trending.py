@@ -27,6 +27,7 @@ from .. import discord_client
 from ..db import session_scope
 from ..edgar.watchlist_builder import _synthetic_cik
 from ..models import Watchlist
+from . import prices
 
 
 _URL = "https://api.coingecko.com/api/v3/search/trending"
@@ -65,6 +66,7 @@ def _run() -> list[str]:
     expires = now + timedelta(days=_PROMOTE_DAYS)
 
     newly: list[str] = []
+    rejected_no_yf: list[str] = []
     with session_scope() as session:
         for entry in coins:
             item = entry.get("item") or {}
@@ -90,6 +92,17 @@ def _run() -> list[str]:
             ).first()
             if curated is not None:
                 continue
+            # Verify-before-promote: yfinance has thin long-tail crypto
+            # coverage (PENGU, VVV, HYPE etc. don't price), and the
+            # downstream strike-prune only kicks in after 3 empty cycles
+            # → the channel spams the user with names the bot can't
+            # actually price. `prices.can_price` does a single cached
+            # probe (1s on cache-miss, free on hit; negative results
+            # cached 7d so the same dead token doesn't get re-probed
+            # on every trending poll).
+            if not prices.can_price(ticker, "crypto"):
+                rejected_no_yf.append(sym)
+                continue
             session.add(
                 Watchlist(
                     cik=cik,
@@ -101,6 +114,11 @@ def _run() -> list[str]:
                 )
             )
             newly.append(sym)
+        if rejected_no_yf:
+            logger.info(
+                "crypto trending: {} rejected (no yfinance data): {}",
+                len(rejected_no_yf), ", ".join(rejected_no_yf[:12]),
+            )
 
         # Expire stale trending promotions.
         for row in session.exec(

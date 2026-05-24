@@ -706,6 +706,100 @@ def fund_detail_text(name: str) -> str:
     return "\n".join(body)[:4000]
 
 
+def trade_history(name: str, days: int = 90) -> dict | None:
+    """All trades (open + closed within `days`) on a wallet, with
+    open_reason / close_reason populated — the audit surface for
+    "what did this wallet do and why".
+
+    Unlike `fund_positions`, this accepts ANY wallet name (including
+    `research`, which deliberately has no `_POLICIES` entry — see
+    `seed_funds`). The user-facing Research tab uses this to render the
+    full history of executed Research Desk trades, including closed
+    ones with the reason they closed — the answer to "where did my
+    trade go?"."""
+    name = (name or "").strip().lower()
+    now = datetime.now(timezone.utc)
+    cutoff_naive = (now - timedelta(days=days)).replace(tzinfo=None)
+    with session_scope() as s:
+        fund = s.exec(select(Fund).where(Fund.name == name)).first()
+        if fund is None:
+            return None
+        opens = _open_trades(s, fund.id)
+        closed = s.exec(
+            select(FundTrade)
+            .where(FundTrade.fund_id == fund.id)
+            .where(FundTrade.status == "closed")
+            .where(FundTrade.exit_at >= cutoff_naive)
+            .order_by(FundTrade.exit_at.desc())
+        ).all()
+        eq = _equity(s, fund, opens)
+
+        def _iso(t):
+            return (
+                t if t is None or t.tzinfo
+                else t.replace(tzinfo=timezone.utc)
+            )
+
+        def _open_row(t: FundTrade) -> dict:
+            mark_val = _mark(s, t.ticker)
+            mark = mark_val if mark_val is not None else t.entry_price
+            d = 1 if t.side == "long" else -1
+            upnl = (t.qty * (mark - t.entry_price) * d) or 0.0
+            cost = t.entry_price * t.qty
+            return {
+                "id": t.id,
+                "ticker": t.ticker, "side": t.side, "qty": t.qty,
+                "entry": t.entry_price,
+                "entry_at": _iso(t.entry_at).isoformat(),
+                "mark": mark,
+                "mark_live": mark_val is not None,
+                "upnl": round(upnl, 2),
+                "upnl_pct": (
+                    round(upnl / cost * 100, 2) if cost else 0.0
+                ),
+                "open_reason": t.open_reason,
+                "call_id": t.call_id,
+            }
+
+        def _closed_row(t: FundTrade) -> dict:
+            cost = t.entry_price * t.qty
+            return {
+                "id": t.id,
+                "ticker": t.ticker, "side": t.side, "qty": t.qty,
+                "entry": t.entry_price,
+                "entry_at": _iso(t.entry_at).isoformat(),
+                "exit": t.exit_price,
+                "exit_at": (
+                    _iso(t.exit_at).isoformat() if t.exit_at else None
+                ),
+                "realized_pnl": (
+                    round(t.realized_pnl, 2)
+                    if t.realized_pnl is not None else None
+                ),
+                "realized_pct": (
+                    round((t.realized_pnl or 0) / cost * 100, 2)
+                    if cost else 0.0
+                ),
+                "open_reason": t.open_reason,
+                "close_reason": t.close_reason,
+                "call_id": t.call_id,
+            }
+
+        return {
+            "name": fund.name,
+            "mandate": fund.mandate,
+            "cash": round(fund.cash, 2),
+            "equity": round(eq, 2),
+            "starting": fund.starting_cash,
+            "ret_pct": round(
+                (eq - fund.starting_cash) / fund.starting_cash * 100, 2
+            ) if fund.starting_cash else 0.0,
+            "open": [_open_row(t) for t in opens],
+            "closed": [_closed_row(t) for t in closed],
+            "as_of": now.isoformat(),
+        }
+
+
 def fund_positions(name: str) -> dict | None:
     """Structured snapshot of one wallet's **open** positions for the cockpit.
 

@@ -2194,11 +2194,15 @@ def _build_page(ui) -> None:
                 # User-prompted research with confirm-before-trade. Goes
                 # to the dedicated `research` wallet so its P&L curve sits
                 # alongside (but separate from) the seven autonomous funds.
+                # The wallet panel ABOVE the research desk gives a
+                # persistent audit of executed trades (open + closed with
+                # close_reason) — the user's "where did my trade go?".
                 with ui.element("div").classes("fr-tab").props(
                     "data-tab=research"
                 ):
                     _tab_header(ui, "research")
                     with ui.element("div").classes("fr-grid"):
+                        _research_wallet_panel(ui, span="c12")
                         _research_panel(ui, span="c12")
 
                 # ── INTEL ────────────────────────────────────────────────
@@ -2731,13 +2735,31 @@ def _dossier_header(
 
 async def _load_dossier_into(
     ui, summary_host, get_dossier_fn, item_id: int, *, refresh: bool = False,
+    get_meta_fn=None,
 ) -> None:
-    """Fetch (or refresh) a dossier off the loop and render it into the
-    summary section of the dialog. Markdown rendered through `ui.markdown`
-    so headings/bullets format properly."""
+    """Fetch (or refresh) a dossier off the loop and render it.
+
+    When `get_meta_fn(item_id)` is provided and returns a hit, the body
+    is loaded from cache without showing the spinner — instant repaint
+    — and a "cached on X" badge is rendered above the markdown. This is
+    what tells the user the cache is actually working; previously a
+    cache hit looked identical to a regen (same spinner, same delay).
+
+    `refresh=True` always shows the spinner and bypasses the cache."""
     summary_host.clear()
-    with summary_host:
-        ui.spinner(size="md").classes("mut").style("margin:1rem auto")
+
+    # Cache-hit fast path: render immediately + badge, no spinner.
+    cached_meta = None
+    if get_meta_fn is not None and not refresh:
+        try:
+            cached_meta = get_meta_fn(item_id)
+        except Exception as e:
+            logger.debug("dossier cache_meta failed: {}", e)
+
+    if cached_meta is None:
+        with summary_host:
+            ui.spinner(size="md").classes("mut").style("margin:1rem auto")
+
     try:
         body = await asyncio.to_thread(
             get_dossier_fn, item_id, refresh=refresh
@@ -2747,8 +2769,18 @@ async def _load_dossier_into(
         with summary_host:
             ui.label(f"dossier failed: {e}").classes("fnt")
         return
+
     summary_host.clear()
     with summary_host:
+        if cached_meta:
+            ts = cached_meta.get("created_at", "")[:16].replace("T", " ")
+            model = cached_meta.get("model") or "—"
+            ui.html(
+                '<div class="fr-pill ok" style="display:inline-flex;'
+                'align-items:center;gap:.35rem;font-size:10px;padding:.18rem .55rem;'
+                f'margin-bottom:.5rem">✓ cached · {html.escape(ts)} UTC · '
+                f'{html.escape(model[:40])}</div>'
+            )
         ui.markdown(body or "_no dossier_").classes("lookup-out").style(
             "max-height:32rem"
         )
@@ -2848,7 +2880,8 @@ async def _open_call_dialog(ui, call_id: int) -> None:
             _dossier_chat(ui, dossier.ask_about_call, call_id)
     dlg.open()
     await _load_dossier_into(
-        ui, summary_host, dossier.call_dossier, call_id
+        ui, summary_host, dossier.call_dossier, call_id,
+        get_meta_fn=dossier.call_summary_meta,
     )
 
 
@@ -2917,7 +2950,8 @@ async def _open_news_dialog(ui, news_id: int) -> None:
             _dossier_chat(ui, dossier.ask_about_news, news_id)
     dlg.open()
     await _load_dossier_into(
-        ui, summary_host, dossier.news_dossier, news_id
+        ui, summary_host, dossier.news_dossier, news_id,
+        get_meta_fn=dossier.news_analysis_meta,
     )
 
 
@@ -3110,6 +3144,169 @@ def _render_research_action(ui, dlg, t: dict) -> None:
             exec_btn.props(remove="loading")
 
     exec_btn.on_click(_do_execute)
+
+
+# ── research wallet trade history (Research tab) ──────────────────────────
+
+
+def _research_wallet_panel(ui, span: str = "c12") -> None:
+    """Open + recently-closed trades on the `research` wallet — the
+    audit surface for "where did my trade go?". Closed rows include
+    the reason they closed (read from `FundTrade.close_reason`),
+    realized P&L, and the open_reason (which embeds the Research Desk
+    task id and the original thesis)."""
+    from .. import funds
+
+    with _Panel(ui, "Research wallet — book", "💼", span,
+                anchor="research-wallet"):
+        host = ui.element("div").classes("fr-w")
+
+    async def refresh() -> None:
+        try:
+            d = await asyncio.to_thread(
+                funds.trade_history, funds.RESEARCH_WALLET_NAME, 90,
+            )
+        except Exception as e:
+            host.clear()
+            with host:
+                ui.label(f"wallet unavailable: {e}").classes("fnt")
+            return
+        if d is None:
+            host.clear()
+            with host:
+                ui.label(
+                    "Research wallet not seeded yet — restart the bot."
+                ).classes("mut")
+            return
+
+        host.clear()
+        with host:
+            # ── headline tiles ───────────────────────────────────────────
+            with ui.element("div").classes("fr-tiles").style(
+                "margin-bottom:.7rem"
+            ):
+                for label, val, tone in (
+                    ("Equity",   _usd(d["equity"]),       ""),
+                    ("Return",   _pct(d["ret_pct"]),      _tone(d["ret_pct"])),
+                    ("Cash",     _usd(d["cash"]),         ""),
+                    ("Open",     str(len(d["open"])),     ""),
+                    ("Closed (90d)", str(len(d["closed"])), ""),
+                ):
+                    with ui.element("div").classes("fr-tile"):
+                        ui.html(f'<div class="l">{html.escape(label)}</div>')
+                        ui.html(
+                            f'<div class="v {tone}">{html.escape(val)}</div>'
+                        )
+
+            # ── open positions ───────────────────────────────────────────
+            ui.html(
+                '<div class="fnt" style="font-size:10.5px;'
+                'letter-spacing:.13em;text-transform:uppercase;'
+                'margin:.85rem 0 .35rem">Open</div>'
+            )
+            if not d["open"]:
+                ui.label("No open positions on the research wallet.").classes(
+                    "mut"
+                ).style("font-size:13px")
+            else:
+                for t in d["open"]:
+                    side_cls = "sd-l" if t["side"] == "long" else "sd-s"
+                    mark_cls = "" if t["mark_live"] else "fnt"
+                    with ui.element("div").classes("fr-feed-row").style(
+                        "align-items:center"
+                    ):
+                        ui.html(
+                            f'<span class="kind {"call" if t["side"]=="long" else "call short"}">'
+                            f'{t["side"].upper()}</span>'
+                        )
+                        with ui.element("div").classes("body"):
+                            ui.html(
+                                f'<span class="sd {side_cls}">'
+                                f'{t["side"].upper()}</span>'
+                                f'<span class="tk">${html.escape(t["ticker"])}</span>'
+                                f' &nbsp; <span class="num">{t["qty"]:g}</span>'
+                                f' @ <span class="num">{t["entry"]:.4g}</span>'
+                                f' → <span class="num {mark_cls}">{t["mark"]:.4g}</span>'
+                                f' &nbsp; <span class="{_tone(t["upnl"])}">'
+                                f'{_susd(t["upnl"])} '
+                                f'({_pct(t["upnl_pct"])})</span>'
+                            )
+                            if t.get("open_reason"):
+                                ui.html(
+                                    f'<div class="meta">'
+                                    f'{html.escape(t["open_reason"][:280])}'
+                                    f'</div>'
+                                )
+                        ui.html(
+                            f'<span class="ts">'
+                            f'{html.escape(t["entry_at"][:10])}</span>'
+                        )
+
+            # ── closed positions ─────────────────────────────────────────
+            ui.html(
+                '<div class="fnt" style="font-size:10.5px;'
+                'letter-spacing:.13em;text-transform:uppercase;'
+                'margin:.85rem 0 .35rem">Closed (90d)</div>'
+            )
+            if not d["closed"]:
+                ui.label(
+                    "No closed trades yet on the research wallet."
+                ).classes("mut").style("font-size:13px")
+            else:
+                for t in d["closed"]:
+                    side_cls = "sd-l" if t["side"] == "long" else "sd-s"
+                    realized_tone = _tone(t.get("realized_pnl") or 0)
+                    with ui.element("div").classes("fr-feed-row").style(
+                        "align-items:center"
+                    ):
+                        # green/red kind chip mirrors realized P&L sign so
+                        # the user can see at a glance whether the close
+                        # was a winner or a loser without reading numbers.
+                        chip_kind = (
+                            "call" if (t.get("realized_pnl") or 0) > 0
+                            else "call short"
+                        )
+                        ui.html(
+                            f'<span class="kind {chip_kind}">'
+                            f'{"WIN" if (t.get("realized_pnl") or 0) > 0 else "LOSS"}'
+                            f'</span>'
+                        )
+                        with ui.element("div").classes("body"):
+                            ui.html(
+                                f'<span class="sd {side_cls}">'
+                                f'{t["side"].upper()}</span>'
+                                f'<span class="tk">${html.escape(t["ticker"])}</span>'
+                                f' &nbsp; <span class="num">{t["qty"]:g}</span>'
+                                f' @ <span class="num">{t["entry"]:.4g}</span>'
+                                f' → <span class="num">'
+                                f'{t["exit"]:.4g if t.get("exit") else "—"}</span>'
+                                f' &nbsp; <span class="{realized_tone}">'
+                                f'{_susd(t.get("realized_pnl") or 0)} '
+                                f'({_pct(t.get("realized_pct") or 0)})'
+                                f'</span>'
+                            )
+                            details: list[str] = []
+                            if t.get("close_reason"):
+                                details.append(
+                                    f'closed: {html.escape(t["close_reason"])[:140]}'
+                                )
+                            if t.get("open_reason"):
+                                details.append(
+                                    html.escape(t["open_reason"][:200])
+                                )
+                            if details:
+                                ui.html(
+                                    '<div class="meta">'
+                                    + ' · '.join(details)
+                                    + '</div>'
+                                )
+                        ui.html(
+                            f'<span class="ts">'
+                            f'{html.escape(t["exit_at"][:10] if t.get("exit_at") else "—")}'
+                            f'</span>'
+                        )
+
+    _tick_now(ui, refresh, 30.0)
 
 
 # ── research desk panel (Research tab) ────────────────────────────────────

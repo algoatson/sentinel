@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Iterable
 
 import pandas as pd
@@ -61,6 +61,52 @@ _CRYPTO_YF_OVERRIDES = {
 _PRUNABLE_SOURCES = frozenset({"crypto_trending", "activity"})
 _MAX_EMPTY_STRIKES = 3
 _EMPTY_STRIKES: dict[str, int] = {}
+
+
+# Probe cache for `can_price`. We avoid hammering yfinance for the same
+# dead token over and over. Positive answers live for the process
+# lifetime (a tradable name doesn't un-trade in our window); negative
+# answers expire after _NEGATIVE_PROBE_TTL so a newly-listed coin gets
+# a second chance after a week without us paying for the lookup daily.
+_NEGATIVE_PROBE_TTL = timedelta(days=7)
+_CAN_PRICE_CACHE: dict[str, tuple[bool, datetime]] = {}
+
+
+def can_price(ticker: str, asset_class: str = "equity") -> bool:
+    """Best-effort 'does yfinance actually return data for this ticker'.
+
+    Used by promoters (crypto_trending especially) to avoid admitting
+    tickers that the price ingester will silently strike for the next
+    week — which spams the #crypto channel with names the bot can't
+    actually price (PENGU, VVV, HYPE — those are real long-tail tokens
+    yfinance doesn't carry).
+
+    Cached so repeat calls within the same process don't re-probe; a
+    negative result lives for `_NEGATIVE_PROBE_TTL` so a fresh listing
+    eventually gets reprobed. ~1s per fresh probe, near-zero on hit.
+    Errors (timeout, rate-limit, weird shape) read as 'False' — being
+    wrong on the optimistic side leaves the bot in the broken state
+    we're trying to fix.
+    """
+    key = ticker
+    now = datetime.now(timezone.utc)
+    cached = _CAN_PRICE_CACHE.get(key)
+    if cached is not None:
+        value, ts = cached
+        if value or (now - ts) < _NEGATIVE_PROBE_TTL:
+            return value
+    yf_sym = _to_yfinance(ticker, asset_class)
+    ok = False
+    try:
+        import yfinance as yf
+        info = yf.Ticker(yf_sym).history(period="5d", interval="1d")
+        ok = info is not None and not info.empty
+    except Exception as e:
+        logger.debug("can_price probe failed for {} ({}): {}",
+                     ticker, yf_sym, e)
+        ok = False
+    _CAN_PRICE_CACHE[key] = (ok, now)
+    return ok
 
 
 def _to_yfinance(ticker: str, asset_class: str = "equity") -> str:
