@@ -69,3 +69,91 @@ def test_cashtag_and_bare_together_dedupes():
 def test_empty_text():
     assert extract_tickers("", WATCHLIST) == set()
     assert extract_tickers("no tickers here at all", WATCHLIST) == set()
+
+
+# ── Rule 3: company-name resolution (Wave 2 addition) ────────────────────
+
+
+def test_name_resolution_finds_ticker_when_no_cashtag():
+    """Headline-grade news rarely uses cashtags — without name
+    resolution, every $NVDA story written as "Nvidia announced…" would
+    sail through extract_tickers with no ticker attached. Pin the fix
+    against that regression."""
+    body = (
+        "Nvidia announced a new generation of datacenter GPUs targeting "
+        "the AI training workload."
+    )
+    assert extract_tickers(body, WATCHLIST) == {"NVDA"}
+
+
+def test_name_resolution_is_case_insensitive():
+    assert extract_tickers("NVIDIA is up", WATCHLIST) == {"NVDA"}
+    assert extract_tickers("nvidia is up", WATCHLIST) == {"NVDA"}
+    assert extract_tickers("NvIdIa is up", WATCHLIST) == {"NVDA"}
+
+
+def test_name_resolution_respects_watchlist():
+    """A name like Microsoft maps to MSFT — but if MSFT isn't in the
+    watchlist, we don't tag it. Watchlist remains the source of truth
+    for what we track."""
+    # MSFT not in WATCHLIST → not extracted
+    assert "MSFT" not in extract_tickers(
+        "Microsoft and Oracle both reported", WATCHLIST
+    )
+
+
+def test_name_resolution_word_boundary_does_not_overmatch():
+    """`Apple` must NOT match inside `Snapple` / `Pineapple`. Word-
+    boundary regex saves us from this class of false positive."""
+    assert extract_tickers("Snapple sales rose", WATCHLIST) == set()
+    assert extract_tickers("Pineapple Express", WATCHLIST) == set()
+
+
+def test_name_aliases_resolve_to_same_canonical():
+    """Google + Alphabet should both map to GOOGL — both are valid
+    English-language references to the same company in news."""
+    watchlist = WATCHLIST | {"GOOGL"}
+    assert "GOOGL" in extract_tickers("Alphabet reported", watchlist)
+    assert "GOOGL" in extract_tickers("Google announced", watchlist)
+
+
+def test_name_resolution_combined_with_cashtags():
+    """Mixed input — one ticker via cashtag, another via name —
+    yields both."""
+    watchlist = WATCHLIST | {"MSFT"}
+    out = extract_tickers(
+        "$AAPL and Microsoft both reported on Tuesday", watchlist
+    )
+    assert out == {"AAPL", "MSFT"}
+
+
+def test_name_resolution_realistic_news_excerpt():
+    """The exact user complaint: a news excerpt with 5 watchable
+    names, none in cashtag form, must yield all five."""
+    body = (
+        "Industry observers said the move was likely to benefit IonQ, "
+        "Rigetti, and D-Wave — the three publicly traded pure-plays in "
+        "the space. Larger players including IBM and Alphabet also "
+        "stand to gain through their existing research programmes."
+    )
+    watchlist = {"IONQ", "RGTI", "QBTS", "IBM", "GOOGL"}
+    out = extract_tickers(body, watchlist)
+    assert {"IONQ", "RGTI", "QBTS", "IBM", "GOOGL"} <= out
+
+
+def test_blocklist_still_overrides_for_name_match():
+    """If a name aliases to a blocklisted ticker, the blocklist wins
+    (defence in depth)."""
+    # Synthesise: pretend "DD" is in the alias map (it isn't shipped
+    # because of the conflict, but the rule logic is unit-testable).
+    from sentinel import utils
+    import re
+    saved = utils._NAME_PATTERNS
+    utils._NAME_PATTERNS = saved + (
+        (re.compile(r"\bdupontish\b", re.IGNORECASE), "DD"),
+    )
+    try:
+        # WATCHLIST has DD; ext would otherwise match — blocklist saves us
+        assert "DD" not in extract_tickers("dupontish things", WATCHLIST)
+    finally:
+        utils._NAME_PATTERNS = saved

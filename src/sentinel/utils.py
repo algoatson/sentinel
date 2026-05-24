@@ -18,6 +18,116 @@ _CASHTAG_RE = re.compile(r"\$([A-Z]{1,5})\b")
 _BARE_RE = re.compile(r"\b([A-Z]{1,5})\b")
 
 
+# Company-name → canonical-ticker map for the names most likely to show
+# up in financial news WITHOUT a cashtag ("Nvidia announced…" rather
+# than "$NVDA announced…"). Used by `extract_tickers` as a third path
+# alongside cashtags and bare-ticker matching, so a story that mentions
+# Apple/Nvidia by name still gets the ticker tag.
+#
+# Each entry is a case-insensitive substring keyed on a non-overlapping
+# distinctive phrase — we use word-boundary matching at runtime so
+# "Microsoft" doesn't accidentally fire on "Microsoftie" (yes, real word).
+# Aliases under the same canonical ticker (Google/Alphabet, J&J/Johnson
+# & Johnson) are listed separately for predictable maintenance.
+#
+# Keep this curated and biased toward names that appear in headline-grade
+# news. The long tail belongs in a future TickerAlias DB table seeded
+# from yfinance.
+COMPANY_NAME_ALIASES: dict[str, str] = {
+    # ── mega-cap tech ──
+    "nvidia": "NVDA",
+    "apple": "AAPL",
+    "microsoft": "MSFT",
+    "alphabet": "GOOGL",
+    "google": "GOOGL",
+    "amazon": "AMZN",
+    "meta": "META",
+    "facebook": "META",
+    "tesla": "TSLA",
+    "netflix": "NFLX",
+    "oracle": "ORCL",
+    "salesforce": "CRM",
+    "adobe": "ADBE",
+    "broadcom": "AVGO",
+    "intel": "INTC",
+    "amd": "AMD",
+    "qualcomm": "QCOM",
+    "ibm": "IBM",
+    "cisco": "CSCO",
+    # ── semis / AI infra ──
+    "tsmc": "TSM",
+    "taiwan semiconductor": "TSM",
+    "asml": "ASML",
+    "arm holdings": "ARM",
+    "palantir": "PLTR",
+    "snowflake": "SNOW",
+    "crowdstrike": "CRWD",
+    "servicenow": "NOW",
+    "service now": "NOW",
+    "supermicro": "SMCI",
+    "super micro": "SMCI",
+    "micron": "MU",
+    "lam research": "LRCX",
+    "applied materials": "AMAT",
+    # ── mega-cap non-tech ──
+    "berkshire": "BRK.B",
+    "berkshire hathaway": "BRK.B",
+    "jpmorgan": "JPM",
+    "jp morgan": "JPM",
+    "exxonmobil": "XOM",
+    "exxon": "XOM",
+    "walmart": "WMT",
+    "costco": "COST",
+    "visa": "V",
+    "mastercard": "MA",
+    "unitedhealth": "UNH",
+    "johnson & johnson": "JNJ",
+    "j&j": "JNJ",
+    "procter & gamble": "PG",
+    "p&g": "PG",
+    "chevron": "CVX",
+    "pfizer": "PFE",
+    "eli lilly": "LLY",
+    "lilly": "LLY",
+    "boeing": "BA",
+    "ford": "F",
+    "general motors": "GM",
+    # ── quantum (the user's example) ──
+    "ionq": "IONQ",
+    "rigetti": "RGTI",
+    "d-wave": "QBTS",
+    "quantum computing inc": "QUBT",
+    "honeywell quantum": "HON",
+    # ── ETFs frequently named ──
+    "s&p 500": "SPY",
+    "nasdaq 100": "QQQ",
+    "russell 2000": "IWM",
+    "dow jones industrial": "DIA",
+    # ── crypto ──
+    "bitcoin": "BTC-USD",
+    "ethereum": "ETH-USD",
+    "ether": "ETH-USD",
+    "solana": "SOL-USD",
+    "ripple": "XRP-USD",
+    "dogecoin": "DOGE-USD",
+    "shiba inu": "SHIB-USD",
+    "polkadot": "DOT-USD",
+    "cardano": "ADA-USD",
+    "chainlink": "LINK-USD",
+    "litecoin": "LTC-USD",
+    "polygon": "MATIC-USD",
+    "avalanche": "AVAX-USD",
+}
+
+# Pre-built regex per alias for word-boundary case-insensitive match.
+# Compiled once at import; per-call cost is ~negligible (a dict + ~80
+# tiny regex passes over a few hundred chars of text).
+_NAME_PATTERNS: tuple[tuple[re.Pattern, str], ...] = tuple(
+    (re.compile(rf"\b{re.escape(name)}\b", re.IGNORECASE), ticker)
+    for name, ticker in COMPANY_NAME_ALIASES.items()
+)
+
+
 # ── chat reply highlighting ─────────────────────────────────────────────────
 # Deterministic post-formatter for conversational replies: makes the
 # scannable bits pop (tickers, % moves, a tight set of unambiguous trading
@@ -116,13 +226,20 @@ def extract_tickers(
     flair: Optional[str] = None,
     title: Optional[str] = None,
 ) -> set[str]:
-    """Extract tickers from Reddit text per SPEC §7 rules.
+    """Extract tickers from arbitrary text (Reddit, news articles, filings).
 
-    1. Cashtag form ($AAPL): accept if in watchlist.
-    2. Bare form (AAPL): accept only if in watchlist AND
-       (appears ≥2 times in the text, OR post flair matches, OR title contains
+    Rules:
+    1. Cashtag form ($AAPL): accept if in watchlist + not blocklisted.
+    2. Bare form (AAPL): accept only if in watchlist + not blocklisted
+       AND (appears ≥2 times, OR post flair matches, OR title contains
        the cashtag form).
-    3. Reject if the candidate is in the blocklist — regardless of cashtag.
+    3. **Company name** (Nvidia, Apple, Microsoft, …): accept if the
+       canonical ticker is in the watchlist + not blocklisted AND the
+       name appears anywhere in the combined text. Name matching is
+       word-boundary case-insensitive (`COMPANY_NAME_ALIASES`). This is
+       why "Nvidia announced…" (no cashtag) now tags $NVDA on news
+       articles where the old rules would miss it entirely.
+    4. Blocklist always wins regardless of cashtag presence.
     """
     watchlist = {t.upper() for t in watchlist_tickers}
     combined = text if title is None else f"{title}\n{text}"
@@ -147,11 +264,22 @@ def extract_tickers(
             continue
         if ticker not in watchlist:
             continue
-        # Count bare occurrences (not preceded by $).
         bare_count = len(re.findall(rf"(?<!\$)\b{re.escape(ticker)}\b", combined))
         flair_match = flair_upper == ticker
         title_cashtag_match = ticker in title_cashtags
         if bare_count >= 2 or flair_match or title_cashtag_match:
+            accepted.add(ticker)
+
+    # Rule 3: company-name resolution. Watchlist + blocklist gates still
+    # apply — a name match alone doesn't add a ticker we're not tracking.
+    for pattern, ticker in _NAME_PATTERNS:
+        if ticker in accepted:
+            continue
+        if ticker in TICKER_BLOCKLIST:
+            continue
+        if ticker not in watchlist:
+            continue
+        if pattern.search(combined):
             accepted.add(ticker)
 
     return accepted
