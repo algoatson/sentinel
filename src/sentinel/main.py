@@ -127,6 +127,15 @@ def _parse_args() -> argparse.Namespace:
         "empty schema, then exit — run this (with the bot stopped) for a "
         "fresh start. Reversible: nothing is deleted.",
     )
+    p.add_argument(
+        "--preflight",
+        action="store_true",
+        help="run boot self-checks (DB schema, YAML configs, channel ids, "
+        "LLM tiers reachable, dashboard port free, watchlist seeded) then "
+        "exit. Exit code 0 if nothing critical failed; warnings never "
+        "block. Wire this into your systemd unit's ExecStartPre to catch "
+        "stale-config restarts before the scheduler arms.",
+    )
     return p.parse_args()
 
 
@@ -213,6 +222,14 @@ async def _run_live() -> None:
 
 def main() -> int:
     args = _parse_args()
+
+    if args.preflight:
+        # Lazy import — preflight pulls a lot of the world (DB, LLM, httpx)
+        # and we don't want every other code path paying for that import.
+        from . import preflight
+        results, code = preflight.run_all()
+        preflight.print_report(results)
+        return code
 
     if args.reset:
         backup = archive_database()
