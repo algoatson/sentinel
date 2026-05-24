@@ -508,6 +508,78 @@ table.fr-tb tbody tr:hover td{background:rgba(255,255,255,.022);}
   font-weight:500;}
 .fr-pos-summary .big{font-size:22px;font-weight:600;line-height:1.1;
   font-variant-numeric:tabular-nums;}
+
+/* ── news + call cards (Wave 2 redesign) ───────────────────────────────
+   The list-of-rows feed was packing 6 fields onto one line and reading
+   "built with twigs" per the user. Cards spread the same data across a
+   small grid with proper visual hierarchy: meta strip, headline, ticker
+   tags, summary excerpt, action row. Card click opens the AI dossier
+   (the dominant intent on a news/call hit); secondary actions are
+   buttons that stop propagation so they don't double-fire. */
+.fr-card-grid{display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(22rem,1fr));
+  gap:.7rem;width:100%;align-items:stretch;}
+.fr-news-card,.fr-call-card{background:var(--surface);
+  border:1px solid var(--border);border-radius:10px;
+  padding:.7rem .85rem;display:flex;flex-direction:column;gap:.4rem;
+  cursor:pointer;transition:border-color .12s ease,
+  background .12s ease,transform .12s ease;}
+.fr-news-card:hover,.fr-call-card:hover{
+  border-color:var(--border-strong);
+  background:rgba(255,255,255,.018);}
+.fr-news-card .card-meta,
+.fr-call-card .card-meta{display:flex;align-items:center;
+  gap:.45rem;font-size:10px;color:var(--faint);}
+.fr-news-card .card-meta .ts,
+.fr-call-card .card-meta .ts{margin-left:auto;
+  font-variant-numeric:tabular-nums;}
+.fr-news-card .card-title,
+.fr-call-card .card-title{font-size:13.5px;font-weight:500;
+  color:var(--text);line-height:1.42;
+  overflow:hidden;text-overflow:ellipsis;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;}
+.fr-news-card .card-tags,
+.fr-call-card .card-tags{display:flex;flex-wrap:wrap;
+  gap:.32rem .5rem;font-size:11px;align-items:center;}
+.fr-news-card .card-tags .tk,
+.fr-call-card .card-tags .tk{font-family:ui-monospace,Menlo,monospace;
+  background:var(--surface2);color:var(--text);
+  padding:.12rem .42rem;border-radius:4px;
+  border:1px solid var(--border);font-size:10.5px;font-weight:600;}
+.fr-news-card .card-tags .src,
+.fr-call-card .card-tags .src{color:var(--muted);font-size:10.5px;
+  letter-spacing:.02em;}
+.fr-news-card .card-tags .delta,
+.fr-call-card .card-tags .delta{
+  font-variant-numeric:tabular-nums;font-size:10.5px;}
+.fr-news-card .card-excerpt,
+.fr-call-card .card-excerpt{font-size:12px;color:var(--muted);
+  line-height:1.45;
+  overflow:hidden;text-overflow:ellipsis;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+.fr-news-card .card-actions,
+.fr-call-card .card-actions{display:flex;gap:.45rem;margin-top:auto;
+  padding-top:.5rem;border-top:1px solid var(--border-soft);
+  align-items:center;}
+.fr-news-card .card-actions .btn,
+.fr-call-card .card-actions .btn{font-size:10.5px;
+  padding:.28rem .6rem;border-radius:5px;background:transparent;
+  border:1px solid var(--border);color:var(--muted);cursor:pointer;
+  text-decoration:none;transition:all .12s;
+  font-family:inherit;letter-spacing:.02em;
+  display:inline-flex;align-items:center;gap:.3rem;}
+.fr-news-card .card-actions .btn:hover,
+.fr-call-card .card-actions .btn:hover{color:var(--text);
+  border-color:var(--border-strong);
+  background:rgba(255,255,255,.025);}
+.fr-news-card .card-actions .btn.primary,
+.fr-call-card .card-actions .btn.primary{color:#8fb6ff;
+  border-color:rgba(102,153,255,.25);
+  background:rgba(102,153,255,.06);}
+.fr-news-card .card-actions .btn.primary:hover,
+.fr-call-card .card-actions .btn.primary:hover{
+  color:#a8c5ff;border-color:rgba(102,153,255,.5);
+  background:rgba(102,153,255,.12);}
 </style>
 """
 
@@ -805,7 +877,7 @@ def _equity_curve_panel(ui, span: str = "c7") -> None:
         except Exception as e:
             logger.debug("equity chart render: {}", e)
 
-    _tick_now(ui, refresh, 60.0)
+    _tick_now(ui, refresh, _i("equity_curve"))
 
 
 # ── realised P&L curve (Overview tab) ──────────────────────────────────────
@@ -832,7 +904,7 @@ def _realized_curve_panel(ui, span: str = "c5") -> None:
         except Exception as e:
             logger.debug("realized chart render: {}", e)
 
-    _tick_now(ui, refresh, 30.0)
+    _tick_now(ui, refresh, _i("realized_curve"))
 
 
 # ── ticker chart (Markets tab) — the star feature ─────────────────────────
@@ -965,7 +1037,7 @@ def _ticker_chart_panel(ui, span: str = "c12") -> None:
             state["_opens"] = []
         _paint_chips()
 
-    _tick_now(ui, _refresh_chips, 60.0)
+    _tick_now(ui, _refresh_chips, _i("ticker_chips"))
 
 
 def _render_stats(host, ticker: str, d: dict) -> None:
@@ -1329,7 +1401,7 @@ def _watchlist_panel(ui, span: str = "c12") -> None:
                 "Watchlist is empty — !add a ticker to start tracking."
             )
 
-    _tick_now(ui, refresh, 30.0)
+    _tick_now(ui, refresh, _i("watchlist"))
 
 
 def _click_load(ticker: str) -> None:
@@ -1430,23 +1502,30 @@ def _filings_feed_panel(ui, span: str = "c6") -> None:
                         )
                     ui.html(f'<span class="ts">{ago}</span>')
 
-    _tick_now(ui, refresh, 60.0)
+    _tick_now(ui, refresh, _i("filings_feed"))
 
 
 # ── news feed (Intel tab) ──────────────────────────────────────────────────
 
 
 def _news_feed_panel(ui, span: str = "c6") -> None:
-    """Last ~24h of news — title · source · ticker · impact-vs-1d if
-    measured. Per-name and macro items are both included; macro items
-    surface with ticker "—"."""
+    """Last ~24h of news, rendered as a card grid (Wave 2 redesign).
+
+    Each card carries: kind chip (sentiment-coloured), ticker tag,
+    source name, impact-1d if measured, headline (clamped to 3 lines),
+    summary excerpt (2 lines), and an action row with **AI summary**
+    (opens cached dossier modal) and **Open article** (external link).
+
+    Card click opens the AI dossier — the dominant user intent. The
+    Open Article button stops propagation so clicking it doesn't ALSO
+    open the modal."""
     from ..db import session_scope
     from ..models import NewsItem
     from sqlmodel import select
 
     with _Panel(ui, "Recent news (24h)", "📰", span,
                 anchor="news-feed"):
-        host = ui.element("div").classes("fr-feed")
+        host = ui.element("div").classes("fr-w")
 
     def _load() -> list[dict]:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
@@ -1462,7 +1541,7 @@ def _news_feed_panel(ui, span: str = "c6") -> None:
             {
                 "id": r.id,
                 "ticker": r.ticker, "title": r.title, "url": r.url,
-                "source": r.source,
+                "source": r.source, "summary": r.summary,
                 "ts": _aware(r.published_at).isoformat(),
                 "impact_1d": r.impact_1d_pct,
                 "sentiment": r.sentiment,
@@ -1485,51 +1564,77 @@ def _news_feed_panel(ui, span: str = "c6") -> None:
                 )
                 return
             now = datetime.now(timezone.utc)
-            for r in rows:
-                ts = datetime.fromisoformat(r["ts"])
-                ago = _ago_short(now - ts)
-                tk = (r.get("ticker") or "—").upper()
-                # Sentiment colour — neutral/None keeps the default blue chip
-                # so we don't drown directional reads in mid-tone variants.
-                sent = r.get("sentiment") or 0
-                chip_cls = (
-                    "news bull" if sent > 0
-                    else "news bear" if sent < 0
-                    else "news"
-                )
-                # Whole row opens the AI dossier modal — the article URL
-                # lives in the modal header so a single click intent
-                # ("learn more about this") doesn't ambiguate between
-                # browser-navigate vs. open-dialog.
-                with ui.element("div").classes("fr-feed-row").style(
-                    "cursor:pointer"
-                ).on(
-                    "click",
-                    lambda _e, nid=r["id"]: _open_news_dialog(ui, nid),
-                ):
-                    ui.html(f'<span class="kind {chip_cls}">NEWS</span>')
-                    with ui.element("div").classes("body"):
-                        ui.html(
-                            f'<span style="color:var(--text)">'
-                            f'{html.escape(r["title"][:140])}</span>'
-                        )
-                        meta = [
-                            f'<span class="tk">${html.escape(tk)}</span>',
-                            html.escape((r["source"] or "")[:30]),
-                        ]
-                        if r.get("impact_1d") is not None:
-                            tone = _tone(r["impact_1d"])
-                            meta.append(
-                                f'<span class="{tone}">'
-                                f'{_pct(r["impact_1d"])} 1d</span>'
-                            )
-                        ui.html(
-                            '<div class="meta">' + " · ".join(meta)
-                            + "</div>"
-                        )
-                    ui.html(f'<span class="ts">{ago}</span>')
+            with ui.element("div").classes("fr-card-grid"):
+                for r in rows:
+                    _render_news_card(ui, r, now)
 
-    _tick_now(ui, refresh, 45.0)
+    _tick_now(ui, refresh, _i("news_feed"))
+
+
+def _render_news_card(ui, r: dict, now: datetime) -> None:
+    """One news card. Pulled out so future tweaks (badge for cached
+    dossier, hot/cold tag, etc.) live in one place."""
+    ts = datetime.fromisoformat(r["ts"])
+    ago = _ago_short(now - ts)
+    tk = (r.get("ticker") or "").upper()
+    sent = r.get("sentiment") or 0
+    chip_cls = (
+        "news bull" if sent > 0
+        else "news bear" if sent < 0
+        else "news"
+    )
+    chip_label = "NEWS" if not tk else (
+        "BULL" if sent > 0 else "BEAR" if sent < 0 else "NEWS"
+    )
+
+    with ui.element("div").classes("fr-news-card").on(
+        "click", lambda _e, nid=r["id"]: _open_news_dialog(ui, nid),
+    ):
+        # ── meta row ──
+        ui.html(
+            f'<div class="card-meta">'
+            f'<span class="kind {chip_cls}">{chip_label}</span>'
+            f'<span>{html.escape((r.get("source") or "")[:30])}</span>'
+            f'<span class="ts">{ago}</span></div>'
+        )
+        # ── title ──
+        ui.html(
+            f'<div class="card-title">'
+            f'{html.escape((r.get("title") or "")[:200])}</div>'
+        )
+        # ── tags ──
+        tag_bits = []
+        if tk:
+            tag_bits.append(f'<span class="tk">${html.escape(tk)}</span>')
+        if r.get("impact_1d") is not None:
+            tone = _tone(r["impact_1d"])
+            tag_bits.append(
+                f'<span class="delta {tone}">'
+                f'{_pct(r["impact_1d"])} 1d</span>'
+            )
+        if tag_bits:
+            ui.html(
+                '<div class="card-tags">' + "".join(tag_bits) + '</div>'
+            )
+        # ── summary excerpt (if non-trivial) ──
+        summary = (r.get("summary") or "").strip()
+        if summary and len(summary) > 40:
+            ui.html(
+                f'<div class="card-excerpt">'
+                f'{html.escape(summary[:260])}</div>'
+            )
+        # ── actions ──
+        url = r.get("url") or ""
+        url_safe = html.escape(url) if url else ""
+        ui.html(
+            '<div class="card-actions">'
+            '<span class="btn primary">✨ AI summary</span>'
+            + (f'<a class="btn" href="{url_safe}" '
+               f'target="_blank" rel="noopener" '
+               f'onclick="event.stopPropagation()">↗ Open article</a>'
+               if url else "")
+            + '</div>'
+        )
 
 
 # ── social pulse (Intel tab) ───────────────────────────────────────────────
@@ -1604,7 +1709,7 @@ def _social_pulse_panel(ui, span: str = "c12") -> None:
                         )
                     ui.html(f'<span class="ts">{ago}</span>')
 
-    _tick_now(ui, refresh, 60.0)
+    _tick_now(ui, refresh, _i("social_pulse"))
 
 
 # ── catalyst calendar (Intel tab) ──────────────────────────────────────────
@@ -1661,7 +1766,7 @@ def _catalysts_panel(ui, span: str = "c12") -> None:
                         )
                         ui.html('<span class="mut">earnings report</span>')
 
-    _tick_now(ui, refresh, 600.0)
+    _tick_now(ui, refresh, _i("catalysts"))
 
 
 # ── recent activity feed (Overview tab) ────────────────────────────────────
@@ -1811,7 +1916,7 @@ def _activity_panel(ui, span: str = "c12") -> None:
                         )
                     ui.html(f'<span class="ts">{ago}</span>')
 
-    _tick_now(ui, refresh, 30.0)
+    _tick_now(ui, refresh, _i("activity"))
 
 
 # ── LLM grounding card (System tab) ────────────────────────────────────────
@@ -1868,7 +1973,7 @@ def _grounding_panel(ui, span: str = "c12") -> None:
                 f'overflow:auto;white-space:pre-wrap">{html.escape(body)}</pre>'
             )
 
-    _tick_now(ui, refresh, 300.0)
+    _tick_now(ui, refresh, _i("grounding"))
 
 
 # ── recent-calls list (Calls tab) ──────────────────────────────────────────
@@ -1919,49 +2024,78 @@ def _calls_history_panel(ui, span: str = "c12") -> None:
                 )
                 return
             now = datetime.now(timezone.utc)
-            for r in rows:
-                ts = datetime.fromisoformat(r["ts"])
-                ago = _ago_short(now - ts)
-                kind_cls = ("call short" if r["direction"] == "short"
-                            else "call")
-                label = (r["direction"] or "").upper()
-                with ui.element("div").classes("fr-feed-row").style(
-                    "cursor:pointer"
-                ).on(
-                    "click",
-                    lambda _e, cid=r["id"]: _open_call_dialog(ui, cid),
-                ):
-                    ui.html(
-                        f'<span class="kind {kind_cls}">'
-                        f'{html.escape(label)}</span>'
-                    )
-                    with ui.element("div").classes("body"):
-                        ui.html(html.escape(r["thesis"] or "")[:200])
-                        meta = [
-                            f'<span class="tk">'
-                            f'${html.escape(r["ticker"])}</span>',
-                            html.escape(r["source"]),
-                            f'conv {r["conv"]}/5',
-                        ]
-                        if r["ret_1d"] is not None:
-                            tone = _tone(r["ret_1d"])
-                            meta.append(
-                                f'<span class="{tone}">'
-                                f'{_pct(r["ret_1d"])} 1d</span>'
-                            )
-                        if r["ret_5d"] is not None:
-                            tone = _tone(r["ret_5d"])
-                            meta.append(
-                                f'<span class="{tone}">'
-                                f'{_pct(r["ret_5d"])} 5d</span>'
-                            )
-                        ui.html(
-                            '<div class="meta">' + " · ".join(meta)
-                            + "</div>"
-                        )
-                    ui.html(f'<span class="ts">{ago}</span>')
+            with ui.element("div").classes("fr-card-grid"):
+                for r in rows:
+                    _render_call_card(ui, r, now)
 
-    _tick_now(ui, refresh, 45.0)
+    _tick_now(ui, refresh, _i("calls_history"))
+
+
+def _render_call_card(ui, r: dict, now: datetime) -> None:
+    """One call card. Mirrors the news-card shape so both feeds read as
+    one cohesive UI — direction chip (LONG green / SHORT red), source +
+    conviction in the meta strip, thesis as the headline, returns
+    surfaced as colour-coded delta tags, primary action is "AI dossier"
+    (opens the cached dossier modal with full context)."""
+    ts = datetime.fromisoformat(r["ts"])
+    ago = _ago_short(now - ts)
+    direction = (r["direction"] or "").upper()
+    kind_cls = "call short" if r["direction"] == "short" else "call"
+    conv = r.get("conv") or 0
+    px = r.get("px")
+
+    with ui.element("div").classes("fr-call-card").on(
+        "click", lambda _e, cid=r["id"]: _open_call_dialog(ui, cid),
+    ):
+        # ── meta row ──
+        ui.html(
+            f'<div class="card-meta">'
+            f'<span class="kind {kind_cls}">{direction or "CALL"}</span>'
+            f'<span>{html.escape(r.get("source") or "")[:24]}</span>'
+            f'<span>conv {conv}/5</span>'
+            f'<span class="ts">{ago}</span></div>'
+        )
+        # ── title (ticker + first line of thesis) ──
+        ui.html(
+            f'<div class="card-title">'
+            f'<span style="color:#8fb6ff;font-weight:600;'
+            f'font-family:ui-monospace,Menlo,monospace">'
+            f'${html.escape(r["ticker"])}</span>'
+            f'  &nbsp; {html.escape((r.get("thesis") or "")[:180])}</div>'
+        )
+        # ── tags: price + returns ──
+        tag_bits: list[str] = []
+        if px is not None:
+            tag_bits.append(
+                f'<span class="src">@ {px:.4g}</span>'
+            )
+        if r.get("ret_1d") is not None:
+            tone = _tone(r["ret_1d"])
+            tag_bits.append(
+                f'<span class="delta {tone}">'
+                f'{_pct(r["ret_1d"])} 1d</span>'
+            )
+        if r.get("ret_5d") is not None:
+            tone = _tone(r["ret_5d"])
+            tag_bits.append(
+                f'<span class="delta {tone}">'
+                f'{_pct(r["ret_5d"])} 5d</span>'
+            )
+        if tag_bits:
+            ui.html(
+                '<div class="card-tags">' + "".join(tag_bits) + '</div>'
+            )
+        # ── actions: dossier (primary) + jump-to-chart ──
+        # The Chart button just navigates to #markets; from there the
+        # user can type the ticker. A future JS bridge could auto-fill
+        # the picker but the simpler thing is cleaner today.
+        ui.html(
+            '<div class="card-actions">'
+            '<span class="btn primary">✨ AI dossier</span>'
+            '<a class="btn" href="#markets" '
+            'onclick="event.stopPropagation()">📈 Markets</a>'
+            '</div>'
+        )
 
 
 # ── left categorized navigation + tab routing ──────────────────────────────
@@ -2396,7 +2530,44 @@ def _kpi_ribbon(ui, uptime_lbl) -> None:
         except Exception:
             pass
 
-    _tick_now(ui, refresh, 20.0)
+    _tick_now(ui, refresh, _i("kpi"))
+
+
+# Refresh intervals per panel, in seconds. All in one table so the
+# dashboard's overall load (DB queries + WS deltas + client DOM churn)
+# is tunable from one place. Picked to keep the page responsive on a
+# Raspberry Pi while still feeling "live" on the surfaces that matter
+# (system metrics, paper book, log tail tick a bit faster than the
+# slow data — wallets, watchlist, feeds — which only change minute-to-
+# minute). Adjust here, not per call site.
+_INTERVALS: dict[str, float] = {
+    "kpi":             45.0,    # was 20s; ribbon doesn't change that fast
+    "equity_curve":   120.0,    # FundEquity rows write every wallet cycle
+    "realized_curve":  60.0,    # closed trades are bursty, not constant
+    "watchlist":       45.0,    # 586-ticker batch query is the heavy one
+    "ticker_chips":    90.0,    # open-positions chips for the picker
+    "filings_feed":    90.0,    # filings drip in; 60s was wasteful
+    "news_feed":       75.0,    # news polls every 5min; UI ≤ 75s = fresh
+    "social_pulse":   120.0,    # social_pulse pipeline runs hourly
+    "catalysts":      600.0,    # 10min — earnings calendar is daily
+    "activity":        60.0,    # mixed feed; 30s was very tight
+    "grounding":      300.0,    # the preamble itself is 5min-cached
+    "calls_history":   90.0,    # calls don't fire constantly
+    "funds":          120.0,    # wallet cycle runs every 60min anyway
+    "research_wallet": 90.0,    # research trades are user-paced
+    "research_desk":   60.0,    # task list churn is human-rate
+    "scorecard":       90.0,    # marks update on a slow cron
+    "book":            40.0,    # open positions; faster matters here
+    "health":         120.0,    # health verdict changes slowly
+    "system":          15.0,    # 5s was overkill for CPU/RAM
+    "holds":          120.0,    # holds are user-pace; calm
+    "watches":        120.0,    # watch defs are user-pace
+    "live_log":         8.0,    # was 3s — half the DOM churn, still live
+}
+
+
+def _i(name: str) -> float:
+    return _INTERVALS.get(name, 60.0)
 
 
 def _tick_now(ui, coro, interval: float) -> None:
@@ -2524,7 +2695,7 @@ def _funds_panel(ui, span: str = "c7") -> None:
                             f"{html.escape(v[:34])}</span>"
                         )
 
-    _tick_now(ui, refresh, 60.0)
+    _tick_now(ui, refresh, _i("funds"))
 
 
 # ── wallet drill-in (click a row → open positions dialog) ───────────────────
@@ -3306,7 +3477,7 @@ def _research_wallet_panel(ui, span: str = "c12") -> None:
                             f'</span>'
                         )
 
-    _tick_now(ui, refresh, 30.0)
+    _tick_now(ui, refresh, _i("research_wallet"))
 
 
 # ── research desk panel (Research tab) ────────────────────────────────────
@@ -3470,7 +3641,7 @@ def _research_panel(ui, span: str = "c12") -> None:
                             )
                     ui.html(f'<span class="ts">{ago}</span>')
 
-    _tick_now(ui, refresh, 30.0)
+    _tick_now(ui, refresh, _i("research_desk"))
 
 
 # ── scorecard ───────────────────────────────────────────────────────────────
@@ -3568,7 +3739,7 @@ def _scorecard_panel(ui, span: str = "c5") -> None:
                 with ui.element("div").classes("fr-alert warn"):
                     ui.html(f"⚠️&nbsp;&nbsp;{html.escape(note)}")
 
-    _tick_now(ui, refresh, 45.0)
+    _tick_now(ui, refresh, _i("scorecard"))
 
 
 # ── paper book ──────────────────────────────────────────────────────────────
@@ -3673,7 +3844,7 @@ def _book_panel(ui, span: str = "c7") -> None:
                         f'<div class="v">{wr}</div>'
                     )
 
-    _tick_now(ui, refresh, 20.0)
+    _tick_now(ui, refresh, _i("book"))
 
 
 async def _close_position_action(ui, ticker: str, refresh_fn) -> None:
@@ -3811,7 +3982,7 @@ def _health_panel(ui, verdict_chip, span: str = "c5") -> None:
                     f'{html.escape(" · ".join(rep["faded"]))}</div>'
                 )
 
-    _tick_now(ui, refresh, 60.0)
+    _tick_now(ui, refresh, _i("health"))
 
 
 # ── scheduler control ───────────────────────────────────────────────────────
@@ -4021,7 +4192,7 @@ def _system_panel(ui, span: str = "c4") -> None:
             replace="v " + ("neg" if s["llm_errors"] else "")
         )
 
-    _tick_now(ui, refresh, 5.0)
+    _tick_now(ui, refresh, _i("system"))
 
 
 # ── open paper position (!buy / !short on the dashboard) ────────────────────
@@ -4220,7 +4391,7 @@ def _holds_panel(ui, span: str = "c4") -> None:
                 ui.notify(res["message"], type="warning")
 
         add_btn.on_click(_add)
-        _tick_now(ui, refresh, 60.0)
+        _tick_now(ui, refresh, _i("holds"))
 
 
 async def _remove_hold_action(ui, ticker: str, refresh_fn) -> None:
@@ -4338,7 +4509,7 @@ def _watches_panel(ui, span: str = "c4") -> None:
                     await refresh()
 
         add_btn.on_click(_add)
-        _tick_now(ui, refresh, 60.0)
+        _tick_now(ui, refresh, _i("watches"))
 
 
 async def _remove_watch_action(ui, wid: int, refresh_fn) -> None:
@@ -4436,7 +4607,7 @@ def _log_panel(ui, span: str = "c12") -> None:
         except Exception:
             pass
 
-    _tick_now(ui, refresh, 3.0)
+    _tick_now(ui, refresh, _i("live_log"))
 
 
 # ── chat ────────────────────────────────────────────────────────────────────
