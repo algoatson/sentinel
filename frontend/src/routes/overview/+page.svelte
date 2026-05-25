@@ -1,14 +1,24 @@
 <script lang="ts">
   import { createQuery } from '@tanstack/svelte-query';
-  import { kpi, activity, realizedCurve } from '$api';
+  import { kpi, activity, realizedCurve, equityCurve } from '$api';
   import StatTile from '$components/StatTile.svelte';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
   import TickerLink from '$components/TickerLink.svelte';
+  import EquityCurveChart from '$components/EquityCurveChart.svelte';
   import { usd, compact, timeAgo } from '$lib/format';
   import { Newspaper, FileText, Target as TargetIcon } from 'lucide-svelte';
+
+  type Range = { label: string; days: number };
+  const RANGES: Range[] = [
+    { label: '7d', days: 7 },
+    { label: '30d', days: 30 },
+    { label: '90d', days: 90 },
+    { label: '1y', days: 365 }
+  ];
+  let equityRange: Range = $state(RANGES[1]);
 
   const kpiQ = createQuery({
     queryKey: ['kpi'],
@@ -25,6 +35,11 @@
     queryFn: realizedCurve,
     refetchInterval: 60_000
   });
+  const equityQ = createQuery(() => ({
+    queryKey: ['equity-curve', equityRange.days],
+    queryFn: () => equityCurve(equityRange.days),
+    refetchInterval: 60_000
+  }));
 
   // Tiny inline equity-trend sparkline from the realized P&L points.
   // Simple SVG, no chart lib for this — it's a 60px-tall summary.
@@ -118,6 +133,33 @@
     {/each}
   {/if}
 </div>
+
+<!-- ── equity curve chart (per fund, normalised to inception=0%) ──────── -->
+<Card class="mt-4 px-4 py-3">
+  <div class="mb-2 flex items-baseline gap-3">
+    <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+      Equity vs inception
+    </div>
+    <div class="ml-auto flex items-center gap-1">
+      {#each RANGES as r (r.label)}
+        <button
+          onclick={() => (equityRange = r)}
+          class={[
+            'rounded-md border px-2 py-0.5 text-[10.5px] transition-colors',
+            equityRange.label === r.label
+              ? 'border-primary/50 bg-primary-soft text-primary'
+              : 'border-border bg-surface-2 text-muted hover:text-text'
+          ].join(' ')}
+        >{r.label}</button>
+      {/each}
+    </div>
+  </div>
+  {#if $equityQ.isLoading}
+    <div class="flex h-[200px] items-center justify-center"><Spinner /></div>
+  {:else}
+    <EquityCurveChart series={$equityQ.data ?? []} />
+  {/if}
+</Card>
 
 <!-- ── realised P&L sparkline + activity feed ──────────────────────────── -->
 <div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
