@@ -95,6 +95,13 @@ class NewsItem(SQLModel, table=True):
     url: str
     summary: Optional[str] = Field(default=None)
     ticker: Optional[str] = Field(default=None, index=True)
+    # Comma-joined list of EVERY ticker the extractor found (uppercase).
+    # `ticker` (singular) above is the "primary" — best one for back-compat
+    # filtering and downstream pipelines that expect one. `tickers_csv`
+    # carries the full set so a "$NVDA and $AMD both reported beats" story
+    # tags both. Format: ",NVDA,AMD," (leading/trailing commas to make
+    # LIKE '%,X,%' substring search safe).
+    tickers_csv: Optional[str] = Field(default=None, index=True)
     is_macro: bool = Field(default=False)
     published_at: datetime = Field(index=True)
     fetched_at: datetime

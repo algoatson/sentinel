@@ -147,6 +147,9 @@ def init_db() -> None:
                 ("impact_1d_pct", "FLOAT"),
                 ("impact_tagged_at", "DATETIME"),
                 ("alerted_at", "DATETIME"),
+                # Comma-joined extra-tickers column for multi-ticker stories.
+                # Format ",NVDA,AMD," — LIKE '%,X,%' is safe substring search.
+                ("tickers_csv", "VARCHAR"),
             ],
         )
         _migrate_add_columns(

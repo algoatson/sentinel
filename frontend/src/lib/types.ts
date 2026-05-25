@@ -265,6 +265,7 @@ export interface NewsItem {
   impact_1d_pct: number | null;
   sentiment: number | null;
   is_macro: boolean;
+  tickers?: string[];          // full multi-ticker list (primary first)
   cluster_size?: number;       // 1 if not part of a cluster
   is_canonical?: boolean;
   sibling_ids?: number[];

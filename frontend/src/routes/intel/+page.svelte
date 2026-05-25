@@ -392,7 +392,14 @@
                   NEWS
                 {/if}
               </Pill>
-              {#if n.ticker}
+              {#if n.tickers && n.tickers.length > 0}
+                {#each n.tickers.slice(0, 3) as t (t)}
+                  <TickerLink ticker={t} class="text-[12px]" />
+                {/each}
+                {#if n.tickers.length > 3}
+                  <span class="text-[10px] text-faint">+{n.tickers.length - 3}</span>
+                {/if}
+              {:else if n.ticker}
                 <TickerLink ticker={n.ticker} class="text-[12px]" />
               {/if}
               {#if n.is_macro}

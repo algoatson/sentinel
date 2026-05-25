@@ -13,6 +13,7 @@ from .. import dossier as _dossier
 from ..analytics import dedupe as _dedupe
 from ..db import session_scope
 from ..models import ArticleBody, NewsItem
+from ..utils import parse_tickers_csv
 
 
 router = APIRouter()
@@ -38,14 +39,23 @@ def list_recent(
 ) -> list[dict]:
     """Recent news, newest first. Optional ticker filter. Carries
     cluster info so the UI can show "+N dupes" badges on syndicated
-    stories."""
+    stories.
+
+    Ticker filter is multi-aware: matches if the requested symbol is
+    in `tickers_csv` (LIKE substring) OR equals the legacy single
+    `ticker` column. That way a "$NVDA and $AMD" story shows up under
+    both AMD and NVDA filters."""
     cutoff_naive = (
         datetime.now(timezone.utc) - timedelta(hours=hours)
     ).replace(tzinfo=None)
     with session_scope() as s:
         q = select(NewsItem).where(NewsItem.published_at >= cutoff_naive)
         if ticker:
-            q = q.where(NewsItem.ticker == ticker.upper())
+            sym = ticker.upper()
+            q = q.where(
+                (NewsItem.ticker == sym)
+                | NewsItem.tickers_csv.contains(f",{sym},")
+            )
         rows = s.exec(
             q.order_by(NewsItem.published_at.desc()).limit(limit)
         ).all()
@@ -71,6 +81,9 @@ def list_recent(
             "impact_1d_pct": r.impact_1d_pct,
             "sentiment": r.sentiment,
             "is_macro": r.is_macro,
+            "tickers": parse_tickers_csv(r.tickers_csv) or (
+                [r.ticker] if r.ticker else []
+            ),
             "cluster_size": cluster_size,
             "is_canonical": is_canonical,
             "sibling_ids": info["sibling_ids"] if info else [],
@@ -116,6 +129,9 @@ def get_one(news_id: int) -> dict:
             "impact_1d_pct": n.impact_1d_pct,
             "sentiment": n.sentiment,
             "is_macro": n.is_macro,
+            "tickers": parse_tickers_csv(n.tickers_csv) or (
+                [n.ticker] if n.ticker else []
+            ),
         }
 
 

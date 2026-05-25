@@ -326,27 +326,39 @@ def _impact_for_filing(filing: Filing, thesis: Thesis) -> tuple[str, str]:
 
 
 def link_news(news_id: int) -> int:
-    """Match a new NewsItem against active theses for the same ticker.
-    Persists one ThesisEvent per match + bumps the thesis aggregates.
-    Returns the number of theses linked. Safe to call repeatedly —
-    duplicate (thesis_id, ref_table, ref_id) tuples are de-duped.
+    """Match a new NewsItem against active theses for EVERY ticker it
+    tags. Persists one ThesisEvent per (thesis, ticker) match + bumps
+    the thesis aggregates. Returns the total number of theses linked.
 
-    Designed to run after each news insert (post-ingest hook). Cheap
-    enough that it can't meaningfully slow ingestion: one SELECT for
-    active theses on the ticker, N ThesisEvent inserts."""
+    Multi-ticker aware: a story tagging both NVDA and AMD will
+    populate the timeline of any active thesis on either ticker. The
+    `tickers_csv` column carries the full set; falls back to the
+    single `ticker` for legacy rows that pre-date the migration.
+
+    Cheap; safe to call repeatedly — duplicate (thesis_id, ref_table,
+    ref_id) tuples are de-duped at insert time."""
     if news_id is None:
         return 0
     try:
+        from .utils import parse_tickers_csv
         with session_scope() as s:
             news = s.get(NewsItem, news_id)
-            if news is None or not news.ticker:
+            if news is None:
                 return 0
-            return _link_inner(
-                s, kind="news", ref_table="newsitem", ref_id=news.id,
-                ticker=news.ticker,
-                description=(news.title or "")[:500],
-                impact_for=lambda thesis: _impact_for_news(news, thesis),
+            tickers = parse_tickers_csv(news.tickers_csv) or (
+                [news.ticker] if news.ticker else []
             )
+            if not tickers:
+                return 0
+            total = 0
+            for t in tickers:
+                total += _link_inner(
+                    s, kind="news", ref_table="newsitem", ref_id=news.id,
+                    ticker=t,
+                    description=(news.title or "")[:500],
+                    impact_for=lambda thesis: _impact_for_news(news, thesis),
+                )
+            return total
     except Exception as e:
         logger.warning("link_news({}) failed: {}", news_id, e)
         return 0

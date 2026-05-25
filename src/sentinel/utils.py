@@ -219,6 +219,71 @@ def chunk_text(text: str, limit: int = 1950) -> list[str]:
     return chunks
 
 
+def extract_tickers_ranked(
+    text: str,
+    watchlist_tickers: Iterable[str],
+    *,
+    flair: Optional[str] = None,
+    title: Optional[str] = None,
+) -> list[str]:
+    """Same matching rules as `extract_tickers` but returns an
+    ORDERED list with the most-relevant ticker first.
+
+    Ranking:
+    1. Cashtagged in the title          → most signal-rich
+    2. Cashtagged anywhere              → strong
+    3. Highest plain-mention count      → "DELL beat, NVDA beat" both
+                                          mentioned 3x → tied (insertion order)
+    4. Name-only resolution             → weakest
+
+    Used by ingesters to pick the "primary" ticker for the legacy
+    single-`ticker` column while populating the full set on
+    `tickers_csv`. Same gates: watchlist + blocklist apply.
+    """
+    accepted = extract_tickers(text, watchlist_tickers, flair=flair, title=title)
+    if not accepted:
+        return []
+    combined = text if title is None else f"{title}\n{text}"
+    title_text = title or ""
+    flair_upper = (flair or "").strip().upper()
+
+    def _score(t: str) -> tuple[int, int]:
+        title_cashtag = bool(re.search(rf"\${re.escape(t)}\b", title_text))
+        any_cashtag = bool(re.search(rf"\${re.escape(t)}\b", combined))
+        # Count bare appearances (excluding $-prefixed) for tiebreaks.
+        bare_count = len(re.findall(rf"(?<!\$)\b{re.escape(t)}\b", combined))
+        primary_tier = (
+            4 if title_cashtag
+            else 3 if any_cashtag
+            else 2 if flair_upper == t
+            else 1
+        )
+        return (primary_tier, bare_count)
+
+    return sorted(accepted, key=_score, reverse=True)
+
+
+def format_tickers_csv(tickers: Iterable[str]) -> Optional[str]:
+    """Pack tickers into the ``,A,B,C,`` substring-search format we
+    store in NewsItem.tickers_csv. Leading + trailing comma so
+    ``LIKE '%,X,%'`` matches end-of-list too. Returns None for empty."""
+    seen: list[str] = []
+    for t in tickers:
+        u = t.upper().strip()
+        if u and u not in seen:
+            seen.append(u)
+    if not seen:
+        return None
+    return "," + ",".join(seen) + ","
+
+
+def parse_tickers_csv(csv: Optional[str]) -> list[str]:
+    """Inverse of format_tickers_csv. Returns [] for None or empty."""
+    if not csv:
+        return []
+    return [t for t in csv.strip(",").split(",") if t]
+
+
 def extract_tickers(
     text: str,
     watchlist_tickers: Iterable[str],
@@ -230,9 +295,15 @@ def extract_tickers(
 
     Rules:
     1. Cashtag form ($AAPL): accept if in watchlist + not blocklisted.
-    2. Bare form (AAPL): accept only if in watchlist + not blocklisted
-       AND (appears ≥2 times, OR post flair matches, OR title contains
-       the cashtag form).
+    2. Bare form (AAPL): accept if in watchlist + not blocklisted AND
+       any one of:
+         - appears ≥2 times
+         - post flair matches
+         - title cashtags it
+         - title mentions it as a bare word
+         - body mentions it alongside a financial-context cue
+           (earnings / beats / shares / surge / report / guidance /
+           upgrade / target / analyst …) within the same sentence
     3. **Company name** (Nvidia, Apple, Microsoft, …): accept if the
        canonical ticker is in the watchlist + not blocklisted AND the
        name appears anywhere in the combined text. Name matching is
@@ -247,6 +318,9 @@ def extract_tickers(
     cashtag_hits = set(_CASHTAG_RE.findall(combined))
     bare_hits = set(_BARE_RE.findall(combined))
     title_cashtags = set(_CASHTAG_RE.findall(title)) if title else set()
+    title_bare = (
+        set(_BARE_RE.findall(title)) if title else set()
+    )
     flair_upper = flair.strip().upper() if flair else None
 
     accepted: set[str] = set()
@@ -267,7 +341,15 @@ def extract_tickers(
         bare_count = len(re.findall(rf"(?<!\$)\b{re.escape(ticker)}\b", combined))
         flair_match = flair_upper == ticker
         title_cashtag_match = ticker in title_cashtags
-        if bare_count >= 2 or flair_match or title_cashtag_match:
+        title_bare_match = ticker in title_bare
+        sentence_cue_match = _has_financial_cue_near(combined, ticker)
+        if (
+            bare_count >= 2
+            or flair_match
+            or title_cashtag_match
+            or title_bare_match
+            or sentence_cue_match
+        ):
             accepted.add(ticker)
 
     # Rule 3: company-name resolution. Watchlist + blocklist gates still
@@ -283,3 +365,40 @@ def extract_tickers(
             accepted.add(ticker)
 
     return accepted
+
+
+# Financial-context cue words. If a bare ticker appears in the same
+# sentence as one of these, count it as a real reference (a sentence
+# in news/Reddit that says "DELL beats earnings" is unambiguously
+# about the stock; the watchlist gate already filters to known symbols
+# so the false-positive surface is small).
+_FIN_CUE_RE = re.compile(
+    r"\b("
+    r"earn(?:ing|ed|s|)|beat(?:s|en)?|miss(?:ed|es)?|surg(?:e|ed|ing)|"
+    r"plung(?:e|ed|ing)|drop(?:ped|s|ping)?|fall(?:ing|s)?|fell|"
+    r"rall(?:y|ied|ies|ying)|jump(?:ed|s|ing)?|soar(?:ed|s|ing)?|"
+    r"gain(?:ed|s|ing)?|los(?:e|t|es|ing)|stock|shares?|"
+    r"report(?:ed|s|ing)?|guidance|forecast(?:ed|s)?|outlook|"
+    r"upgrad(?:e|ed|es|ing)?|downgrad(?:e|ed|es|ing)?|"
+    r"analyst|rating|target|raise(?:d)?|cut(?:s|ting)?|"
+    r"price target|buy|sell|hold|overweight|underweight|"
+    r"valuation|multiple|p/?e|EPS|revenue|profit|margin|"
+    r"acquir(?:e|ed|es|ing)|merger|spinoff|IPO|SPAC|"
+    r"crypto|coin|token|blockchain|halving"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _has_financial_cue_near(text: str, ticker: str) -> bool:
+    """True iff `ticker` appears bare somewhere in `text` AND the same
+    sentence contains a financial-context cue word. Tolerant of
+    standard sentence boundaries (`.`, `!`, `?`, newlines)."""
+    bare_re = re.compile(rf"(?<!\$)\b{re.escape(ticker)}\b")
+    # Split on simple sentence boundaries; not perfect but good enough
+    # for newspaper-style headline+lead-paragraph extraction.
+    sentences = re.split(r"(?<=[.!?\n])\s+", text)
+    for s in sentences:
+        if bare_re.search(s) and _FIN_CUE_RE.search(s):
+            return True
+    return False

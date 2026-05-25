@@ -77,20 +77,26 @@ def hot_tickers(hours: int = 24, limit: int = 12) -> list[dict[str, Any]]:
     })
 
     with session_scope() as s:
+        from ..utils import parse_tickers_csv
+        # Multi-ticker aware: a single item with [NVDA, AMD] bumps both.
+        # Falls back to the legacy primary `ticker` for rows ingested
+        # before the tickers_csv migration.
         for n in s.exec(
-            select(NewsItem)
-            .where(NewsItem.published_at >= cutoff_naive)
-            .where(NewsItem.ticker.is_not(None))
+            select(NewsItem).where(NewsItem.published_at >= cutoff_naive)
         ).all():
-            if not n.ticker:
+            tickers = parse_tickers_csv(n.tickers_csv) or (
+                [n.ticker] if n.ticker else []
+            )
+            if not tickers:
                 continue
-            d = by_ticker[n.ticker]
-            d["news_count"] += 1
-            if n.sentiment is not None:
-                d["sentiment_sum"] += n.sentiment
-                d["sentiment_n"] += 1
-            if n.source:
-                d["news_sources"].add(n.source)
+            for t in tickers:
+                d = by_ticker[t]
+                d["news_count"] += 1
+                if n.sentiment is not None:
+                    d["sentiment_sum"] += n.sentiment
+                    d["sentiment_n"] += 1
+                if n.source:
+                    d["news_sources"].add(n.source)
 
         for r in s.exec(
             select(RedditMention).where(RedditMention.created_at >= cutoff_naive)
@@ -107,6 +113,9 @@ def hot_tickers(hours: int = 24, limit: int = 12) -> list[dict[str, Any]]:
         ).all():
             if not f.ticker:
                 continue
+            # Filings don't have a multi-ticker column; SEC docs are
+            # filed by one CIK + one ticker mapping per record. Keep
+            # the single-ticker path here.
             d = by_ticker[f.ticker]
             mat = f.materiality_score or 0
             if mat >= 4:

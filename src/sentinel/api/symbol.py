@@ -60,9 +60,15 @@ def profile(
             .limit(40)
         ).all()
 
+        # Multi-ticker aware: a story that mentions both NVDA + AMD
+        # shows up under both symbol pages. Matches either the legacy
+        # primary `ticker` column OR a substring hit in `tickers_csv`.
         news = s.exec(
             select(NewsItem)
-            .where(NewsItem.ticker == sym)
+            .where(
+                (NewsItem.ticker == sym)
+                | NewsItem.tickers_csv.contains(f",{sym},")
+            )
             .where(NewsItem.published_at >= cutoff_naive)
             .order_by(NewsItem.published_at.desc())
             .limit(40)

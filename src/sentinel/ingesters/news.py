@@ -28,7 +28,7 @@ from .. import discord_client
 from ..config import CONFIG_DIR
 from ..db import session_scope
 from ..models import NewsItem, Watchlist
-from ..utils import extract_tickers
+from ..utils import extract_tickers_ranked, format_tickers_csv
 
 
 _FEEDS_PATH = CONFIG_DIR / "news_feeds.yaml"
@@ -211,10 +211,11 @@ def _poll_rss() -> None:
             published_at = _parse_published(entry)
             ext_id = _stable_id(source, entry.get("id") or link)
 
-            tickers_in_title = extract_tickers(
+            ranked = extract_tickers_ranked(
                 f"{title} {summary}", watch_tickers, title=title
             )
-            ticker = next(iter(tickers_in_title)) if tickers_in_title else None
+            ticker = ranked[0] if ranked else None
+            tickers_csv = format_tickers_csv(ranked)
 
             new_id = None
             with session_scope() as session:
@@ -243,6 +244,7 @@ def _poll_rss() -> None:
                     url=link[:1000],
                     summary=summary,
                     ticker=ticker,
+                    tickers_csv=tickers_csv,
                     is_macro=is_macro and ticker is None,
                     published_at=published_at,
                     fetched_at=datetime.now(timezone.utc),
@@ -251,11 +253,12 @@ def _poll_rss() -> None:
                 session.flush()  # populates item.id for the linker
                 new_id = item.id
                 new_count += 1
-            # Outside the session: link to active theses on the ticker
-            # (best-effort; doesn't slow ingestion meaningfully and
-            # failure is logged + skipped inside `thesis.link_news`).
+            # Outside the session: link to active theses on EVERY tagged
+            # ticker (a story that mentions NVDA + AMD links to active
+            # theses on both). The linker iterates over tickers_csv
+            # internally so one call covers them all.
             if new_id is not None:
-                if ticker:
+                if ranked:
                     _safe_link_news(new_id)
                 _safe_publish_news(new_id, ticker, title, source, None)
 
@@ -339,6 +342,16 @@ def _poll_yfinance() -> None:
                     skipped_dup += 1
                     continue
                 seen_urls.add(canon)
+                # Extract every other ticker the story also mentions, so
+                # a "$NVDA and $AMD both report" item tags both. yfinance
+                # `ticker` is the queried symbol — guaranteed primary; the
+                # ranked extractor gives us the rest. `tickers` here is
+                # the watchlist universe loaded at the top of this fn.
+                extra_ranked = extract_tickers_ranked(
+                    f"{title} {summary}", tickers, title=title
+                )
+                all_tickers = [ticker] + [t for t in extra_ranked if t != ticker]
+                tickers_csv = format_tickers_csv(all_tickers)
                 item = NewsItem(
                     source="yfinance",
                     external_id=ext_id,
@@ -346,6 +359,7 @@ def _poll_yfinance() -> None:
                     url=url[:1000],
                     summary=(summary or "")[:1000],
                     ticker=ticker,
+                    tickers_csv=tickers_csv,
                     is_macro=False,
                     published_at=published_at,
                     fetched_at=datetime.now(timezone.utc),
