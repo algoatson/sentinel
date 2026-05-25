@@ -21,10 +21,18 @@
   let selected = $state<number | null>(null);
   let confirmExecute = $state(false);
 
-  const tasksQ = createQuery({
+  // Refetch faster when there's an in-flight task (verdict still null
+  // because the heavy LLM is still composing). Idle: 30s. In-flight: 4s.
+  let activeInflight = $state(false);
+  const tasksQ = createQuery(() => ({
     queryKey: ['research-tasks'],
     queryFn: () => researchTasks(40),
-    refetchInterval: 30_000
+    refetchInterval: activeInflight ? 4_000 : 30_000
+  }));
+  $effect(() => {
+    activeInflight = ($tasksQ.data ?? []).some(
+      (t) => t.verdict === null
+    );
   });
   const remainingQ = createQuery({
     queryKey: ['research-remaining'],
