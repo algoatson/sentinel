@@ -36,7 +36,8 @@
         { keys: ['g', 'w'], label: 'Watches' },
         { keys: ['g', 'l'], label: 'Lookup' },
         { keys: ['g', 'a'], label: 'Copilot (Ask)' },
-        { keys: ['g', 's'], label: 'System' }
+        { keys: ['g', 's'], label: 'System' },
+        { keys: ['g', 'f'], label: 'Live feed' }
       ]
     },
     {

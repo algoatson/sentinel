@@ -13,7 +13,8 @@
     Search,
     Sparkles,
     Cog,
-    SlidersHorizontal
+    SlidersHorizontal,
+    Activity as ActivityIcon
   } from 'lucide-svelte';
 
   interface Props {
@@ -38,7 +39,8 @@
         { href: '/research', label: 'Research', icon: FlaskConical },
         { href: '/theses', label: 'Theses', icon: Brain },
         { href: '/intel', label: 'Intel', icon: Satellite },
-        { href: '/calls', label: 'Calls', icon: Target }
+        { href: '/calls', label: 'Calls', icon: Target },
+        { href: '/feed', label: 'Live feed', icon: ActivityIcon }
       ]
     },
     {

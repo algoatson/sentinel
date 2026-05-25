@@ -92,7 +92,8 @@
     w: '/watches',
     l: '/lookup',
     a: '/copilot', // a for "ask"
-    s: '/system'
+    s: '/system',
+    f: '/feed'
   };
 
   let gPending = $state(false);
