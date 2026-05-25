@@ -1,1 +1,0 @@
-import{aK as a,bt as u,a2 as o,aJ as c,bq as e}from"./BoGpxLG1.js";function l(n){o===null&&a(),c&&o.l!==null?s(o).m.push(n):u(()=>{const t=e(n);if(typeof t=="function")return t})}function i(n){o===null&&a(),l(()=>()=>e(n))}function s(n){var t=n.l;return t.u??(t.u={a:[],b:[],m:[]})}export{l as a,i as o};

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createQuery } from '@tanstack/svelte-query';
   import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
-  import { kpi, activity, realizedCurve, equityCurve, calls, news, filings } from '$api';
+  import { kpi, activity, realizedCurve, equityCurve, calls, news, filings, catalysts } from '$api';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import EmptyState from '$components/EmptyState.svelte';
@@ -56,6 +56,11 @@
     queryKey: ['filings', 168],
     queryFn: () => filings({ hours: 168 }),
     refetchInterval: 60_000
+  });
+  const catalystsQ = createQuery({
+    queryKey: ['catalysts'],
+    queryFn: catalysts,
+    refetchInterval: 5 * 60_000
   });
 
   const realCum = $derived(($realQ.data ?? []).map((p) => p.cumulative));
@@ -195,6 +200,34 @@
     <EquityCurveChart series={$equityQ.data ?? []} />
   {/if}
 </Card>
+
+<!-- ── upcoming catalysts ────────────────────────────────── -->
+{#if $catalystsQ.data?.events?.length}
+  <Card class="mt-4 px-4 py-3">
+    <div class="mb-2 flex items-baseline gap-2">
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+        Upcoming catalysts (next 14d)
+      </div>
+      <span class="ml-auto text-[10px] tabular text-faint">
+        {$catalystsQ.data.events.length}
+      </span>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      {#each $catalystsQ.data.events.slice(0, 20) as e (e.date + (e.ticker ?? e.label ?? ''))}
+        <div class="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[11.5px]">
+          <span class="font-mono tabular text-faint">{e.date.slice(5)}</span>
+          {#if e.ticker}
+            <TickerLink ticker={e.ticker} class="text-[11.5px]" />
+            <Pill variant="warn">earnings</Pill>
+          {:else if e.label}
+            <span class="text-muted">{e.label}</span>
+            <Pill variant="info">macro</Pill>
+          {/if}
+        </div>
+      {/each}
+    </div>
+  </Card>
+{/if}
 
 <!-- ── 3-column feed grid: Calls / Filings / News ────────────────── -->
 <div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">

@@ -13,18 +13,23 @@ import type {
   Activity,
   CallDossier,
   CallItem,
+  CatalystEvent,
   EquityCurve,
   FilingItem,
   HealthReport,
   KpiSnapshot,
+  LiveEvent,
   LookupResult,
   NewsDossier,
   NewsItem,
   RealizedCurvePoint,
+  RedditMention,
   ResearchExecuteResult,
   ResearchTask,
   ResearchTaskDetail,
   Scorecard,
+  SocialTicker,
+  SymbolProfile,
   SystemMetrics,
   Thesis,
   ThesisDetail,
@@ -186,3 +191,28 @@ export const lookup = (kind: string, arg: string = '') => {
 /* ─── copilot ─── */
 export const askCopilot = (question: string) =>
   post<{ answer: string }>('/copilot/ask', { question });
+
+/* ─── symbol detail ─── */
+export const symbolProfile = (ticker: string, days = 90) =>
+  get<SymbolProfile>(
+    `/symbol/${encodeURIComponent(ticker)}?days=${days}`
+  );
+
+/* ─── catalysts ─── */
+export const catalysts = () =>
+  get<{ text: string; events: CatalystEvent[] }>('/catalysts');
+
+/* ─── social ─── */
+export const socialRecent = (hours = 48, ticker?: string) => {
+  const p = new URLSearchParams({ hours: String(hours) });
+  if (ticker) p.set('ticker', ticker);
+  return get<RedditMention[]>(`/social?${p}`);
+};
+export const socialTopTickers = (hours = 48, n = 10) =>
+  get<SocialTicker[]>(`/social/top-tickers?hours=${hours}&n=${n}`);
+
+/* ─── events (SSE history fallback) ─── */
+export const recentEvents = (sinceId?: number) =>
+  get<{ events: LiveEvent[] }>(
+    `/events/recent${sinceId ? `?since_id=${sinceId}` : ''}`
+  );

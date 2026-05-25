@@ -108,17 +108,31 @@ def record_call(
             if dupe is not None:
                 return
             pc = s.get(PriceContext, ticker)
-            s.add(
-                TradingCall(
-                    ticker=ticker.upper(),
-                    direction=direction,
-                    conviction=max(1, min(5, conviction)),
-                    source=source,
-                    thesis=thesis_out,
-                    price_at_call=pc.last_price if pc is not None else None,
-                    created_at=datetime.now(timezone.utc),
-                )
+            call = TradingCall(
+                ticker=ticker.upper(),
+                direction=direction,
+                conviction=max(1, min(5, conviction)),
+                source=source,
+                thesis=thesis_out,
+                price_at_call=pc.last_price if pc is not None else None,
+                created_at=datetime.now(timezone.utc),
             )
+            s.add(call)
+            s.flush()
+            call_id = call.id
+        # Broadcast (best-effort, outside the session so we don't hold a tx open).
+        try:
+            from . import events
+            events.publish("call", {
+                "id": call_id,
+                "ticker": ticker.upper(),
+                "direction": direction,
+                "conviction": max(1, min(5, conviction)),
+                "source": source,
+                "thesis": thesis_out[:200],
+            })
+        except Exception as e:
+            logger.debug("events.publish(call) failed: {}", e)
     except Exception as e:
         logger.debug("record_call({}, {}) failed: {}", ticker, source, e)
 

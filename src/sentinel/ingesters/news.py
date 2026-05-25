@@ -46,6 +46,23 @@ def _safe_link_news(news_id: int) -> None:
     except Exception as e:
         logger.debug("link_news({}) outer failed: {}", news_id, e)
 
+
+def _safe_publish_news(news_id: int, ticker: str | None, title: str,
+                       source: str, sentiment: float | None) -> None:
+    """Broadcast a NEWS event to live dashboard subscribers. Lazy
+    import + try/except so the events bus is never load-bearing."""
+    try:
+        from .. import events
+        events.publish("news", {
+            "id": news_id,
+            "ticker": ticker,
+            "title": title[:200],
+            "source": source,
+            "sentiment": sentiment,
+        })
+    except Exception as e:
+        logger.debug("events.publish(news, {}) failed: {}", news_id, e)
+
 # Cross-source dedup window. yfinance + RSS often republish the same
 # underlying article URL (typically Reuters/CNBC/etc) under different
 # `external_id`s, so the existing source+id unique constraint doesn't
@@ -237,8 +254,10 @@ def _poll_rss() -> None:
             # Outside the session: link to active theses on the ticker
             # (best-effort; doesn't slow ingestion meaningfully and
             # failure is logged + skipped inside `thesis.link_news`).
-            if ticker and new_id is not None:
-                _safe_link_news(new_id)
+            if new_id is not None:
+                if ticker:
+                    _safe_link_news(new_id)
+                _safe_publish_news(new_id, ticker, title, source, None)
 
     logger.info(
         "news RSS: inserted {} new items across {} feeds (skipped {} url dups)",
@@ -335,8 +354,10 @@ def _poll_yfinance() -> None:
                 session.flush()
                 new_id = item.id
                 new_count += 1
-            if ticker and new_id is not None:
-                _safe_link_news(new_id)
+            if new_id is not None:
+                if ticker:
+                    _safe_link_news(new_id)
+                _safe_publish_news(new_id, ticker, title, "yfinance", None)
 
     logger.info(
         "news yfinance: inserted {} new items across {} tickers (skipped {} url dups)",

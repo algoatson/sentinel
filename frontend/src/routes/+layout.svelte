@@ -1,10 +1,13 @@
 <script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
   import '../app.css';
   import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
   import { browser } from '$app/environment';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
+  import { liveEvents } from '$lib/events.svelte';
+  import { toast } from '$lib/toast.svelte';
   import Sidebar from '$components/Sidebar.svelte';
   import TopBar from '$components/TopBar.svelte';
   import ToastHost from '$components/ToastHost.svelte';
@@ -22,6 +25,46 @@
         retry: 1
       }
     }
+  });
+
+  /* ─── live event stream ───────────────────────────────────
+   * Single EventSource for the whole app. Each event:
+   *  - invalidates the matching TanStack cache keys
+   *  - emits a toast for high-signal kinds (calls, watches)
+   *  - feeds the notification bell
+   */
+  onMount(() => {
+    if (!browser) return;
+    liveEvents.start();
+    const off = liveEvents.onEvent((kind, ev) => {
+      const p = ev.payload || {};
+      if (kind === 'news') {
+        queryClient.invalidateQueries({ queryKey: ['news'] });
+        queryClient.invalidateQueries({ queryKey: ['activity'] });
+      } else if (kind === 'filing') {
+        queryClient.invalidateQueries({ queryKey: ['filings'] });
+        queryClient.invalidateQueries({ queryKey: ['activity'] });
+      } else if (kind === 'call') {
+        queryClient.invalidateQueries({ queryKey: ['calls'] });
+        queryClient.invalidateQueries({ queryKey: ['scorecard'] });
+        queryClient.invalidateQueries({ queryKey: ['activity'] });
+        queryClient.invalidateQueries({ queryKey: ['kpi'] });
+        const dir = (p.direction || '').toUpperCase();
+        const ticker = p.ticker ?? '';
+        toast.info(`📣 New ${dir} call · $${ticker} (conv ${p.conviction}/5)`);
+      } else if (kind === 'watch') {
+        toast.warn(`🔔 Watch #${p.id} tripped — ${p.raw_text || ''}`);
+        queryClient.invalidateQueries({ queryKey: ['watches'] });
+      } else if (kind === 'trade') {
+        queryClient.invalidateQueries({ queryKey: ['wallets'] });
+        queryClient.invalidateQueries({ queryKey: ['wallet-history'] });
+        queryClient.invalidateQueries({ queryKey: ['kpi'] });
+      }
+    });
+    return off;
+  });
+  onDestroy(() => {
+    if (browser) liveEvents.stop();
   });
 
   let mobileNavOpen = $state(false);

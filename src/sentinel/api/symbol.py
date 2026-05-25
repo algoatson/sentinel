@@ -1,0 +1,210 @@
+"""Symbol detail endpoint — everything the bot knows about ONE ticker.
+
+The frontend's `/symbol/[ticker]` page consumes this. It's a join /
+gather across all the bot's surfaces — calls, news, filings, theses,
+reddit, price stats — so the SPA renders one tab cleanly instead of
+firing six separate queries that all need to be merged client-side."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Query
+from sqlmodel import select
+
+from .. import portfolio as _portfolio
+from .. import thesis as _thesis
+from ..db import session_scope
+from ..models import (
+    Filing,
+    NewsItem,
+    PriceContext,
+    RedditMention,
+    Thesis,
+    TradingCall,
+    Watchlist,
+)
+
+
+router = APIRouter()
+
+
+def _aware_iso(t: datetime | None) -> str | None:
+    if t is None:
+        return None
+    return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).isoformat()
+
+
+@router.get("/symbol/{ticker}")
+def profile(
+    ticker: str,
+    days: int = Query(90, ge=7, le=720),
+) -> dict:
+    """Bundle: header (last price + chg) + recent calls + recent news +
+    filings + active theses + reddit mentions, all scoped to one
+    ticker. `days` controls the news/filings/reddit window."""
+    sym = ticker.upper().lstrip("$")
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff_naive = cutoff.replace(tzinfo=None)
+
+    stats = _portfolio.ticker_stats(sym)
+
+    with session_scope() as s:
+        wl = s.exec(select(Watchlist).where(Watchlist.ticker == sym)).first()
+        pc = s.get(PriceContext, sym)
+
+        calls = s.exec(
+            select(TradingCall)
+            .where(TradingCall.ticker == sym)
+            .order_by(TradingCall.created_at.desc())
+            .limit(40)
+        ).all()
+
+        news = s.exec(
+            select(NewsItem)
+            .where(NewsItem.ticker == sym)
+            .where(NewsItem.published_at >= cutoff_naive)
+            .order_by(NewsItem.published_at.desc())
+            .limit(40)
+        ).all()
+
+        filings = s.exec(
+            select(Filing)
+            .where(Filing.ticker == sym)
+            .where(Filing.filed_at >= cutoff_naive)
+            .order_by(Filing.filed_at.desc())
+            .limit(20)
+        ).all()
+
+        theses = s.exec(
+            select(Thesis)
+            .where(Thesis.ticker == sym)
+            .where(Thesis.state == "active")
+            .order_by(Thesis.created_at.desc())
+        ).all()
+
+        reddit = s.exec(
+            select(RedditMention)
+            .where(RedditMention.ticker == sym)
+            .where(RedditMention.created_at >= cutoff_naive)
+            .order_by(RedditMention.created_at.desc())
+            .limit(20)
+        ).all()
+
+        # Quick aggregates
+        n_total = len(news)
+        sent_avg = (
+            sum(n.sentiment or 0 for n in news) / max(1, n_total)
+        ) if n_total else None
+        bullish = sum(1 for n in news if (n.sentiment or 0) > 0.15)
+        bearish = sum(1 for n in news if (n.sentiment or 0) < -0.15)
+
+        reddit_score = sum(r.score for r in reddit)
+        reddit_comments = sum(r.num_comments for r in reddit)
+        reddit_sent = (
+            sum(r.sentiment or 0 for r in reddit) / max(1, len(reddit))
+        ) if reddit else None
+
+        return {
+            "ticker": sym,
+            "asset_class": wl.asset_class if wl else None,
+            "in_watchlist": wl is not None,
+            "stats": stats,
+            "context": {
+                "last_price": pc.last_price if pc else None,
+                "change_1d_pct": (
+                    round((pc.change_1d_pct or 0) * 100, 2) if pc else None
+                ),
+                "change_5d_pct": (
+                    round((pc.change_5d_pct or 0) * 100, 2) if pc else None
+                ),
+                "volume_vs_20d_avg": (
+                    round(pc.volume_vs_20d_avg, 2) if pc else None
+                ),
+            } if pc else None,
+            "calls": [
+                {
+                    "id": c.id,
+                    "direction": c.direction,
+                    "conviction": c.conviction,
+                    "source": c.source,
+                    "thesis": c.thesis,
+                    "ts": _aware_iso(c.created_at),
+                    "ret_1d_pct": c.ret_1d_pct,
+                    "ret_5d_pct": c.ret_5d_pct,
+                    "ret_20d_pct": c.ret_20d_pct,
+                    "price_at_call": c.price_at_call,
+                    "settled": c.settled,
+                }
+                for c in calls
+            ],
+            "news": [
+                {
+                    "id": n.id,
+                    "title": n.title,
+                    "url": n.url,
+                    "source": n.source,
+                    "summary": n.summary,
+                    "ts": _aware_iso(n.published_at),
+                    "impact_1d_pct": n.impact_1d_pct,
+                    "sentiment": n.sentiment,
+                }
+                for n in news
+            ],
+            "news_stats": {
+                "count": n_total,
+                "sentiment_avg": sent_avg,
+                "bullish": bullish,
+                "bearish": bearish,
+            },
+            "filings": [
+                {
+                    "id": f.id,
+                    "form_type": f.form_type,
+                    "accession_number": f.accession_number,
+                    "filed_at": _aware_iso(f.filed_at),
+                    "primary_doc_url": f.primary_doc_url,
+                    "summary": f.summary,
+                    "materiality_score": f.materiality_score,
+                    "materiality_reason": f.materiality_reason,
+                }
+                for f in filings
+            ],
+            "theses": [
+                {
+                    "id": t.id,
+                    "direction": t.direction,
+                    "title": t.title,
+                    "body": t.body,
+                    "invalidation_criteria": t.invalidation_criteria,
+                    "conviction": t.conviction,
+                    "target_price": t.target_price,
+                    "horizon_days": t.horizon_days,
+                    "state": t.state,
+                    "created_at": _aware_iso(t.created_at),
+                    "supporting_events": 0,  # quick view; full counts on /api/theses
+                    "challenging_events": 0,
+                }
+                for t in theses
+            ],
+            "reddit": [
+                {
+                    "id": r.id,
+                    "subreddit": r.subreddit,
+                    "author": r.author,
+                    "title": r.title,
+                    "score": r.score,
+                    "num_comments": r.num_comments,
+                    "ts": _aware_iso(r.created_at),
+                    "permalink": r.permalink,
+                    "sentiment": r.sentiment,
+                }
+                for r in reddit
+            ],
+            "reddit_stats": {
+                "count": len(reddit),
+                "score_total": reddit_score,
+                "comments_total": reddit_comments,
+                "sentiment_avg": reddit_sent,
+            },
+        }

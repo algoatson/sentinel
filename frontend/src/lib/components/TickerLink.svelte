@@ -24,7 +24,7 @@
 
 {#if safe}
   <a
-    href={`${base}/markets?ticker=${encodeURIComponent(safe)}`}
+    href={`${base}/symbol/${encodeURIComponent(safe)}`}
     onclick={(e) => e.stopPropagation()}
     class={[
       'font-mono font-semibold text-primary transition-colors hover:text-primary/80 hover:underline',
@@ -32,6 +32,6 @@
     ]
       .filter(Boolean)
       .join(' ')}
-    title={`View ${safe} on Markets`}
+    title={`Symbol ${safe} — chart, news, calls, theses, reddit`}
   >{dollar ? '$' : ''}{safe}</a>
 {/if}

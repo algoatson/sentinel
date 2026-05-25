@@ -353,6 +353,15 @@ def _run() -> None:
             w.trigger_count += 1
             session.add(w)
             _PENDING.append((w.id, w.raw_text, evidence))
+            try:
+                from .. import events
+                events.publish("watch", {
+                    "id": w.id,
+                    "raw_text": w.raw_text,
+                    "evidence": evidence[:3],
+                })
+            except Exception as e:
+                logger.debug("events.publish(watch) failed: {}", e)
     if _PENDING:
         logger.info("watches: {} tripped", len(_PENDING))
 

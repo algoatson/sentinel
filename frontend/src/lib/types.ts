@@ -355,3 +355,108 @@ export interface LookupResult {
   arg: string;
   body: string;
 }
+
+export interface CatalystEvent {
+  date: string;          // YYYY-MM-DD
+  label?: string;        // macro events
+  ticker?: string;       // earnings
+}
+
+export interface RedditMention {
+  id: number;
+  subreddit: string;
+  ticker: string | null;
+  author: string;
+  title: string;
+  score: number;
+  num_comments: number;
+  ts: string;
+  permalink: string;
+  sentiment: number | null;
+}
+
+export interface SocialTicker {
+  ticker: string;
+  mentions: number;
+  score: number;
+  comments: number;
+  sentiment_avg: number;
+}
+
+export interface SymbolProfile {
+  ticker: string;
+  asset_class: string | null;
+  in_watchlist: boolean;
+  stats: TickerStats | null;
+  context: {
+    last_price: number | null;
+    change_1d_pct: number | null;
+    change_5d_pct: number | null;
+    volume_vs_20d_avg: number | null;
+  } | null;
+  calls: Array<{
+    id: number;
+    direction: 'long' | 'short';
+    conviction: number;
+    source: string;
+    thesis: string;
+    ts: string;
+    ret_1d_pct: number | null;
+    ret_5d_pct: number | null;
+    ret_20d_pct: number | null;
+    price_at_call: number | null;
+    settled: boolean;
+  }>;
+  news: Array<{
+    id: number;
+    title: string;
+    url: string;
+    source: string;
+    summary: string | null;
+    ts: string;
+    impact_1d_pct: number | null;
+    sentiment: number | null;
+  }>;
+  news_stats: {
+    count: number;
+    sentiment_avg: number | null;
+    bullish: number;
+    bearish: number;
+  };
+  filings: Array<{
+    id: number;
+    form_type: string;
+    accession_number: string;
+    filed_at: string;
+    primary_doc_url: string;
+    summary: string | null;
+    materiality_score: number | null;
+    materiality_reason: string | null;
+  }>;
+  theses: Array<{
+    id: number;
+    direction: 'long' | 'short' | 'neutral';
+    title: string;
+    body: string;
+    invalidation_criteria: string;
+    conviction: number;
+    target_price: number | null;
+    horizon_days: number | null;
+    state: string;
+    created_at: string;
+  }>;
+  reddit: RedditMention[];
+  reddit_stats: {
+    count: number;
+    score_total: number;
+    comments_total: number;
+    sentiment_avg: number | null;
+  };
+}
+
+export interface LiveEvent {
+  id: number;
+  kind: 'news' | 'call' | 'filing' | 'watch' | 'trade' | string;
+  ts: string;
+  payload: Record<string, any>;
+}

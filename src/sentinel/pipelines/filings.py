@@ -320,4 +320,19 @@ async def _process_filing(client: EdgarClient, llm, meta: FilingMeta) -> bool:
             thesis.link_filing(filing_id)
         except Exception as e:
             logger.debug("thesis.link_filing({}) failed: {}", filing_id, e)
+
+    # Broadcast to live dashboard subscribers.
+    if filing_id is not None:
+        try:
+            from .. import events
+            events.publish("filing", {
+                "id": filing_id,
+                "ticker": filing_obj.ticker,
+                "form_type": filing_obj.form_type,
+                "accession_number": filing_obj.accession_number,
+                "materiality_score": filing_obj.materiality_score,
+                "summary": (filing_obj.summary or "")[:200],
+            })
+        except Exception as e:
+            logger.debug("events.publish(filing) failed: {}", e)
     return posted
