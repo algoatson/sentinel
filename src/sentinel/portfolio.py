@@ -203,6 +203,10 @@ def watchlist_returns() -> list[dict]:
         else:
             high_52w = low_52w = None
 
+        # 30-day closing-price sparkline (chronological). Reversed from
+        # the ts-DESC bar list so the leftmost value is oldest.
+        spark = [b.close for b in bars[:30][::-1]]
+
         out.append({
             "ticker": w.ticker,
             "asset_class": w.asset_class or "—",
@@ -223,6 +227,7 @@ def watchlist_returns() -> list[dict]:
             ),
             "day_low": day_low, "day_high": day_high,
             "high_52w": high_52w, "low_52w": low_52w,
+            "spark_30d": spark,
         })
     return out
 

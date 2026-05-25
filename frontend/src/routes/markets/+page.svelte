@@ -10,6 +10,7 @@
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
   import CandleChart from '$components/CandleChart.svelte';
+  import Sparkline from '$components/Sparkline.svelte';
   import { usd, price, compact } from '$lib/format';
 
   type Range = { label: string; days: number | null };
@@ -335,6 +336,7 @@
             {@render th('1w %', 'change_1w_pct')}
             {@render th('1m %', 'change_1m_pct')}
             {@render th('1y %', 'change_1y_pct')}
+            <th class="hidden px-3 py-2 text-center font-semibold lg:table-cell">30d</th>
             {@render th('Vol×', 'volume_vs_avg')}
           </tr>
         </thead>
@@ -353,6 +355,11 @@
               <td class="px-3 py-1.5 text-right"><Delta value={r.change_1w_pct} /></td>
               <td class="px-3 py-1.5 text-right"><Delta value={r.change_1m_pct} /></td>
               <td class="px-3 py-1.5 text-right"><Delta value={r.change_1y_pct} /></td>
+              <td class="hidden px-3 py-1 align-middle lg:table-cell">
+                <div class="flex justify-center">
+                  <Sparkline values={r.spark_30d} width={80} height={20} />
+                </div>
+              </td>
               <td
                 class={[
                   'px-3 py-1.5 text-right',

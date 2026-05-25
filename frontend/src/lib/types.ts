@@ -69,6 +69,7 @@ export interface WatchlistRow {
   day_high: number | null;
   high_52w: number | null;
   low_52w: number | null;
+  spark_30d?: number[];
 }
 
 export interface OHLC {
