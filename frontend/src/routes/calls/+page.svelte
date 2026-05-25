@@ -9,9 +9,11 @@
   import Drawer from '$components/Drawer.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
+  import Pager from '$components/Pager.svelte';
   import DossierBlock from '$components/DossierBlock.svelte';
   import AskBox from '$components/AskBox.svelte';
   import TickerLink from '$components/TickerLink.svelte';
+  import Markdown from '$components/Markdown.svelte';
   import { price, timeAgo } from '$lib/format';
   import { Target } from 'lucide-svelte';
 
@@ -82,6 +84,15 @@
       })
       .sort((a, b) => pickField(b, sortKey) - pickField(a, sortKey))
   );
+
+  let page = $state(1);
+  let pageSize = $state(25);
+  $effect(() => {
+    // reset to first page whenever the filter/sort axes shake the list
+    days; tickerFilter; directionFilter; convictionMin; sortKey;
+    page = 1;
+  });
+  const paged = $derived(filtered.slice((page - 1) * pageSize, page * pageSize));
 
   const selectedItem = $derived(
     selected !== null
@@ -289,8 +300,9 @@
       description={$callsQ.data?.length ? 'Try widening the time window or clearing filters.' : 'The bot produces calls from filings, news and synthesis cycles.'}
     />
   {:else}
+    <Pager bind:page bind:pageSize total={filtered.length} class="mb-2" />
     <div class="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
-      {#each filtered as c (c.id)}
+      {#each paged as c (c.id)}
         <Card interactive onclick={() => (selected = c.id)} class="px-4 py-3">
           <div class="flex items-center gap-1.5">
             <Pill variant={c.direction === 'long' ? 'pos' : 'neg'}>
@@ -326,6 +338,7 @@
         </Card>
       {/each}
     </div>
+    <Pager bind:page bind:pageSize total={filtered.length} class="mt-3" />
   {/if}
 </div>
 
@@ -354,7 +367,7 @@
     {#if selectedItem.thesis}
       <div class="mb-3 rounded-lg border border-border bg-surface-2 px-3 py-2">
         <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">Thesis</div>
-        <div class="mt-1 text-[13px] leading-snug text-text">{selectedItem.thesis}</div>
+        <Markdown source={selectedItem.thesis} class="mt-1" />
         <div class="mt-2 flex flex-wrap gap-x-3 text-[10.5px] tabular text-faint">
           {#if selectedItem.price_at_call}<span>price @ call: {price(selectedItem.price_at_call)}</span>{/if}
           <span>filed {timeAgo(selectedItem.ts)} ago</span>

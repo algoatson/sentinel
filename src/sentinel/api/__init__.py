@@ -23,6 +23,7 @@ from . import (
     filings,
     health as _health,
     lookup,
+    market_status as _market_status,
     markets,
     news,
     overview,
@@ -48,6 +49,7 @@ router.include_router(_events.router)
 router.include_router(filings.router)
 router.include_router(_health.router)
 router.include_router(lookup.router)
+router.include_router(_market_status.router)
 router.include_router(markets.router)
 router.include_router(news.router)
 router.include_router(overview.router)

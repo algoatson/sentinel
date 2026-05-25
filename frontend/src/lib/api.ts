@@ -176,6 +176,22 @@ export const systemMetrics = () => get<SystemMetrics>('/health/system');
 export const systemLogs = (n = 220) =>
   get<{ lines: string[] }>(`/health/logs?n=${n}`);
 
+/* ─── market status ─── */
+export interface MarketStatus {
+  state: 'open' | 'pre' | 'after' | 'closed' | 'holiday';
+  label: string;
+  emoji: string;
+  session_open: boolean;
+  regular_open: boolean;
+  next_event: string | null;
+  as_of: string;
+  et_clock: string;
+  today: string;
+  holiday: string | null;
+  half_day: string | null;
+}
+export const marketStatus = () => get<MarketStatus>('/market-status');
+
 /* ─── watches ─── */
 export const listWatches = () => get<Watch[]>('/watches');
 export const getWatch = (wid: number) =>

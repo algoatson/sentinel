@@ -55,9 +55,15 @@
   // redundant with the heading.
   function shortMandate(m: string): string {
     if (!m) return '';
-    // Match common em-dash / hyphen separator after the name.
     const idx = m.search(/[—–-]\s/);
-    return (idx > 0 ? m.slice(idx + 2) : m).trim();
+    let body = (idx > 0 ? m.slice(idx + 2) : m).trim();
+    // Take first sentence when it's a sensible length; otherwise hard
+    // cap at 140 chars. Defends layout from the research wallet's
+    // 250+ char mandate that pushes the card height all over the place.
+    const stop = body.search(/\.\s+[A-Z(]/);
+    if (stop > 0 && stop < 140) body = body.slice(0, stop + 1);
+    if (body.length > 140) body = body.slice(0, 137).trimEnd() + '…';
+    return body;
   }
 
   const aggregate = $derived.by(() => {

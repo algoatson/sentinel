@@ -4,6 +4,7 @@
   import { usd, pct, tone } from '../format';
   import { Menu, Search } from 'lucide-svelte';
   import NotificationBell from './NotificationBell.svelte';
+  import MarketStatusPill from './MarketStatusPill.svelte';
 
   interface Props {
     onOpenMobileNav?: () => void;
@@ -110,6 +111,7 @@
     </button>
     <span class="hidden tabular font-mono text-muted lg:inline">{clock}</span>
     <span class="tabular font-mono text-muted lg:hidden">{clockShort}</span>
+    <MarketStatusPill />
     <NotificationBell />
     {#if $healthQ.data}
       {@const v = $healthQ.data.verdict}
