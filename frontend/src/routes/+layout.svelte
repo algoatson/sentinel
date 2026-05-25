@@ -94,7 +94,8 @@
     l: '/lookup',
     a: '/copilot', // a for "ask"
     s: '/system',
-    f: '/feed'
+    f: '/feed',
+    n: '/analytics'  // n for "numbers"
   };
 
   let gPending = $state(false);

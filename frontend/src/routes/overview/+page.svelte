@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createQuery } from '@tanstack/svelte-query';
   import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
-  import { kpi, activity, realizedCurve, equityCurve, calls, news, filings, catalysts } from '$api';
+  import { kpi, activity, realizedCurve, equityCurve, calls, news, filings, catalysts, hotTickers } from '$api';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import EmptyState from '$components/EmptyState.svelte';
@@ -14,7 +14,7 @@
   import { usd, compact, timeAgo, pct, tone } from '$lib/format';
   import {
     Newspaper, FileText, Target as TargetIcon, ArrowUpRight, ArrowDownRight,
-    Wallet, TrendingUp, Activity as ActivityIcon, Brain, Sparkles, Zap
+    Wallet, TrendingUp, Activity as ActivityIcon, Brain, Sparkles, Zap, Flame
   } from 'lucide-svelte';
 
   type Range = { label: string; days: number };
@@ -61,6 +61,11 @@
     queryKey: ['catalysts'],
     queryFn: catalysts,
     refetchInterval: 5 * 60_000
+  });
+  const hotQ = createQuery({
+    queryKey: ['hot', 24],
+    queryFn: () => hotTickers(24, 8),
+    refetchInterval: 90_000
   });
 
   const realCum = $derived(($realQ.data ?? []).map((p) => p.cumulative));
@@ -200,6 +205,59 @@
     <EquityCurveChart series={$equityQ.data ?? []} />
   {/if}
 </Card>
+
+<!-- ── HOT NOW ──────────────────────────────────────── -->
+{#if $hotQ.data && $hotQ.data.length > 0}
+  <Card class="mt-4 px-4 py-3">
+    <div class="mb-2 flex items-baseline gap-2">
+      <Flame class="h-3.5 w-3.5 text-warn" />
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+        Hot now (24h composite signal)
+      </div>
+      <a
+        href={`${base}/analytics`}
+        class="ml-auto text-[10.5px] text-primary underline hover:text-primary/80"
+      >see all →</a>
+    </div>
+    <div class="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
+      {#each $hotQ.data as h (h.ticker)}
+        <a
+          href={`${base}/symbol/${encodeURIComponent(h.ticker)}`}
+          class="rounded-md border border-border bg-surface-2 px-2.5 py-1.5 transition-colors hover:border-warn/40"
+        >
+          <div class="flex items-baseline gap-1.5">
+            <TickerLink ticker={h.ticker} class="text-[12.5px]" />
+            <span class={[
+              'tabular text-[10.5px] font-bold',
+              h.score >= 50 ? 'text-bad' : h.score >= 30 ? 'text-warn' : 'text-good'
+            ].join(' ')}>{h.score.toFixed(0)}</span>
+          </div>
+          <div class="mt-1 flex h-1 overflow-hidden rounded-full bg-bg/40">
+            {#each [
+              [h.components.news, 'var(--color-primary)'],
+              [h.components.reddit, 'var(--color-warn)'],
+              [h.components.filings, 'var(--color-violet)'],
+              [h.components.call, 'var(--color-good)'],
+              [h.components.price, 'var(--color-bad)']
+            ] as [v, c] (c)}
+              {#if v > 0}<div style:flex-grow={v} style:background-color={c}></div>{/if}
+            {/each}
+          </div>
+          <div class="mt-1 text-[10px] tabular text-faint">
+            {#if h.news_count > 0}{h.news_count}N{/if}
+            {#if h.reddit_count > 0} {h.reddit_count}R{/if}
+            {#if h.filings_material > 0} {h.filings_material}F{/if}
+            {#if h.price_move_pct !== null && Math.abs(h.price_move_pct) > 2}
+              <span class={h.price_move_pct > 0 ? 'text-good' : 'text-bad'}>
+                {h.price_move_pct > 0 ? '+' : ''}{h.price_move_pct.toFixed(1)}%
+              </span>
+            {/if}
+          </div>
+        </a>
+      {/each}
+    </div>
+  </Card>
+{/if}
 
 <!-- ── upcoming catalysts ────────────────────────────────── -->
 {#if $catalystsQ.data?.events?.length}

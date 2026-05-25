@@ -41,6 +41,7 @@
     { kind: 'page', label: 'Theses', href: '/theses', icon: Brain },
     { kind: 'page', label: 'Intel', href: '/intel', icon: Satellite },
     { kind: 'page', label: 'Calls', href: '/calls', icon: Target },
+    { kind: 'page', label: 'Analytics', href: '/analytics', icon: LineChart },
     { kind: 'page', label: 'Live feed', href: '/feed', icon: Bell },
     { kind: 'page', label: 'Watches', href: '/watches', icon: Bell },
     { kind: 'page', label: 'Lookup', href: '/lookup', icon: Search },

@@ -1,1 +1,0 @@
-import{s as r}from"./CL75-xA5.js";import{a as t}from"./b8yt2BMG.js";const e={get error(){return r.error},get params(){return r.params},get status(){return r.status},get url(){return r.url}};t.updated.check;const o=e;export{o as p};

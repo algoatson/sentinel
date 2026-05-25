@@ -14,7 +14,8 @@
     Sparkles,
     Cog,
     SlidersHorizontal,
-    Activity as ActivityIcon
+    Activity as ActivityIcon,
+    BarChart3
   } from 'lucide-svelte';
 
   interface Props {
@@ -41,6 +42,7 @@
         { href: '/theses', label: 'Theses', icon: Brain },
         { href: '/intel', label: 'Intel', icon: Satellite },
         { href: '/calls', label: 'Calls', icon: Target },
+        { href: '/analytics', label: 'Analytics', icon: BarChart3 },
         { href: '/feed', label: 'Live feed', icon: ActivityIcon }
       ]
     },

@@ -460,3 +460,74 @@ export interface LiveEvent {
   ts: string;
   payload: Record<string, any>;
 }
+
+export interface HotTicker {
+  ticker: string;
+  score: number;
+  in_watchlist: boolean;
+  news_count: number;
+  news_sentiment_avg: number | null;
+  news_sources: string[];
+  reddit_count: number;
+  reddit_score: number;
+  reddit_subs: string[];
+  filings_material: number;
+  filings_max_mat: number;
+  best_call_conv: number | null;
+  best_call_direction: 'long' | 'short' | null;
+  price_move_pct: number | null;
+  components: {
+    news: number;
+    sent: number;
+    reddit: number;
+    filings: number;
+    call: number;
+    price: number;
+    spread: number;
+  };
+}
+
+export interface CalibrationBucket {
+  conviction: number;
+  predicted_prob: number;
+  n: number;
+  wins: number;
+  hit_rate: number | null;
+  brier: number | null;
+}
+
+export interface CalibrationSummary {
+  window_days: number;
+  n: number;
+  wins: number;
+  hit_rate: number | null;
+  brier: number | null;
+  buckets: CalibrationBucket[];
+  by_source: Record<
+    string,
+    { source: string; n: number; wins: number; hit_rate: number | null; brier: number | null }
+  >;
+}
+
+export interface AttributionRow {
+  n: number;
+  wins: number;
+  hit_rate: number | null;
+  ret_avg_pct: number | null;
+  ret_sum_pct: number;
+  source?: string;
+  conviction?: number;
+  direction?: string;
+  ticker?: string;
+  best_pct?: number;
+  worst_pct?: number;
+}
+
+export interface AttributionSummary {
+  window_days: number;
+  by_source: AttributionRow[];
+  by_conviction: AttributionRow[];
+  by_direction: AttributionRow[];
+  top_tickers: AttributionRow[];
+  bottom_tickers: AttributionRow[];
+}

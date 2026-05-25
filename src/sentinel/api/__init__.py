@@ -15,6 +15,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from . import (
+    analytics,
     calls,
     catalysts,
     copilot,
@@ -39,6 +40,7 @@ router = APIRouter(prefix="/api", tags=["dashboard"])
 
 # Mount sub-routers. Order doesn't matter beyond grouping in the auto-
 # docs; keeping alphabetical so a new endpoint is easy to find later.
+router.include_router(analytics.router)
 router.include_router(calls.router)
 router.include_router(catalysts.router)
 router.include_router(copilot.router)

@@ -31,6 +31,7 @@ from .ingesters import (
     reddit,
 )
 from .pipelines import (
+    auto_thesis,
     book_risk,
     briefing,
     call_review,
@@ -45,6 +46,7 @@ from .pipelines import (
     news_alerts,
     news_impact,
     reddit_feed,
+    risk_circuit,
     sentiment,
     social_pulse,
     synthesis,
@@ -299,6 +301,26 @@ def make_scheduler() -> AsyncIOScheduler:
         thesis.run_review_cycle,
         CronTrigger(hour=17, minute=10, timezone=ET),
         id="thesis_review",
+        **_COMMON,
+    )
+    # `auto_thesis`: promote any 5/5 conviction TradingCall into a
+    # maintained Thesis. Cheap (no LLM); runs every 30min so a fresh
+    # high-conviction call is picked up within minutes rather than
+    # waiting until the next 08:15 ET generate_cycle.
+    sched.add_job(
+        auto_thesis.run_auto_thesis,
+        _every(minutes=30),
+        id="auto_thesis",
+        **_COMMON,
+    )
+    # `risk_circuit`: audit every wallet's peak-to-current drawdown
+    # and pause new opens when it breaches -15%. Cheap; runs every
+    # 15min. Existing positions are left intact (the breaker is on
+    # NEW opens) so we don't amplify losses by force-closing.
+    sched.add_job(
+        risk_circuit.run_risk_circuit,
+        _every(minutes=15),
+        id="risk_circuit",
         **_COMMON,
     )
     # Dedicated Reddit-stream channel — notable r/ posts (moving/surging

@@ -43,6 +43,7 @@ from .ingesters import (
 )
 from .llm import get_llm
 from .pipelines import (
+    auto_thesis,
     book_risk,
     briefing,
     call_review,
@@ -57,6 +58,7 @@ from .pipelines import (
     news_alerts,
     news_impact,
     reddit_feed,
+    risk_circuit,
     sentiment,
     social_pulse,
     synthesis,
@@ -83,6 +85,8 @@ _RUN_ONCE_REGISTRY = {
     "hot_movers": hot_movers.run_hot_movers,
     "thesis_generate": thesis.run_generate_cycle,
     "thesis_review": thesis.run_review_cycle,
+    "auto_thesis": auto_thesis.run_auto_thesis,
+    "risk_circuit": risk_circuit.run_risk_circuit,
     "briefing": briefing.run_premarket_briefing,
     "news": news.poll_news,
     "macro_themes": macro_themes.run_macro_themes,

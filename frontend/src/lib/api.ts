@@ -11,12 +11,15 @@
 
 import type {
   Activity,
+  AttributionSummary,
+  CalibrationSummary,
   CallDossier,
   CallItem,
   CatalystEvent,
   EquityCurve,
   FilingItem,
   HealthReport,
+  HotTicker,
   KpiSnapshot,
   LiveEvent,
   LookupResult,
@@ -215,6 +218,18 @@ export const socialTopTickers = (hours = 48, n = 10) =>
 export const recentEvents = (sinceId?: number) =>
   get<{ events: LiveEvent[] }>(
     `/events/recent${sinceId ? `?since_id=${sinceId}` : ''}`
+  );
+
+/* ─── analytics ─── */
+export const hotTickers = (hours = 24, limit = 12) =>
+  get<HotTicker[]>(`/analytics/hot?hours=${hours}&limit=${limit}`);
+export const calibration = (days = 90) =>
+  get<CalibrationSummary>(`/analytics/calibration?days=${days}`);
+export const attribution = (days = 90) =>
+  get<AttributionSummary>(`/analytics/attribution?days=${days}`);
+export const newsClusters = (hours = 24) =>
+  get<{ clusters: Record<string, number[]> }>(
+    `/analytics/news-clusters?hours=${hours}`
   );
 
 /* ─── positions (unified book + close action) ─── */
