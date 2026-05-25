@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from .. import dossier as _dossier
+from ..analytics import dedupe as _dedupe
 from ..db import session_scope
 from ..models import ArticleBody, NewsItem
 
@@ -28,8 +29,16 @@ def list_recent(
     hours: int = Query(24, ge=1, le=168),
     ticker: str | None = Query(None),
     limit: int = Query(60, ge=1, le=200),
+    dedupe: bool = Query(
+        False,
+        description="When true, drop non-canonical members of a cluster "
+                    "from the response. Each surviving row carries "
+                    "`cluster_size` so the UI can render +N dupes."
+    ),
 ) -> list[dict]:
-    """Recent news, newest first. Optional ticker filter."""
+    """Recent news, newest first. Optional ticker filter. Carries
+    cluster info so the UI can show "+N dupes" badges on syndicated
+    stories."""
     cutoff_naive = (
         datetime.now(timezone.utc) - timedelta(hours=hours)
     ).replace(tzinfo=None)
@@ -40,17 +49,33 @@ def list_recent(
         rows = s.exec(
             q.order_by(NewsItem.published_at.desc()).limit(limit)
         ).all()
-        return [
-            {
-                "id": r.id,
-                "ticker": r.ticker, "title": r.title, "url": r.url,
-                "source": r.source, "summary": r.summary,
-                "ts": _aware_iso(r.published_at),
-                "impact_1d_pct": r.impact_1d_pct,
-                "sentiment": r.sentiment,
-                "is_macro": r.is_macro,
-            } for r in rows
-        ]
+
+    # Cluster overlay (uses the same `hours` window so we don't miss
+    # the canonical when it's older but the dup is fresh).
+    clusters = _dedupe.for_news_ids(
+        [r.id for r in rows], hours=max(hours, 48)
+    )
+
+    out = []
+    for r in rows:
+        info = clusters.get(r.id)
+        cluster_size = info["size"] if info else 1
+        is_canonical = info["is_canonical"] if info else True
+        if dedupe and not is_canonical:
+            continue
+        out.append({
+            "id": r.id,
+            "ticker": r.ticker, "title": r.title, "url": r.url,
+            "source": r.source, "summary": r.summary,
+            "ts": _aware_iso(r.published_at),
+            "impact_1d_pct": r.impact_1d_pct,
+            "sentiment": r.sentiment,
+            "is_macro": r.is_macro,
+            "cluster_size": cluster_size,
+            "is_canonical": is_canonical,
+            "sibling_ids": info["sibling_ids"] if info else [],
+        })
+    return out
 
 
 @router.get("/news/{news_id}/dossier")

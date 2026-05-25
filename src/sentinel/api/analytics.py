@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query
 
 from ..analytics import attribution as _attr
 from ..analytics import calibration as _cal
+from ..analytics import concentration as _conc
 from ..analytics import dedupe as _dedupe
 from ..analytics import hot as _hot
 
@@ -38,3 +39,9 @@ def attribution(days: int = Query(90, ge=7, le=365)) -> dict:
 def news_clusters(hours: int = Query(24, ge=1, le=168)) -> dict:
     """Map of fingerprint → [news_ids] for the recent window."""
     return {"clusters": _dedupe.cluster_recent(hours=hours)}
+
+
+@router.get("/analytics/concentration")
+def concentration() -> dict:
+    """Per-wallet asset-class exposure of open positions."""
+    return _conc.concentration_summary()

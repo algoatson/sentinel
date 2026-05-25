@@ -119,9 +119,14 @@ export const askCall = (id: number, question: string) =>
 export const scorecard = () => get<Scorecard>('/scorecard');
 
 /* ─── news ─── */
-export const news = (hours = 24, ticker?: string) => {
+export const news = (
+  hours = 24,
+  ticker?: string,
+  opts: { dedupe?: boolean } = {}
+) => {
   const params = new URLSearchParams({ hours: String(hours) });
   if (ticker) params.set('ticker', ticker);
+  if (opts.dedupe) params.set('dedupe', 'true');
   return get<NewsItem[]>(`/news?${params}`);
 };
 export const newsDossier = (id: number, refresh = false) =>

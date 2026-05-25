@@ -35,11 +35,12 @@
   let selectedNewsId = $state<number | null>(null);
   let selectedFiling = $state<number | null>(null);
   let refreshing = $state(false);
+  let dedupeNews = $state(true); // collapse syndicated copies of the same event
 
   /* ── news queries ────────────────────────── */
   const newsQ = createQuery(reactiveQueryOptions(() => ({
-    queryKey: ['news', hours, tickerFilter],
-    queryFn: () => news(hours, tickerFilter.trim() || undefined),
+    queryKey: ['news', hours, tickerFilter, dedupeNews],
+    queryFn: () => news(hours, tickerFilter.trim() || undefined, { dedupe: dedupeNews }),
     refetchInterval: mode === 'news' ? 60_000 : false,
     enabled: mode === 'news'
   })));
@@ -291,6 +292,14 @@
           >{label}</button>
         {/each}
       </div>
+      <label class="flex items-center gap-1.5 cursor-pointer rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px]">
+        <input
+          type="checkbox"
+          bind:checked={dedupeNews}
+          class="h-3 w-3 cursor-pointer accent-primary"
+        />
+        <span class={dedupeNews ? 'text-text' : 'text-muted'}>Collapse dupes</span>
+      </label>
     {:else if mode === 'social'}
       <span class="text-[11px] text-faint">Reddit mentions across tracked subreddits.</span>
     {:else}
@@ -388,6 +397,12 @@
               {/if}
               {#if n.is_macro}
                 <Pill variant="violet"><Globe class="h-2.5 w-2.5" /> macro</Pill>
+              {/if}
+              {#if (n.cluster_size ?? 1) > 1}
+                <Pill
+                  variant="warn"
+                  class="!normal-case"
+                >+{(n.cluster_size ?? 1) - 1} dupes</Pill>
               {/if}
               {#if n.impact_1d_pct !== null}
                 <div class="ml-auto"><Delta value={n.impact_1d_pct} label="1d" /></div>
