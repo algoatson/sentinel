@@ -303,16 +303,16 @@
     {#if $callsQ.isLoading}
       <div class="flex justify-center py-6"><Spinner size={14} /></div>
     {:else if !$callsQ.data?.length}
-      <div class="rounded-md border border-border-soft bg-surface-2/40 px-3 py-4 text-center text-[11.5px] text-faint">
+      <div class="flex flex-1 items-center justify-center rounded-md border border-border-soft bg-surface-2/40 px-3 py-4 text-center text-[11.5px] text-faint">
         No calls in the last 7 days.
       </div>
     {:else}
-      <ul class="divide-soft -mx-1">
+      <ul class="divide-soft -mx-1 flex-1">
         {#each $callsQ.data.slice(0, 8) as c (c.id)}
           <li>
             <a
               href={`${base}/calls`}
-              class="flex items-start gap-2 rounded-md px-1.5 py-1.5 transition-colors hover:bg-white/[0.025]"
+              class="flex h-[3.25rem] items-start gap-2 rounded-md px-1.5 py-1.5 transition-colors hover:bg-white/[0.025]"
             >
               <Pill variant={c.direction === 'long' ? 'pos' : 'neg'}>
                 {c.direction[0].toUpperCase()}
@@ -350,16 +350,16 @@
     {#if $filingsQ.isLoading}
       <div class="flex justify-center py-6"><Spinner size={14} /></div>
     {:else if !$filingsQ.data?.length}
-      <div class="rounded-md border border-border-soft bg-surface-2/40 px-3 py-4 text-center text-[11.5px] text-faint">
+      <div class="flex flex-1 items-center justify-center rounded-md border border-border-soft bg-surface-2/40 px-3 py-4 text-center text-[11.5px] text-faint">
         No filings in the last 7 days.
       </div>
     {:else}
-      <ul class="divide-soft -mx-1">
+      <ul class="divide-soft -mx-1 flex-1">
         {#each $filingsQ.data.slice(0, 8) as f (f.id)}
           <li>
             <a
               href={`${base}/intel`}
-              class="flex items-start gap-2 rounded-md px-1.5 py-1.5 transition-colors hover:bg-white/[0.025]"
+              class="flex h-[3.25rem] items-start gap-2 rounded-md px-1.5 py-1.5 transition-colors hover:bg-white/[0.025]"
             >
               <Pill variant="violet" class="font-mono">{f.form_type}</Pill>
               <div class="min-w-0 flex-1">
@@ -403,16 +403,16 @@
     {#if $newsQ.isLoading}
       <div class="flex justify-center py-6"><Spinner size={14} /></div>
     {:else if !$newsQ.data?.length}
-      <div class="rounded-md border border-border-soft bg-surface-2/40 px-3 py-4 text-center text-[11.5px] text-faint">
+      <div class="flex flex-1 items-center justify-center rounded-md border border-border-soft bg-surface-2/40 px-3 py-4 text-center text-[11.5px] text-faint">
         No news in the last 7 days.
       </div>
     {:else}
-      <ul class="divide-soft -mx-1">
+      <ul class="divide-soft -mx-1 flex-1">
         {#each $newsQ.data.slice(0, 8) as n (n.id)}
           <li>
             <a
               href={`${base}/intel`}
-              class="flex items-start gap-2 rounded-md px-1.5 py-1.5 transition-colors hover:bg-white/[0.025]"
+              class="flex h-[3.25rem] items-start gap-2 rounded-md px-1.5 py-1.5 transition-colors hover:bg-white/[0.025]"
             >
               <Pill variant={variantForSentiment(n.sentiment)}>
                 {n.sentiment !== null && n.sentiment !== undefined

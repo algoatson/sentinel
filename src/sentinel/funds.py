@@ -146,11 +146,13 @@ def _social_surge(session, ticker: str, now: datetime) -> int:
 
 
 RESEARCH_WALLET_NAME = "research"
+# Keep this terse (≤ ~100 chars) — the dashboard's Portfolio card
+# renders mandates as a 1-line caption next to the wallet name. The
+# implementation details (`_POLICIES` skips this fund, etc) belong
+# in code comments, not in the user-facing mandate. The bot's
+# Research-Desk path is what makes this fund "research".
 RESEARCH_WALLET_MANDATE = (
-    "🔬 Research — user-directed: opens positions only when the user "
-    "explicitly executes a Research Desk recommendation. No autonomous "
-    "policy (`_POLICIES` skips this fund), so the autonomous cycle "
-    "leaves it alone; its track record measures user-driven research."
+    "🔬 Research — user-directed via Research Desk; no autonomous policy."
 )
 
 
@@ -184,9 +186,10 @@ def seed_funds() -> None:
             )
             logger.info("fund seeded: {}", name)
         # Research wallet — same starting cash, no policy entry.
-        if not s.exec(
+        existing_research = s.exec(
             select(Fund).where(Fund.name == RESEARCH_WALLET_NAME)
-        ).first():
+        ).first()
+        if existing_research is None:
             s.add(
                 Fund(
                     name=RESEARCH_WALLET_NAME,
@@ -199,6 +202,27 @@ def seed_funds() -> None:
             )
             logger.info("fund seeded: {} (user-directed, no autonomous policy)",
                         RESEARCH_WALLET_NAME)
+        elif existing_research.mandate != RESEARCH_WALLET_MANDATE:
+            # Mandate text was updated in code — refresh the DB so the
+            # dashboard reads the new short version on next render. Same
+            # treatment for every other fund whose mandate string drifts
+            # against `_POLICIES` is below in the main loop (added now).
+            existing_research.mandate = RESEARCH_WALLET_MANDATE
+            s.add(existing_research)
+            logger.info("fund mandate refreshed: {}", RESEARCH_WALLET_NAME)
+
+        # Same self-healing for every policy-driven fund: if the code's
+        # mandate string has been edited, propagate to the existing DB
+        # row so the dashboard always shows the current copy.
+        for name, pol in _POLICIES.items():
+            pol_mandate = pol.get("mandate")
+            if not pol_mandate:
+                continue
+            row = s.exec(select(Fund).where(Fund.name == name)).first()
+            if row is not None and row.mandate != pol_mandate:
+                row.mandate = pol_mandate
+                s.add(row)
+                logger.info("fund mandate refreshed: {}", name)
 
 
 def _mark(session, ticker: str) -> float | None:

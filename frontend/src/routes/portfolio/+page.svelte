@@ -57,12 +57,14 @@
     if (!m) return '';
     const idx = m.search(/[—–-]\s/);
     let body = (idx > 0 ? m.slice(idx + 2) : m).trim();
-    // Take first sentence when it's a sensible length; otherwise hard
-    // cap at 140 chars. Defends layout from the research wallet's
-    // 250+ char mandate that pushes the card height all over the place.
+    // Take first sentence when ≤ 90 chars (matches the typical wallet
+    // mandate length); otherwise hard-truncate to 90 chars + "…". The
+    // card row uses line-clamp-1 so this is a backup defence — keeps
+    // all cards visually peer with each other even when a wallet's
+    // mandate string drifts long (research wallet used to be 255 chars).
     const stop = body.search(/\.\s+[A-Z(]/);
-    if (stop > 0 && stop < 140) body = body.slice(0, stop + 1);
-    if (body.length > 140) body = body.slice(0, 137).trimEnd() + '…';
+    if (stop > 0 && stop < 90) body = body.slice(0, stop + 1);
+    if (body.length > 90) body = body.slice(0, 87).trimEnd() + '…';
     return body;
   }
 
