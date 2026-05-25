@@ -122,6 +122,15 @@ export const newsDossier = (id: number, refresh = false) =>
   );
 export const askNews = (id: number, question: string) =>
   post<{ answer: string }>(`/news/${id}/ask`, { question });
+export const newsArticle = (id: number) =>
+  get<{
+    news_id: number;
+    url: string;
+    body: string | null;
+    source: string | null;
+    char_count: number;
+    fetched_at: string | null;
+  }>(`/news/${id}/article`);
 
 /* ─── filings ─── */
 export const filings = (
@@ -156,6 +165,8 @@ export const systemLogs = (n = 220) =>
 
 /* ─── watches ─── */
 export const listWatches = () => get<Watch[]>('/watches');
+export const getWatch = (wid: number) =>
+  get<Watch & { spec: Record<string, unknown> }>(`/watches/${wid}`);
 export const addWatch = (text: string) =>
   post<{ ok: boolean; message: string }>('/watches', { text });
 export const removeWatch = (wid: number) =>

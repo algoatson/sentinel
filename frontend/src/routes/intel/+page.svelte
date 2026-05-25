@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
-  import { news, newsDossier, askNews, filings } from '$api';
+  import { news, newsDossier, askNews, newsArticle, filings } from '$api';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import Delta from '$components/Delta.svelte';
@@ -46,6 +46,20 @@
     queryFn: () => newsDossier(selectedNewsId!, refreshing),
     enabled: selectedNewsId !== null
   }));
+
+  const articleQ = createQuery(() => ({
+    queryKey: ['news-article', selectedNewsId],
+    queryFn: () => newsArticle(selectedNewsId!),
+    enabled: selectedNewsId !== null,
+    staleTime: 60 * 60_000 // article body never changes once cached
+  }));
+
+  let articleExpanded = $state(false);
+  $effect(() => {
+    // Reset collapse state when we switch articles.
+    selectedNewsId;
+    articleExpanded = false;
+  });
 
   /* ── filings queries ─────────────────────── */
   const filingsQ = createQuery(() => ({
@@ -435,6 +449,34 @@
         <div class="mt-1 text-[12px] text-muted">{selectedNewsItem.summary}</div>
       {/if}
     </div>
+
+    <!-- Original article body (cached). Collapsed by default since
+         these can be 2-6k chars; expand to read inline. -->
+    {#if $articleQ.data?.body}
+      {@const art = $articleQ.data}
+      <div class="mb-4 rounded-lg border border-border-soft bg-surface-2/40">
+        <button
+          type="button"
+          onclick={() => (articleExpanded = !articleExpanded)}
+          class="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] text-muted transition-colors hover:text-text"
+        >
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+            Original article
+          </span>
+          <span class="tabular text-[10px] text-faint">
+            {art.char_count} chars · {art.source}
+          </span>
+          <span class="ml-auto text-[10px] text-primary">
+            {articleExpanded ? '▼ hide' : '▶ show'}
+          </span>
+        </button>
+        {#if articleExpanded}
+          <div class="border-t border-border-soft px-4 py-3 text-[12.5px] leading-relaxed text-muted whitespace-pre-wrap">
+            {art.body}
+          </div>
+        {/if}
+      </div>
+    {/if}
 
     <DossierBlock
       body={$dossierQ.data?.body}

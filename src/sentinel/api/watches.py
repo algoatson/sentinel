@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+from sqlmodel import select
 
+from ..db import session_scope
+from ..models import Watch
 from ..pipelines import watches as _watches
 
 
@@ -33,6 +37,29 @@ def list_watches() -> list[dict]:
         }
         for r in rows
     ]
+
+
+@router.get("/watches/{wid}")
+def get_watch(wid: int) -> dict:
+    """Single watch row including the compiled `spec` so the UI can
+    show "this is what your plain-English request was turned into"."""
+    with session_scope() as s:
+        w = s.get(Watch, wid)
+        if w is None:
+            raise HTTPException(404, f"watch #{wid} not found")
+        try:
+            spec = json.loads(w.condition_json) if w.condition_json else {}
+        except json.JSONDecodeError:
+            spec = {"_raw": w.condition_json}
+        return {
+            "id": w.id,
+            "raw_text": w.raw_text,
+            "spec": spec,
+            "active": w.active,
+            "trigger_count": w.trigger_count,
+            "last_triggered_at": _aware_iso(w.last_triggered_at),
+            "created_at": _aware_iso(w.created_at),
+        }
 
 
 class AddRequest(BaseModel):

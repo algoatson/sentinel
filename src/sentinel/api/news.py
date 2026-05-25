@@ -11,7 +11,7 @@ from sqlmodel import select
 
 from .. import dossier as _dossier
 from ..db import session_scope
-from ..models import NewsItem
+from ..models import ArticleBody, NewsItem
 
 
 router = APIRouter()
@@ -91,4 +91,34 @@ def get_one(news_id: int) -> dict:
             "impact_1d_pct": n.impact_1d_pct,
             "sentiment": n.sentiment,
             "is_macro": n.is_macro,
+        }
+
+
+@router.get("/news/{news_id}/article")
+def article_body(news_id: int) -> dict:
+    """Cached extracted article body, if we have one. Doesn't trigger
+    a new fetch — that already happened when the dossier was first
+    composed. Returns `body: null` if no body is on file (article was
+    behind a paywall or extraction failed)."""
+    with session_scope() as s:
+        n = s.get(NewsItem, news_id)
+        if n is None:
+            raise HTTPException(404, f"news #{news_id} not found")
+        row = s.get(ArticleBody, n.url)
+        if row is None or row.source == "stub":
+            return {
+                "news_id": news_id,
+                "url": n.url,
+                "body": None,
+                "source": row.source if row else None,
+                "char_count": 0,
+                "fetched_at": _aware_iso(row.fetched_at) if row else None,
+            }
+        return {
+            "news_id": news_id,
+            "url": n.url,
+            "body": row.body,
+            "source": row.source,
+            "char_count": row.char_count,
+            "fetched_at": _aware_iso(row.fetched_at),
         }

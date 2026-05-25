@@ -1,21 +1,28 @@
 <script lang="ts">
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { listWatches, addWatch, removeWatch } from '$api';
+  import { listWatches, getWatch, addWatch, removeWatch } from '$api';
   import { toast } from '$lib/toast.svelte';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
+  import Drawer from '$components/Drawer.svelte';
   import { timeAgo } from '$lib/format';
   import { Bell, Send, X } from 'lucide-svelte';
 
   let prompt = $state('');
+  let selectedId = $state<number | null>(null);
 
   const watchesQ = createQuery({
     queryKey: ['watches'],
     queryFn: listWatches,
     refetchInterval: 30_000
   });
+  const detailQ = createQuery(() => ({
+    queryKey: ['watch', selectedId],
+    queryFn: () => getWatch(selectedId!),
+    enabled: selectedId !== null
+  }));
   const qc = useQueryClient();
 
   const addM = createMutation({
@@ -132,7 +139,7 @@
   {:else}
     <div class="grid grid-cols-1 gap-2.5 md:grid-cols-2">
       {#each $watchesQ.data as w (w.id)}
-        <Card class="px-3.5 py-3">
+        <Card interactive onclick={() => (selectedId = w.id)} class="px-3.5 py-3">
           <div class="flex items-start gap-2">
             <Pill variant={w.active ? 'pos' : 'neutral'}>
               #{w.id}{w.active ? '' : ' · paused'}
@@ -143,7 +150,10 @@
             <button
               type="button"
               aria-label="Remove watch"
-              onclick={() => $removeM.mutate(w.id)}
+              onclick={(e) => {
+                e.stopPropagation();
+                $removeM.mutate(w.id);
+              }}
               disabled={$removeM.isPending}
               class="-mt-1 -mr-1 shrink-0 rounded p-1 text-faint transition-colors hover:bg-surface-2 hover:text-bad"
             >
@@ -164,3 +174,63 @@
     </div>
   {/if}
 </div>
+
+<!-- ── watch detail drawer (shows the compiled spec) ───────────────── -->
+<Drawer
+  open={selectedId !== null}
+  onClose={() => (selectedId = null)}
+  class="max-w-xl"
+>
+  {#snippet header()}
+    {#if $detailQ.data}
+      {@const w = $detailQ.data}
+      <div class="flex flex-1 items-baseline gap-2">
+        <Pill variant={w.active ? 'pos' : 'neutral'}>
+          #{w.id}{w.active ? '' : ' · paused'}
+        </Pill>
+        <span class="text-[11.5px] text-muted">
+          {w.trigger_count} trip{w.trigger_count === 1 ? '' : 's'}
+        </span>
+      </div>
+    {/if}
+  {/snippet}
+
+  {#if $detailQ.isLoading}
+    <div class="flex justify-center py-12"><Spinner /></div>
+  {:else if $detailQ.data}
+    {@const w = $detailQ.data}
+    <div class="rounded-lg border border-border bg-surface-2 px-3 py-2">
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+        Your request
+      </div>
+      <div class="mt-1 text-[13px] leading-snug text-text">{w.raw_text}</div>
+    </div>
+
+    <div class="mt-4">
+      <div class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-faint">
+        Compiled spec
+      </div>
+      <pre class="overflow-x-auto rounded-lg border border-border bg-bg/60 px-3 py-2 font-mono text-[11px] leading-relaxed text-text"><code>{JSON.stringify(w.spec, null, 2)}</code></pre>
+      <div class="mt-1 text-[10.5px] text-faint">
+        This is what the light LLM turned your plain-English request into.
+        The watcher checks this rule each cycle (5min) and posts to Discord
+        when it trips, with a 6h cooldown to prevent spam.
+      </div>
+    </div>
+
+    <div class="mt-4 grid grid-cols-2 gap-2 text-[11.5px] tabular">
+      <div class="rounded-md border border-border bg-surface-2 px-3 py-1.5">
+        <div class="text-[10px] uppercase tracking-wider text-faint">Last triggered</div>
+        <div class="mt-0.5 text-text">
+          {w.last_triggered_at ? `${timeAgo(w.last_triggered_at)} ago` : '—'}
+        </div>
+      </div>
+      <div class="rounded-md border border-border bg-surface-2 px-3 py-1.5">
+        <div class="text-[10px] uppercase tracking-wider text-faint">Created</div>
+        <div class="mt-0.5 text-text">
+          {w.created_at ? `${timeAgo(w.created_at)} ago` : '—'}
+        </div>
+      </div>
+    </div>
+  {/if}
+</Drawer>
