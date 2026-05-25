@@ -1,15 +1,15 @@
 <script lang="ts">
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { listWatches, addWatch, removeWatch } from '$api';
+  import { toast } from '$lib/toast.svelte';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
   import { timeAgo } from '$lib/format';
-  import { Bell, Send, X, AlertCircle, CheckCircle2 } from 'lucide-svelte';
+  import { Bell, Send, X } from 'lucide-svelte';
 
   let prompt = $state('');
-  let toast = $state<{ ok: boolean; message: string } | null>(null);
 
   const watchesQ = createQuery({
     queryKey: ['watches'],
@@ -21,20 +21,20 @@
   const addM = createMutation({
     mutationFn: (text: string) => addWatch(text),
     onSuccess: (res) => {
-      toast = res;
+      (res.ok ? toast.success : toast.warn).call(toast, res.message);
       if (res.ok) prompt = '';
       qc.invalidateQueries({ queryKey: ['watches'] });
-      setTimeout(() => (toast = null), 6000);
-    }
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
   });
 
   const removeM = createMutation({
     mutationFn: (wid: number) => removeWatch(wid),
     onSuccess: (res) => {
-      toast = res;
+      toast.success(res.message);
       qc.invalidateQueries({ queryKey: ['watches'] });
-      setTimeout(() => (toast = null), 3500);
-    }
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
   });
 
   const EXAMPLES = [
@@ -58,20 +58,6 @@
     </div>
   </div>
 </div>
-
-{#if toast}
-  <div
-    class={[
-      'mb-3 flex items-center gap-2 rounded-md border px-3 py-2 text-[12px]',
-      toast.ok
-        ? 'border-good/40 bg-good-soft text-good'
-        : 'border-warn/40 bg-warn-soft text-warn'
-    ].join(' ')}
-  >
-    {#if toast.ok}<CheckCircle2 class="h-4 w-4" />{:else}<AlertCircle class="h-4 w-4" />{/if}
-    <span class="font-mono">{toast.message}</span>
-  </div>
-{/if}
 
 <Card class="px-4 py-3">
   <form

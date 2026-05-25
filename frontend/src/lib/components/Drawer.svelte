@@ -39,12 +39,13 @@
     <button
       type="button"
       aria-label="Close drawer"
-      class="absolute inset-0 cursor-default bg-black/55 backdrop-blur-sm"
+      class="absolute inset-0 cursor-default bg-black/55 backdrop-blur-sm animate-[fadeIn_0.15s_ease-out]"
       onclick={onClose}
     ></button>
     <aside
       class={[
         'relative ml-auto flex h-full w-full flex-col border-l border-border bg-surface shadow-2xl',
+        'animate-[slideInRight_0.22s_cubic-bezier(0.16,1,0.3,1)]',
         klass
       ].join(' ')}
       role="dialog"
@@ -74,3 +75,22 @@
     </aside>
   </div>
 {/if}
+
+<style>
+  @keyframes slideInRight {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+</style>

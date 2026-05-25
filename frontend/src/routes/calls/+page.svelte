@@ -10,6 +10,7 @@
   import Spinner from '$components/Spinner.svelte';
   import DossierBlock from '$components/DossierBlock.svelte';
   import AskBox from '$components/AskBox.svelte';
+  import TickerLink from '$components/TickerLink.svelte';
   import { price, timeAgo } from '$lib/format';
   import { Target } from 'lucide-svelte';
 
@@ -254,7 +255,7 @@
             <Pill variant={c.direction === 'long' ? 'pos' : 'neg'}>
               {c.direction.toUpperCase()}
             </Pill>
-            <span class="font-mono text-[12.5px] font-semibold text-primary">${c.ticker}</span>
+            <TickerLink ticker={c.ticker} class="text-[12.5px]" />
             <Pill variant={c.conviction >= 4 ? 'pos' : c.conviction <= 2 ? 'neutral' : 'info'}>
               {c.conviction}/5
             </Pill>
@@ -298,7 +299,7 @@
         <Pill variant={selectedItem.direction === 'long' ? 'pos' : 'neg'}>
           {selectedItem.direction.toUpperCase()}
         </Pill>
-        <span class="font-mono text-sm font-bold text-primary">${selectedItem.ticker}</span>
+        <TickerLink ticker={selectedItem.ticker} class="text-sm font-bold" />
         <Pill variant={selectedItem.conviction >= 4 ? 'pos' : 'info'}>
           conv {selectedItem.conviction}/5
         </Pill>

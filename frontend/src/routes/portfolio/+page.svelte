@@ -7,6 +7,7 @@
   import Drawer from '$components/Drawer.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
+  import TickerLink from '$components/TickerLink.svelte';
   import { usd, price, timeAgo, tone } from '$lib/format';
 
   const walletsQ = createQuery({
@@ -237,7 +238,7 @@
             <tbody>
               {#each h.open as p (p.id)}
                 <tr class="border-t border-border-soft">
-                  <td class="px-3 py-1.5 font-mono font-semibold">${p.ticker}</td>
+                  <td class="px-3 py-1.5"><TickerLink ticker={p.ticker} /></td>
                   <td class="px-3 py-1.5">
                     <Pill variant={p.side === 'long' ? 'pos' : 'neg'}>{p.side.toUpperCase()}</Pill>
                   </td>
@@ -291,7 +292,7 @@
             <tbody>
               {#each h.closed as t (t.id)}
                 <tr class="border-t border-border-soft">
-                  <td class="px-3 py-1.5 font-mono font-semibold">${t.ticker}</td>
+                  <td class="px-3 py-1.5"><TickerLink ticker={t.ticker} /></td>
                   <td class="px-3 py-1.5">
                     <Pill variant={t.side === 'long' ? 'pos' : 'neg'}>{t.side.toUpperCase()}</Pill>
                   </td>

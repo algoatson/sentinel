@@ -9,6 +9,7 @@
   import Spinner from '$components/Spinner.svelte';
   import DossierBlock from '$components/DossierBlock.svelte';
   import AskBox from '$components/AskBox.svelte';
+  import TickerLink from '$components/TickerLink.svelte';
   import { timeAgo } from '$lib/format';
   import { Newspaper, ExternalLink, Globe } from 'lucide-svelte';
 
@@ -179,7 +180,7 @@
               {/if}
             </Pill>
             {#if n.ticker}
-              <span class="font-mono text-[12px] font-semibold text-primary">${n.ticker}</span>
+              <TickerLink ticker={n.ticker} class="text-[12px]" />
             {/if}
             {#if n.is_macro}
               <Pill variant="violet"><Globe class="h-2.5 w-2.5" /> macro</Pill>
@@ -218,7 +219,7 @@
               : 'neutral'}
           </Pill>
           {#if selectedItem.ticker}
-            <span class="font-mono text-sm font-bold text-primary">${selectedItem.ticker}</span>
+            <TickerLink ticker={selectedItem.ticker} class="text-sm font-bold" />
           {/if}
           <span class="text-[11px] text-faint">·</span>
           <span class="text-[11px] text-faint">{selectedItem.source}</span>

@@ -1,5 +1,8 @@
 <script lang="ts">
   import { createQuery } from '@tanstack/svelte-query';
+  import { page } from '$app/state';
+  import { goto } from '$app/navigation';
+  import { base } from '$app/paths';
   import { watchlist, tickerChart, tickerStats } from '$api';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
@@ -19,12 +22,32 @@
     { label: 'All', days: null }
   ];
 
-  let selectedTicker = $state('SPY');
+  // ?ticker=NVDA → preselect that symbol so deep-links from TickerLink
+  // anywhere in the app land on the chart already loaded.
+  const queryTicker = $derived(
+    (page.url.searchParams.get('ticker') ?? '').toUpperCase().replace(/^\$/, '')
+  );
+  let selectedTicker = $state(queryTicker || 'SPY');
   let selectedRange: Range = $state(RANGES[1]);
   let searchInput = $state('');
 
+  $effect(() => {
+    if (queryTicker && queryTicker !== selectedTicker) {
+      selectedTicker = queryTicker;
+    }
+  });
+
   function pick(t: string) {
-    selectedTicker = t.toUpperCase().replace(/^\$/, '');
+    const sym = t.toUpperCase().replace(/^\$/, '');
+    selectedTicker = sym;
+    // Push the picked symbol into the URL so refresh / share works.
+    // `replaceState: true` keeps the back button useful — multiple
+    // ticker hops in a row collapse to a single history entry.
+    goto(`${base}/markets?ticker=${encodeURIComponent(sym)}`, {
+      replaceState: true,
+      keepFocus: true,
+      noScroll: true
+    });
   }
   function submitSearch() {
     if (searchInput.trim()) {

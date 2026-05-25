@@ -6,6 +6,7 @@
   import Pill from '$components/Pill.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
+  import TickerLink from '$components/TickerLink.svelte';
   import { usd, compact, timeAgo } from '$lib/format';
   import { Newspaper, FileText, Target as TargetIcon } from 'lucide-svelte';
 
@@ -220,7 +221,7 @@
               {/if}
               <div class="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10.5px] text-faint">
                 {#if item.ticker}
-                  <span class="font-mono font-semibold text-muted">${item.ticker}</span>
+                  <TickerLink ticker={item.ticker} class="text-muted hover:!text-primary" />
                 {/if}
                 {#if item.src}
                   <span>{item.src}</span>

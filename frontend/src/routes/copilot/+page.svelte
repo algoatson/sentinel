@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
+  import { browser } from '$app/environment';
   import { askCopilot } from '$api';
   import Markdown from '$components/Markdown.svelte';
   import Spinner from '$components/Spinner.svelte';
@@ -20,10 +21,40 @@
     "What's the biggest risk in the book right now?"
   ];
 
+  // localStorage persistence — chat survives navigation + reload. The
+  // bot's context is server-side (calls live DB queries), so it's fine
+  // for the user to scroll back through last week's questions.
+  const STORAGE_KEY = 'sentinel.copilot.turns.v1';
+  const STORAGE_LIMIT = 60; // cap stored turns so storage never balloons
+
   let input = $state('');
   let turns = $state<Turn[]>([]);
   let pending = $state(false);
   let feed: HTMLDivElement;
+
+  onMount(() => {
+    if (!browser) return;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) turns = JSON.parse(raw) as Turn[];
+    } catch (_) {
+      /* corrupted storage → start fresh */
+    }
+    scrollToBottom();
+  });
+
+  $effect(() => {
+    if (!browser) return;
+    try {
+      // Persist the most-recent slice to keep storage bounded.
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(turns.slice(-STORAGE_LIMIT))
+      );
+    } catch (_) {
+      /* quota / privacy mode → silently drop */
+    }
+  });
 
   async function scrollToBottom() {
     await tick();

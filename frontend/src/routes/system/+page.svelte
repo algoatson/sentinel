@@ -5,8 +5,9 @@
   import Pill from '$components/Pill.svelte';
   import StatTile from '$components/StatTile.svelte';
   import Spinner from '$components/Spinner.svelte';
+  import LogPanel from '$components/LogPanel.svelte';
   import { compact } from '$lib/format';
-  import { Cog, AlertTriangle, AlertOctagon, CheckCircle2, Cpu, Database, MemoryStick } from 'lucide-svelte';
+  import { Cog, AlertTriangle, AlertOctagon, CheckCircle2 } from 'lucide-svelte';
 
   const healthQ = createQuery({
     queryKey: ['health'],
@@ -229,5 +230,9 @@
         </div>
       {/if}
     </Card>
+  </div>
+
+  <div class="mt-4">
+    <LogPanel n={220} intervalMs={4_000} />
   </div>
 {/if}

@@ -137,6 +137,8 @@ export const researchRemaining = () =>
 /* ─── health ─── */
 export const health = () => get<HealthReport>('/health');
 export const systemMetrics = () => get<SystemMetrics>('/health/system');
+export const systemLogs = (n = 220) =>
+  get<{ lines: string[] }>(`/health/logs?n=${n}`);
 
 /* ─── watches ─── */
 export const listWatches = () => get<Watch[]>('/watches');

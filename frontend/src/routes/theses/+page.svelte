@@ -12,10 +12,13 @@
     runThesisGenerate
   } from '$api';
   import Card from '$components/Card.svelte';
+  import Drawer from '$components/Drawer.svelte';
   import Pill from '$components/Pill.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
   import StatTile from '$components/StatTile.svelte';
+  import TickerLink from '$components/TickerLink.svelte';
+  import Markdown from '$components/Markdown.svelte';
   import { timeAgo } from '$lib/format';
   import { Brain } from 'lucide-svelte';
 
@@ -123,7 +126,7 @@
             </span>
           </div>
           <div class="mt-2 text-[13.5px] leading-snug">
-            <span class="font-mono text-primary font-semibold">${t.ticker}</span>
+            <TickerLink ticker={t.ticker} />
             <span class="ml-1">{t.title}</span>
           </div>
           <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] tabular text-faint">
@@ -174,7 +177,7 @@
             </span>
           </div>
           <div class="mt-1.5 text-[12.5px]">
-            <span class="font-mono text-primary font-semibold">${t.ticker}</span>
+            <TickerLink ticker={t.ticker} />
             <span class="ml-1 text-muted">{t.title}</span>
           </div>
           {#if t.close_reason}
@@ -186,119 +189,103 @@
   </div>
 {/if}
 
-<!-- ── detail modal ────────────────────────────────────────────────── -->
-<svelte:window
-  onkeydown={(e) => {
-    if (e.key === 'Escape' && selectedId !== null) selectedId = null;
-  }}
-/>
-{#if selectedId !== null}
-  <div class="fixed inset-0 z-50 flex items-start justify-center p-4 md:p-10">
-    <button
-      type="button"
-      aria-label="Close dialog"
-      class="absolute inset-0 cursor-default bg-black/60 backdrop-blur-sm"
-      onclick={() => (selectedId = null)}
-    ></button>
-    <div
-      class="relative w-full max-w-3xl rounded-xl border border-border bg-surface shadow-2xl"
-      role="dialog"
-      aria-modal="true"
-    >
-      {#if $detailQ?.isLoading}
-        <div class="flex justify-center py-12"><Spinner /></div>
-      {:else if $detailQ?.data}
-        {@const t = $detailQ.data}
-        <header class="flex items-center gap-2 border-b border-border px-5 py-3">
-          <Pill variant={t.direction === 'long' ? 'pos' : t.direction === 'short' ? 'neg' : 'neutral'}>
-            {t.direction.toUpperCase()}
-          </Pill>
-          <span class="font-mono text-base font-bold text-primary">${t.ticker}</span>
-          <span class="text-[11px] text-faint">·</span>
-          <span class="text-[11px] text-muted">#{t.id} · {t.state.toUpperCase()}</span>
-          <button
-            onclick={() => (selectedId = null)}
-            class="ml-auto text-faint hover:text-text"
-          >✕</button>
-        </header>
+<Drawer
+  open={selectedId !== null}
+  onClose={() => (selectedId = null)}
+  class="max-w-3xl"
+>
+  {#snippet header()}
+    {#if $detailQ.data}
+      {@const t = $detailQ.data}
+      <div class="flex flex-1 flex-wrap items-baseline gap-1.5">
+        <Pill variant={t.direction === 'long' ? 'pos' : t.direction === 'short' ? 'neg' : 'neutral'}>
+          {t.direction.toUpperCase()}
+        </Pill>
+        <TickerLink ticker={t.ticker} class="text-base font-bold" />
+        <Pill variant={variantForState(t.state)}>{t.state.toUpperCase()}</Pill>
+        <span class="text-[11px] text-faint">·</span>
+        <span class="text-[11px] text-muted">#{t.id}</span>
+      </div>
+    {/if}
+  {/snippet}
 
-        <div class="max-h-[70vh] overflow-y-auto px-5 py-4">
-          <div class="rounded-lg bg-surface-2 px-4 py-3">
-            <div class="text-[13.5px] font-medium text-text">{t.title}</div>
-            <div class="prose-bot mt-2">{t.body}</div>
-            {#if t.invalidation_criteria}
-              <div class="mt-3 text-[12px]">
-                <span class="font-semibold text-warn">Kills it:</span>
-                <span class="ml-1 text-muted">{t.invalidation_criteria}</span>
-              </div>
-            {/if}
-            <div class="mt-2 flex flex-wrap gap-x-3 text-[10.5px] tabular text-faint">
-              <span>conv {t.conviction}/5</span>
-              {#if t.target_price !== null}<span>target {t.target_price.toFixed(2)}</span>{/if}
-              {#if t.horizon_days !== null}<span>{t.horizon_days}d horizon</span>{/if}
-              <span>created {t.created_at.slice(0, 10)}</span>
-            </div>
-          </div>
-
-          {#if t.state === 'active'}
-            <div class="mt-4 flex flex-wrap gap-2">
-              <button
-                onclick={() => selectedId !== null && $closeM.mutate({ id: selectedId, state: 'validated', reason: 'manual: validated' })}
-                disabled={$closeM.isPending}
-                class="rounded-md border border-good/40 bg-good-soft px-3 py-1.5 text-[11.5px] font-medium text-good hover:bg-good/15"
-              >✅ Validated</button>
-              <button
-                onclick={() => selectedId !== null && $closeM.mutate({ id: selectedId, state: 'invalidated', reason: 'manual: invalidated' })}
-                disabled={$closeM.isPending}
-                class="rounded-md border border-bad/40 bg-bad-soft px-3 py-1.5 text-[11.5px] font-medium text-bad hover:bg-bad/15"
-              >❌ Invalidated</button>
-              <button
-                onclick={() => selectedId !== null && $closeM.mutate({ id: selectedId, state: 'matured', reason: 'manual: matured' })}
-                disabled={$closeM.isPending}
-                class="rounded-md border border-warn/40 bg-warn-soft px-3 py-1.5 text-[11.5px] font-medium text-warn hover:bg-warn/15"
-              >⏳ Matured</button>
-              <button
-                onclick={() => selectedId !== null && $closeM.mutate({ id: selectedId, state: 'closed', reason: 'manual: closed' })}
-                disabled={$closeM.isPending}
-                class="rounded-md border border-border bg-surface-2 px-3 py-1.5 text-[11.5px] text-muted hover:text-text"
-              >✕ Close</button>
-            </div>
-          {:else if t.close_reason}
-            <div class="mt-4 rounded-md border border-border bg-surface-2 px-3 py-2 text-[12px] text-muted">
-              Closed as <strong>{t.state}</strong>: {t.close_reason}
-            </div>
-          {/if}
-
-          <div class="mt-5">
-            <div class="mb-2 text-[10px] font-semibold uppercase tracking-wider text-faint">
-              Linked events (timeline)
-            </div>
-            {#if !t.events.length}
-              <div class="rounded-md border border-border-soft bg-surface-2 px-3 py-2 text-[11.5px] text-faint">
-                No events linked yet. New news/filings on this ticker will appear here.
-              </div>
-            {:else}
-              <ul class="divide-soft">
-                {#each t.events as e (e.id)}
-                  <li class="grid grid-cols-[auto_1fr_auto] items-start gap-3 py-2 text-[12.5px]">
-                    <Pill
-                      variant={e.impact === 'supports' ? 'pos' : e.impact === 'challenges' ? 'neg' : 'info'}
-                    >{e.impact.toUpperCase()}</Pill>
-                    <div class="min-w-0">
-                      <div class="text-text">{e.description}</div>
-                      <div class="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10.5px] text-faint">
-                        <span>{e.kind.toUpperCase()}</span>
-                        {#if e.rationale}<span class="text-muted">{e.rationale}</span>{/if}
-                      </div>
-                    </div>
-                    <span class="tabular text-[10px] text-faint">{timeAgo(e.created_at)}</span>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </div>
+  {#if $detailQ.isLoading || !$detailQ.data}
+    <div class="flex justify-center py-12"><Spinner /></div>
+  {:else}
+    {@const t = $detailQ.data}
+    <div class="rounded-lg border border-border bg-surface-2 px-4 py-3">
+      <div class="text-[13.5px] font-medium text-text">{t.title}</div>
+      <Markdown source={t.body} class="mt-2" />
+      {#if t.invalidation_criteria}
+        <div class="mt-3 text-[12px]">
+          <span class="font-semibold text-warn">Kills it:</span>
+          <span class="ml-1 text-muted">{t.invalidation_criteria}</span>
         </div>
       {/if}
+      <div class="mt-2 flex flex-wrap gap-x-3 text-[10.5px] tabular text-faint">
+        <span>conv {t.conviction}/5</span>
+        {#if t.target_price !== null}<span>target {t.target_price.toFixed(2)}</span>{/if}
+        {#if t.horizon_days !== null}<span>{t.horizon_days}d horizon</span>{/if}
+        <span>created {t.created_at.slice(0, 10)}</span>
+      </div>
     </div>
-  </div>
-{/if}
+
+    {#if t.state === 'active'}
+      <div class="mt-4 flex flex-wrap gap-2">
+        <button
+          onclick={() => selectedId !== null && $closeM.mutate({ id: selectedId, state: 'validated', reason: 'manual: validated' })}
+          disabled={$closeM.isPending}
+          class="rounded-md border border-good/40 bg-good-soft px-3 py-1.5 text-[11.5px] font-medium text-good hover:bg-good/15"
+        >✅ Validated</button>
+        <button
+          onclick={() => selectedId !== null && $closeM.mutate({ id: selectedId, state: 'invalidated', reason: 'manual: invalidated' })}
+          disabled={$closeM.isPending}
+          class="rounded-md border border-bad/40 bg-bad-soft px-3 py-1.5 text-[11.5px] font-medium text-bad hover:bg-bad/15"
+        >❌ Invalidated</button>
+        <button
+          onclick={() => selectedId !== null && $closeM.mutate({ id: selectedId, state: 'matured', reason: 'manual: matured' })}
+          disabled={$closeM.isPending}
+          class="rounded-md border border-warn/40 bg-warn-soft px-3 py-1.5 text-[11.5px] font-medium text-warn hover:bg-warn/15"
+        >⏳ Matured</button>
+        <button
+          onclick={() => selectedId !== null && $closeM.mutate({ id: selectedId, state: 'closed', reason: 'manual: closed' })}
+          disabled={$closeM.isPending}
+          class="rounded-md border border-border bg-surface-2 px-3 py-1.5 text-[11.5px] text-muted hover:text-text"
+        >✕ Close</button>
+      </div>
+    {:else if t.close_reason}
+      <div class="mt-4 rounded-md border border-border bg-surface-2 px-3 py-2 text-[12px] text-muted">
+        Closed as <strong>{t.state}</strong>: {t.close_reason}
+      </div>
+    {/if}
+
+    <div class="mt-5">
+      <div class="mb-2 text-[10px] font-semibold uppercase tracking-wider text-faint">
+        Linked events (timeline)
+      </div>
+      {#if !t.events.length}
+        <div class="rounded-md border border-border-soft bg-surface-2 px-3 py-2 text-[11.5px] text-faint">
+          No events linked yet. New news/filings on this ticker will appear here.
+        </div>
+      {:else}
+        <ul class="divide-soft">
+          {#each t.events as e (e.id)}
+            <li class="grid grid-cols-[auto_1fr_auto] items-start gap-3 py-2 text-[12.5px]">
+              <Pill
+                variant={e.impact === 'supports' ? 'pos' : e.impact === 'challenges' ? 'neg' : 'info'}
+              >{e.impact.toUpperCase()}</Pill>
+              <div class="min-w-0">
+                <div class="text-text">{e.description}</div>
+                <div class="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10.5px] text-faint">
+                  <span>{e.kind.toUpperCase()}</span>
+                  {#if e.rationale}<span class="text-muted">{e.rationale}</span>{/if}
+                </div>
+              </div>
+              <span class="tabular text-[10px] text-faint">{timeAgo(e.created_at)}</span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+  {/if}
+</Drawer>
