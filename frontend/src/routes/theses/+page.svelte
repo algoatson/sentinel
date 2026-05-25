@@ -22,11 +22,27 @@
   import { timeAgo } from '$lib/format';
   import { Brain } from 'lucide-svelte';
 
+  type SortKey = 'recent' | 'conv' | 'support' | 'challenge' | 'last_event';
+  let sortKey: SortKey = $state('recent');
+
   const activeQ = createQuery({
     queryKey: ['theses', 'active'],
     queryFn: thesesActive,
     refetchInterval: 60_000
   });
+
+  function field(t: any, key: SortKey): number {
+    switch (key) {
+      case 'recent':     return new Date(t.created_at).getTime();
+      case 'conv':       return t.conviction ?? 0;
+      case 'support':    return t.supporting_events ?? 0;
+      case 'challenge':  return t.challenging_events ?? 0;
+      case 'last_event': return t.last_event_at ? new Date(t.last_event_at).getTime() : 0;
+    }
+  }
+  const sortedActive = $derived(
+    [...($activeQ.data ?? [])].sort((a, b) => field(b, sortKey) - field(a, sortKey))
+  );
   const closedQ = createQuery({
     queryKey: ['theses', 'closed', 30],
     queryFn: () => thesesClosed(30),
@@ -102,8 +118,30 @@
 
 <!-- ── active theses ─────────────────────────────────────────────── -->
 <div class="mt-5">
-  <div class="mb-2 text-[10px] font-semibold uppercase tracking-wider text-faint">
-    Active
+  <div class="mb-2 flex items-center gap-3">
+    <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+      Active
+    </div>
+    <div class="ml-auto flex items-center gap-1">
+      <span class="mr-1 text-[10px] font-semibold uppercase tracking-wider text-faint">Sort</span>
+      {#each [
+        ['recent', 'Newest'],
+        ['conv', 'Conv'],
+        ['support', '+events'],
+        ['challenge', '-events'],
+        ['last_event', 'Last event']
+      ] as [k, label] (k)}
+        <button
+          onclick={() => (sortKey = k as SortKey)}
+          class={[
+            'rounded-md border px-2 py-0.5 text-[10.5px] transition-colors',
+            sortKey === k
+              ? 'border-primary/50 bg-primary-soft text-primary'
+              : 'border-border bg-surface-2 text-muted hover:text-text'
+          ].join(' ')}
+        >{label}</button>
+      {/each}
+    </div>
   </div>
   {#if $activeQ.isLoading}
     <div class="flex justify-center py-8"><Spinner /></div>
@@ -114,7 +152,7 @@
     />
   {:else}
     <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-      {#each $activeQ.data as t (t.id)}
+      {#each sortedActive as t (t.id)}
         <Card interactive onclick={() => (selectedId = t.id)} class="px-4 py-3">
           <div class="flex items-center gap-1.5">
             <Pill variant={t.direction === 'long' ? 'pos' : t.direction === 'short' ? 'neg' : 'neutral'}>

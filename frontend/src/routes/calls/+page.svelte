@@ -14,10 +14,14 @@
   import { price, timeAgo } from '$lib/format';
   import { Target } from 'lucide-svelte';
 
+  type SortKey = 'date' | 'conv' | 'ret_1d' | 'ret_5d' | 'ret_20d';
+  type Dir = 'all' | 'long' | 'short';
+
   let days = $state(7);
   let tickerFilter = $state('');
-  let directionFilter: 'all' | 'long' | 'short' = $state('all');
+  let directionFilter: Dir = $state('all');
   let convictionMin = $state(0);
+  let sortKey: SortKey = $state('date');
   let selected = $state<number | null>(null);
   let refreshing = $state(false);
 
@@ -56,14 +60,26 @@
     return r.answer;
   }
 
+  function pickField(c: any, key: SortKey): number {
+    switch (key) {
+      case 'date':   return new Date(c.ts).getTime();
+      case 'conv':   return c.conviction ?? 0;
+      case 'ret_1d': return c.ret_1d_pct ?? -Infinity;
+      case 'ret_5d': return c.ret_5d_pct ?? -Infinity;
+      case 'ret_20d':return c.ret_20d_pct ?? -Infinity;
+    }
+  }
+
   const filtered = $derived(
-    ($callsQ.data ?? []).filter((c) => {
-      const t = tickerFilter.trim().toUpperCase().replace(/^\$/, '');
-      if (t && c.ticker !== t) return false;
-      if (directionFilter !== 'all' && c.direction !== directionFilter) return false;
-      if (c.conviction < convictionMin) return false;
-      return true;
-    })
+    ($callsQ.data ?? [])
+      .filter((c) => {
+        const t = tickerFilter.trim().toUpperCase().replace(/^\$/, '');
+        if (t && c.ticker !== t) return false;
+        if (directionFilter !== 'all' && c.direction !== directionFilter) return false;
+        if (c.conviction < convictionMin) return false;
+        return true;
+      })
+      .sort((a, b) => pickField(b, sortKey) - pickField(a, sortKey))
   );
 
   const selectedItem = $derived(
@@ -233,6 +249,30 @@
       placeholder="$ticker"
       class="w-24 rounded-md border border-border bg-surface-2 px-2 py-1 font-mono text-[12px] text-text placeholder:text-faint/50 focus:border-primary/60 focus:outline-none"
     />
+
+    <div class="flex items-center gap-1">
+      <span class="mr-2 text-[10px] font-semibold uppercase tracking-wider text-faint">
+        Sort
+      </span>
+      {#each [
+        ['date', 'Newest'],
+        ['conv', 'Conv'],
+        ['ret_1d', '1d ↓'],
+        ['ret_5d', '5d ↓'],
+        ['ret_20d', '20d ↓']
+      ] as [k, label] (k)}
+        <button
+          onclick={() => (sortKey = k as SortKey)}
+          class={[
+            'rounded-md border px-2 py-1 text-[11px] transition-colors',
+            sortKey === k
+              ? 'border-primary/50 bg-primary-soft text-primary'
+              : 'border-border bg-surface-2 text-muted hover:text-text'
+          ].join(' ')}
+        >{label}</button>
+      {/each}
+    </div>
+
     <span class="ml-auto text-[11px] tabular text-faint">
       {filtered.length} of {$callsQ.data?.length ?? 0}
     </span>
