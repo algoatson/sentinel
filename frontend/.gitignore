@@ -1,0 +1,9 @@
+node_modules/
+.svelte-kit/
+.vite/
+.env
+.env.local
+*.log
+
+# Build artifacts ARE committed so the Pi can serve them without node.
+# (Comment as a marker — `build/` is INTENTIONALLY tracked.)

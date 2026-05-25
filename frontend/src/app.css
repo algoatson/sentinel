@@ -1,0 +1,126 @@
+@import 'tailwindcss';
+
+/* ─── design tokens ──────────────────────────────────────────────────────
+ * Same neutral-dark palette as the prior dashboard so the user feels
+ * continuity — but expressed as CSS custom properties Tailwind can
+ * consume via @theme (v4 way).
+ * ───────────────────────────────────────────────────────────────────── */
+@theme {
+  --color-bg: #090a0b;
+  --color-surface: #131416;
+  --color-surface-2: #1b1d20;
+  --color-surface-3: #25272b;
+  --color-border: rgb(255 255 255 / 0.085);
+  --color-border-strong: rgb(255 255 255 / 0.18);
+  --color-border-soft: rgb(255 255 255 / 0.05);
+  --color-text: #f0f0f1;
+  --color-muted: rgb(255 255 255 / 0.62);
+  --color-faint: rgb(255 255 255 / 0.42);
+  --color-primary: #6699ff;
+  --color-primary-soft: rgb(102 153 255 / 0.16);
+  --color-good: #3ddc97;
+  --color-good-soft: rgb(61 220 151 / 0.16);
+  --color-bad: #ff6b6b;
+  --color-bad-soft: rgb(255 107 107 / 0.16);
+  --color-warn: #fbbf24;
+  --color-warn-soft: rgb(251 191 36 / 0.16);
+  --color-violet: #a78bfa;
+  --color-violet-soft: rgb(167 139 250 / 0.16);
+
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ─── base ───────────────────────────────────────────────────────────── */
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-feature-settings: 'tnum';
+  min-height: 100vh;
+}
+
+/* Auto-hide scrollbars, like the old dashboard had — never see them
+ * unless hovering the scrollable region. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.15s ease;
+}
+*:hover {
+  scrollbar-color: rgb(255 255 255 / 0.18) transparent;
+}
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 6px;
+  border: 2px solid var(--color-bg);
+  transition: background 0.15s ease;
+}
+:hover::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.12);
+}
+:hover::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 0.22);
+}
+
+/* Tabular numbers in any table-ish context */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A subtle border-bottom-on-row pattern used by a few list components */
+.divide-soft > * + * {
+  border-top: 1px solid var(--color-border-soft);
+}
+
+/* Markdown rendering for dossier modals (when we add them) */
+.prose-bot {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-text);
+}
+.prose-bot p {
+  margin: 0.4em 0;
+}
+.prose-bot h2,
+.prose-bot h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0.7em 0 0.3em;
+  color: var(--color-text);
+}
+.prose-bot strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+.prose-bot code {
+  background: var(--color-surface-2);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.85em;
+}
+.prose-bot ul,
+.prose-bot ol {
+  margin: 0.4em 0;
+  padding-left: 1.2em;
+}
+.prose-bot li {
+  margin: 0.15em 0;
+}
+
+/* Card hover lift — used on most clickable cards */
+.card-lift {
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+.card-lift:hover {
+  border-color: var(--color-border-strong);
+  background-color: rgb(255 255 255 / 0.018);
+}

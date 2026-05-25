@@ -1,0 +1,304 @@
+<script lang="ts">
+  import {
+    createQuery,
+    createMutation,
+    useQueryClient
+  } from '@tanstack/svelte-query';
+  import {
+    thesesActive,
+    thesesClosed,
+    thesisDetail,
+    closeThesis,
+    runThesisGenerate
+  } from '$api';
+  import Card from '$components/Card.svelte';
+  import Pill from '$components/Pill.svelte';
+  import EmptyState from '$components/EmptyState.svelte';
+  import Spinner from '$components/Spinner.svelte';
+  import StatTile from '$components/StatTile.svelte';
+  import { timeAgo } from '$lib/format';
+  import { Brain } from 'lucide-svelte';
+
+  const activeQ = createQuery({
+    queryKey: ['theses', 'active'],
+    queryFn: thesesActive,
+    refetchInterval: 60_000
+  });
+  const closedQ = createQuery({
+    queryKey: ['theses', 'closed', 30],
+    queryFn: () => thesesClosed(30),
+    refetchInterval: 90_000
+  });
+
+  let selectedId = $state<number | null>(null);
+  const detailQ = createQuery(() => ({
+    queryKey: ['thesis', selectedId],
+    queryFn: () =>
+      selectedId !== null ? thesisDetail(selectedId) : Promise.reject('no id'),
+    enabled: selectedId !== null
+  }));
+
+  const qc = useQueryClient();
+  const closeM = createMutation({
+    mutationFn: ({ id, state, reason }: { id: number; state: any; reason: string }) =>
+      closeThesis(id, state, reason),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['theses'] });
+      selectedId = null;
+    }
+  });
+  const generateM = createMutation({
+    mutationFn: runThesisGenerate,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['theses'] })
+  });
+
+  function variantForState(state: string): 'pos' | 'neg' | 'warn' | 'neutral' {
+    if (state === 'validated') return 'pos';
+    if (state === 'invalidated') return 'neg';
+    if (state === 'matured') return 'warn';
+    return 'neutral';
+  }
+
+  const validated30d = $derived(($closedQ.data ?? []).filter((t) => t.state === 'validated').length);
+  const invalidated30d = $derived(($closedQ.data ?? []).filter((t) => t.state === 'invalidated').length);
+  const matured30d = $derived(($closedQ.data ?? []).filter((t) => t.state === 'matured').length);
+</script>
+
+<svelte:head><title>Theses · Sentinel</title></svelte:head>
+
+<div class="mb-4 flex items-end justify-between border-b border-border pb-3">
+  <div>
+    <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
+      <Brain class="h-5 w-5 text-violet" /><span>Running theses</span>
+    </h1>
+    <div class="mt-0.5 text-[11.5px] text-faint">
+      Hypotheses the bot maintains across days. News + filings auto-link as
+      supports / challenges / neutral.
+    </div>
+  </div>
+  <button
+    onclick={() => $generateM.mutate()}
+    disabled={$generateM.isPending}
+    class="rounded-md border border-primary/40 bg-primary-soft px-3 py-1.5 text-[11.5px] font-medium text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
+  >
+    {#if $generateM.isPending}
+      <Spinner size={12} />
+    {:else}
+      Generate now
+    {/if}
+  </button>
+</div>
+
+<!-- ── headline tiles ────────────────────────────────────────────── -->
+<div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+  <StatTile label="Active" value={String($activeQ.data?.length ?? 0)} />
+  <StatTile label="Validated 30d" value={String(validated30d)} accent="pos" />
+  <StatTile label="Invalidated 30d" value={String(invalidated30d)} accent="neg" />
+  <StatTile label="Matured 30d" value={String(matured30d)} accent="warn" />
+</div>
+
+<!-- ── active theses ─────────────────────────────────────────────── -->
+<div class="mt-5">
+  <div class="mb-2 text-[10px] font-semibold uppercase tracking-wider text-faint">
+    Active
+  </div>
+  {#if $activeQ.isLoading}
+    <div class="flex justify-center py-8"><Spinner /></div>
+  {:else if !$activeQ.data?.length}
+    <EmptyState
+      title="No active theses yet"
+      description="The generator runs daily at 08:15 ET — or hit “Generate now” above to trigger it."
+    />
+  {:else}
+    <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+      {#each $activeQ.data as t (t.id)}
+        <Card interactive onclick={() => (selectedId = t.id)} class="px-4 py-3">
+          <div class="flex items-center gap-1.5">
+            <Pill variant={t.direction === 'long' ? 'pos' : t.direction === 'short' ? 'neg' : 'neutral'}>
+              {t.direction.toUpperCase()}
+            </Pill>
+            <Pill variant="neutral">conv {t.conviction}/5</Pill>
+            <span class="ml-auto text-[10px] text-faint tabular">
+              {t.created_at.slice(0, 10)}
+            </span>
+          </div>
+          <div class="mt-2 text-[13.5px] leading-snug">
+            <span class="font-mono text-primary font-semibold">${t.ticker}</span>
+            <span class="ml-1">{t.title}</span>
+          </div>
+          <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] tabular text-faint">
+            {#if t.target_price !== null}<span>target {t.target_price.toFixed(2)}</span>{/if}
+            {#if t.horizon_days !== null}<span>{t.horizon_days}d horizon</span>{/if}
+            {#if t.supporting_events + t.challenging_events > 0}
+              {@const sup = t.supporting_events}
+              {@const ch = t.challenging_events}
+              <span
+                class={[
+                  'tabular font-medium',
+                  sup >= ch * 2 && sup > 0
+                    ? 'text-good'
+                    : ch >= sup * 2 && ch > 0
+                      ? 'text-bad'
+                      : 'text-muted'
+                ].join(' ')}
+              >
+                +{sup} / -{ch} events
+              </span>
+            {/if}
+          </div>
+          {#if t.invalidation_criteria}
+            <div class="mt-2 line-clamp-2 text-[11.5px] text-muted">
+              <span class="font-medium text-warn">Kills it:</span>
+              {t.invalidation_criteria}
+            </div>
+          {/if}
+        </Card>
+      {/each}
+    </div>
+  {/if}
+</div>
+
+<!-- ── closed 30d ───────────────────────────────────────────────── -->
+{#if $closedQ.data?.length}
+  <div class="mt-6">
+    <div class="mb-2 text-[10px] font-semibold uppercase tracking-wider text-faint">
+      Closed (30d)
+    </div>
+    <div class="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+      {#each $closedQ.data as t (t.id)}
+        <Card interactive onclick={() => (selectedId = t.id)} class="px-3 py-2">
+          <div class="flex items-center gap-1.5">
+            <Pill variant={variantForState(t.state)}>{t.state.toUpperCase()}</Pill>
+            <span class="ml-auto text-[10px] text-faint tabular">
+              {(t.closed_at ?? '').slice(0, 10)}
+            </span>
+          </div>
+          <div class="mt-1.5 text-[12.5px]">
+            <span class="font-mono text-primary font-semibold">${t.ticker}</span>
+            <span class="ml-1 text-muted">{t.title}</span>
+          </div>
+          {#if t.close_reason}
+            <div class="mt-1 line-clamp-1 text-[11px] text-faint">{t.close_reason}</div>
+          {/if}
+        </Card>
+      {/each}
+    </div>
+  </div>
+{/if}
+
+<!-- ── detail modal ────────────────────────────────────────────────── -->
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === 'Escape' && selectedId !== null) selectedId = null;
+  }}
+/>
+{#if selectedId !== null}
+  <div class="fixed inset-0 z-50 flex items-start justify-center p-4 md:p-10">
+    <button
+      type="button"
+      aria-label="Close dialog"
+      class="absolute inset-0 cursor-default bg-black/60 backdrop-blur-sm"
+      onclick={() => (selectedId = null)}
+    ></button>
+    <div
+      class="relative w-full max-w-3xl rounded-xl border border-border bg-surface shadow-2xl"
+      role="dialog"
+      aria-modal="true"
+    >
+      {#if $detailQ?.isLoading}
+        <div class="flex justify-center py-12"><Spinner /></div>
+      {:else if $detailQ?.data}
+        {@const t = $detailQ.data}
+        <header class="flex items-center gap-2 border-b border-border px-5 py-3">
+          <Pill variant={t.direction === 'long' ? 'pos' : t.direction === 'short' ? 'neg' : 'neutral'}>
+            {t.direction.toUpperCase()}
+          </Pill>
+          <span class="font-mono text-base font-bold text-primary">${t.ticker}</span>
+          <span class="text-[11px] text-faint">·</span>
+          <span class="text-[11px] text-muted">#{t.id} · {t.state.toUpperCase()}</span>
+          <button
+            onclick={() => (selectedId = null)}
+            class="ml-auto text-faint hover:text-text"
+          >✕</button>
+        </header>
+
+        <div class="max-h-[70vh] overflow-y-auto px-5 py-4">
+          <div class="rounded-lg bg-surface-2 px-4 py-3">
+            <div class="text-[13.5px] font-medium text-text">{t.title}</div>
+            <div class="prose-bot mt-2">{t.body}</div>
+            {#if t.invalidation_criteria}
+              <div class="mt-3 text-[12px]">
+                <span class="font-semibold text-warn">Kills it:</span>
+                <span class="ml-1 text-muted">{t.invalidation_criteria}</span>
+              </div>
+            {/if}
+            <div class="mt-2 flex flex-wrap gap-x-3 text-[10.5px] tabular text-faint">
+              <span>conv {t.conviction}/5</span>
+              {#if t.target_price !== null}<span>target {t.target_price.toFixed(2)}</span>{/if}
+              {#if t.horizon_days !== null}<span>{t.horizon_days}d horizon</span>{/if}
+              <span>created {t.created_at.slice(0, 10)}</span>
+            </div>
+          </div>
+
+          {#if t.state === 'active'}
+            <div class="mt-4 flex flex-wrap gap-2">
+              <button
+                onclick={() => selectedId !== null && $closeM.mutate({ id: selectedId, state: 'validated', reason: 'manual: validated' })}
+                disabled={$closeM.isPending}
+                class="rounded-md border border-good/40 bg-good-soft px-3 py-1.5 text-[11.5px] font-medium text-good hover:bg-good/15"
+              >✅ Validated</button>
+              <button
+                onclick={() => selectedId !== null && $closeM.mutate({ id: selectedId, state: 'invalidated', reason: 'manual: invalidated' })}
+                disabled={$closeM.isPending}
+                class="rounded-md border border-bad/40 bg-bad-soft px-3 py-1.5 text-[11.5px] font-medium text-bad hover:bg-bad/15"
+              >❌ Invalidated</button>
+              <button
+                onclick={() => selectedId !== null && $closeM.mutate({ id: selectedId, state: 'matured', reason: 'manual: matured' })}
+                disabled={$closeM.isPending}
+                class="rounded-md border border-warn/40 bg-warn-soft px-3 py-1.5 text-[11.5px] font-medium text-warn hover:bg-warn/15"
+              >⏳ Matured</button>
+              <button
+                onclick={() => selectedId !== null && $closeM.mutate({ id: selectedId, state: 'closed', reason: 'manual: closed' })}
+                disabled={$closeM.isPending}
+                class="rounded-md border border-border bg-surface-2 px-3 py-1.5 text-[11.5px] text-muted hover:text-text"
+              >✕ Close</button>
+            </div>
+          {:else if t.close_reason}
+            <div class="mt-4 rounded-md border border-border bg-surface-2 px-3 py-2 text-[12px] text-muted">
+              Closed as <strong>{t.state}</strong>: {t.close_reason}
+            </div>
+          {/if}
+
+          <div class="mt-5">
+            <div class="mb-2 text-[10px] font-semibold uppercase tracking-wider text-faint">
+              Linked events (timeline)
+            </div>
+            {#if !t.events.length}
+              <div class="rounded-md border border-border-soft bg-surface-2 px-3 py-2 text-[11.5px] text-faint">
+                No events linked yet. New news/filings on this ticker will appear here.
+              </div>
+            {:else}
+              <ul class="divide-soft">
+                {#each t.events as e (e.id)}
+                  <li class="grid grid-cols-[auto_1fr_auto] items-start gap-3 py-2 text-[12.5px]">
+                    <Pill
+                      variant={e.impact === 'supports' ? 'pos' : e.impact === 'challenges' ? 'neg' : 'info'}
+                    >{e.impact.toUpperCase()}</Pill>
+                    <div class="min-w-0">
+                      <div class="text-text">{e.description}</div>
+                      <div class="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10.5px] text-faint">
+                        <span>{e.kind.toUpperCase()}</span>
+                        {#if e.rationale}<span class="text-muted">{e.rationale}</span>{/if}
+                      </div>
+                    </div>
+                    <span class="tabular text-[10px] text-faint">{timeAgo(e.created_at)}</span>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
