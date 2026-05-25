@@ -12,6 +12,8 @@ from ..analytics import calibration as _cal
 from ..analytics import concentration as _conc
 from ..analytics import dedupe as _dedupe
 from ..analytics import hot as _hot
+from ..analytics import monthly as _monthly
+from ..analytics import sentiment_quality as _sq
 
 
 router = APIRouter()
@@ -45,3 +47,16 @@ def news_clusters(hours: int = Query(24, ge=1, le=168)) -> dict:
 def concentration() -> dict:
     """Per-wallet asset-class exposure of open positions."""
     return _conc.concentration_summary()
+
+
+@router.get("/analytics/sentiment-quality")
+def sentiment_quality(days: int = Query(60, ge=7, le=365)) -> dict:
+    """Did the bot's news-sentiment scores predict next-day price?
+    Per source, with overall."""
+    return _sq.sentiment_quality(days=days)
+
+
+@router.get("/analytics/monthly")
+def monthly_pnl(months: int = Query(12, ge=1, le=24)) -> dict:
+    """Month-over-month realised PnL per wallet."""
+    return _monthly.monthly_pnl(months=months)

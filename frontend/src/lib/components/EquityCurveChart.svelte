@@ -1,12 +1,28 @@
 <script lang="ts">
   /**
    * Multi-line equity curve, one line per fund, normalised to
-   * starting=100% so different fund sizes are visually comparable.
+   * starting cash = 0% so different fund sizes are visually
+   * comparable.
    *
-   * Pure SVG so the bundle stays light — lightweight-charts is already
-   * paying its weight on Markets, no need to ship a 2nd chart engine
-   * for this small visualization.
+   * Built on lightweight-charts (already in the bundle for the
+   * candle view). Properly handles:
+   *  - aspect ratio + responsive width via the lib's resize
+   *  - shared y-axis across series so the 0% baseline lines up
+   *  - hover crosshair + per-series value tooltip
+   *  - time axis with sensible date formatting
+   *
+   * Previous SVG implementation had two scale calculations
+   * (one for the lines, one for the baseline) that drifted, plus
+   * `preserveAspectRatio="none"` distorted the inline text. Both
+   * fixed by handing off to the charting lib.
    */
+  import { onMount, onDestroy } from 'svelte';
+  import {
+    createChart,
+    type IChartApi,
+    type ISeriesApi,
+    type Time
+  } from 'lightweight-charts';
   import type { EquityCurve } from '$lib/types';
 
   interface Props {
@@ -14,175 +30,233 @@
     height?: number;
   }
 
-  let { series, height = 200 }: Props = $props();
+  let { series, height = 240 }: Props = $props();
 
   const PALETTE = [
-    'var(--color-primary)', // blue
-    'var(--color-good)',    // mint
-    'var(--color-violet)',  // violet
-    'var(--color-warn)',    // amber
-    'var(--color-bad)',     // red
-    '#8ed1fc',              // sky
-    '#f2c0ff',              // lavender
-    '#a3e635'               // lime
+    '#6699ff', // primary
+    '#3ddc97', // good (mint)
+    '#a78bfa', // violet
+    '#fbbf24', // warn (amber)
+    '#ff6b6b', // bad
+    '#8ed1fc', // sky
+    '#f2c0ff', // lavender
+    '#a3e635'  // lime
   ];
 
-  type Pt = { x: number; y: number; ts: string; pct: number };
-  type Line = {
-    fund: string;
-    mandate: string;
-    color: string;
-    pts: Pt[];
-    last: number; // last % vs starting
-  };
+  let container: HTMLDivElement;
+  let chart: IChartApi | undefined;
+  let lineSeries: Array<{ name: string; color: string; api: ISeriesApi<'Line'>; last: number }> = [];
 
-  const W = 800; // viewBox width — SVG scales, this is just the coord space
-  const H = $derived(height);
-  const PAD = { l: 4, r: 56, t: 8, b: 22 };
+  // Hover readout: the chart's `subscribeCrosshairMove` populates these.
+  let hoverDate = $state<string | null>(null);
+  let hoverValues = $state<Array<{ name: string; color: string; pct: number | null }>>([]);
 
-  const lines = $derived.by<Line[]>(() => {
-    const out: Line[] = [];
-    if (!series?.length) return out;
-
-    // Common time domain — all funds plotted on the same x-axis even
-    // if some have fewer points (e.g. newly seeded `research` wallet).
-    const allTs: number[] = [];
-    for (const s of series) {
-      for (const p of s.points) allTs.push(new Date(p.ts).getTime());
-    }
-    if (!allTs.length) return out;
-    const tMin = Math.min(...allTs);
-    const tMax = Math.max(...allTs);
-    const tSpan = tMax - tMin || 1;
-
-    // Y domain — % vs each fund's starting cash, take global min/max
-    let yMin = Infinity;
-    let yMax = -Infinity;
-    const normalised = series.map((s) =>
-      s.points.map((p) => {
+  function makeData(s: EquityCurve): { time: Time; value: number }[] {
+    return s.points
+      .map((p) => {
         const pct = s.starting ? ((p.equity - s.starting) / s.starting) * 100 : 0;
-        yMin = Math.min(yMin, pct);
-        yMax = Math.max(yMax, pct);
-        return { ts: p.ts, pct };
+        // lightweight-charts wants either Unix seconds or "YYYY-MM-DD".
+        // We have minute-level marks, so use seconds.
+        const t = Math.floor(new Date(p.ts).getTime() / 1000) as unknown as Time;
+        return { time: t, value: pct };
       })
-    );
-    if (!isFinite(yMin)) {
-      yMin = -5;
-      yMax = 5;
-    }
-    // Always include 0% in the visible range so the baseline is visible.
-    yMin = Math.min(yMin, 0);
-    yMax = Math.max(yMax, 0);
-    // Add headroom so the lines aren't glued to the edges.
-    const pad = Math.max(1, (yMax - yMin) * 0.08);
-    yMin -= pad;
-    yMax += pad;
+      // Dedupe + sort by time (lib requires strictly increasing).
+      .sort((a, b) => (a.time as number) - (b.time as number))
+      .reduce<{ time: Time; value: number }[]>((acc, pt) => {
+        const prev = acc[acc.length - 1];
+        if (!prev || (prev.time as number) < (pt.time as number)) acc.push(pt);
+        return acc;
+      }, []);
+  }
 
-    const innerW = W - PAD.l - PAD.r;
-    const innerH = H - PAD.t - PAD.b;
+  function build() {
+    if (!container) return;
+    chart = createChart(container, {
+      width: container.clientWidth,
+      height,
+      layout: {
+        background: { color: 'transparent' },
+        textColor: 'rgba(255,255,255,0.62)',
+        fontFamily: 'Inter, system-ui, sans-serif'
+      },
+      grid: {
+        vertLines: { color: 'rgba(255,255,255,0.05)' },
+        horzLines: { color: 'rgba(255,255,255,0.05)' }
+      },
+      rightPriceScale: {
+        borderColor: 'rgba(255,255,255,0.085)',
+        scaleMargins: { top: 0.08, bottom: 0.08 }
+      },
+      timeScale: {
+        borderColor: 'rgba(255,255,255,0.085)',
+        timeVisible: false,
+        secondsVisible: false
+      },
+      crosshair: {
+        vertLine: { color: 'rgba(255,255,255,0.18)', width: 1 },
+        horzLine: { color: 'rgba(255,255,255,0.18)', width: 1 }
+      },
+      handleScroll: false,   // dashboard panel; no need for scroll/zoom
+      handleScale: false
+    });
 
-    series.forEach((s, i) => {
-      const color = PALETTE[i % PALETTE.length];
-      const pts = normalised[i].map((p) => {
-        const t = new Date(p.ts).getTime();
-        const x = PAD.l + ((t - tMin) / tSpan) * innerW;
-        const y = PAD.t + ((yMax - p.pct) / (yMax - yMin)) * innerH;
-        return { x, y, ts: p.ts, pct: p.pct };
-      });
-      out.push({
-        fund: s.fund,
-        mandate: s.mandate,
-        color,
-        pts,
-        last: pts.length ? pts[pts.length - 1].pct : 0
+    // Dashed 0% baseline via a constant-line price line on the first
+    // series (price-lines belong to a series in lightweight-charts).
+    // We add it once series exist below.
+
+    syncSeries();
+    chart.timeScale().fitContent();
+
+    // Hover crosshair → tooltip.
+    chart.subscribeCrosshairMove((param) => {
+      if (!param || !param.time || !param.seriesData) {
+        hoverDate = null;
+        hoverValues = [];
+        return;
+      }
+      const tsec = param.time as number;
+      hoverDate = new Date(tsec * 1000).toISOString().slice(0, 10);
+      hoverValues = lineSeries.map((l) => {
+        const v = param.seriesData.get(l.api) as
+          | { value: number }
+          | undefined;
+        return { name: l.name, color: l.color, pct: v ? v.value : null };
       });
     });
-    return out;
-  });
-
-  const baselineY = $derived.by(() => {
-    if (!lines.length || !lines[0].pts.length) return 0;
-    // Find where 0% maps in pixel space — same formula as the line plotter
-    // but with pct=0. Use the first line's y-domain since they all share.
-    const all = lines.flatMap((l) => l.pts.map((p) => p.pct));
-    const yMin = Math.min(0, ...all) - Math.max(1, (Math.max(0, ...all) - Math.min(0, ...all)) * 0.08);
-    const yMax = Math.max(0, ...all) + Math.max(1, (Math.max(0, ...all) - Math.min(0, ...all)) * 0.08);
-    const innerH = H - PAD.t - PAD.b;
-    return PAD.t + ((yMax - 0) / (yMax - yMin)) * innerH;
-  });
-
-  function path(pts: Pt[]): string {
-    return pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
   }
+
+  function syncSeries() {
+    if (!chart) return;
+    // Tear down any previous series before rebuilding.
+    for (const l of lineSeries) {
+      try {
+        chart.removeSeries(l.api);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    lineSeries = [];
+
+    series.forEach((s, i) => {
+      const data = makeData(s);
+      if (!data.length) return;
+      const color = PALETTE[i % PALETTE.length];
+      const api = chart!.addLineSeries({
+        color,
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        priceFormat: { type: 'custom', minMove: 0.01, formatter: (v: number) => `${v.toFixed(2)}%` },
+        title: s.fund
+      });
+      api.setData(data);
+      lineSeries.push({
+        name: s.fund,
+        color,
+        api,
+        last: data.length ? data[data.length - 1].value : 0
+      });
+    });
+
+    // 0% baseline as a price line on the first series so the lib
+    // does the scale math for us. Dashed grey, no label.
+    if (lineSeries.length) {
+      lineSeries[0].api.createPriceLine({
+        price: 0,
+        color: 'rgba(255,255,255,0.22)',
+        lineWidth: 1,
+        lineStyle: 2,  // dashed
+        axisLabelVisible: true,
+        title: '0%'
+      });
+    }
+
+    if (lineSeries.length) chart.timeScale().fitContent();
+  }
+
+  function resize() {
+    if (chart && container) {
+      chart.applyOptions({ width: container.clientWidth });
+    }
+  }
+
+  onMount(() => {
+    build();
+    window.addEventListener('resize', resize);
+  });
+
+  onDestroy(() => {
+    window.removeEventListener('resize', resize);
+    try {
+      chart?.remove();
+    } catch (_) {
+      /* ignore */
+    }
+  });
+
+  // Re-sync if the parent passes a new series (e.g. range chip
+  // toggled 30d → 90d → 1y).
+  $effect(() => {
+    series;
+    if (chart) syncSeries();
+  });
 </script>
 
-<div>
-  {#if !lines.length}
-    <div class="flex h-full items-center justify-center py-12 text-[12px] text-faint">
-      No equity history yet — funds need at least one daily mark.
+<div class="relative">
+  <div bind:this={container} style:height="{height}px"></div>
+
+  <!-- Hover readout overlay: small floating panel in the top-left. -->
+  {#if hoverDate && hoverValues.length}
+    <div
+      class="pointer-events-none absolute left-2 top-2 rounded-md border border-border bg-surface/95 px-2 py-1.5 text-[10.5px] tabular shadow-lg backdrop-blur"
+    >
+      <div class="font-mono text-faint">{hoverDate}</div>
+      <div class="mt-0.5 space-y-0.5">
+        {#each hoverValues as v (v.name)}
+          <div class="flex items-center gap-1.5">
+            <span
+              class="inline-block h-1.5 w-1.5 rounded-full"
+              style:background-color={v.color}
+            ></span>
+            <span class="capitalize text-muted">{v.name}</span>
+            {#if v.pct !== null}
+              <span class={['ml-1 tabular', v.pct >= 0 ? 'text-good' : 'text-bad'].join(' ')}>
+                {v.pct >= 0 ? '+' : ''}{v.pct.toFixed(2)}%
+              </span>
+            {:else}
+              <span class="ml-1 text-faint">—</span>
+            {/if}
+          </div>
+        {/each}
+      </div>
     </div>
-  {:else}
-    <svg viewBox="0 0 {W} {H}" class="w-full" preserveAspectRatio="none" style:height="{H}px">
-      <!-- baseline at 0% -->
-      <line
-        x1={PAD.l}
-        x2={W - PAD.r}
-        y1={baselineY}
-        y2={baselineY}
-        stroke="var(--color-border)"
-        stroke-dasharray="2 4"
-      />
-      <text
-        x={W - PAD.r + 4}
-        y={baselineY + 3}
-        font-size="9"
-        fill="var(--color-faint)"
-        font-family="var(--font-mono)"
-      >0%</text>
+  {/if}
 
-      {#each lines as l, i (l.fund)}
-        <path
-          d={path(l.pts)}
-          fill="none"
-          stroke={l.color}
-          stroke-width="1.6"
-          stroke-linejoin="round"
-          stroke-linecap="round"
-          opacity="0.95"
-        />
-        <!-- end marker + label -->
-        {#if l.pts.length}
-          {@const lp = l.pts[l.pts.length - 1]}
-          <circle cx={lp.x} cy={lp.y} r="2" fill={l.color} />
-          <text
-            x={W - PAD.r + 4}
-            y={lp.y + 3}
-            font-size="10"
-            fill={l.color}
-            font-family="var(--font-mono)"
-          >
-            {l.fund} {l.last >= 0 ? '+' : ''}{l.last.toFixed(1)}%
-          </text>
-        {/if}
-      {/each}
-    </svg>
-
-    <!-- legend -->
-    <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] tabular text-faint">
-      {#each lines as l (l.fund)}
+  <!-- Legend strip below the chart: fund · last % · mandate (clamped). -->
+  {#if lineSeries.length}
+    <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] tabular">
+      {#each lineSeries as l, i (l.name)}
+        {@const mandate = series[i]?.mandate ?? ''}
         <div class="flex items-center gap-1.5">
           <span
             class="inline-block h-2 w-2 rounded-full"
             style:background-color={l.color}
           ></span>
-          <span class="capitalize text-muted">{l.fund}</span>
+          <span class="capitalize text-muted">{l.name}</span>
           <span class={l.last >= 0 ? 'text-good' : 'text-bad'}>
             {l.last >= 0 ? '+' : ''}{l.last.toFixed(2)}%
           </span>
-          <span class="text-faint">·</span>
-          <span class="text-faint">{l.mandate}</span>
+          {#if mandate}
+            <span class="hidden truncate max-w-[10rem] text-faint md:inline" title={mandate}>
+              · {mandate}
+            </span>
+          {/if}
         </div>
       {/each}
+    </div>
+  {:else}
+    <div class="py-8 text-center text-[12px] text-faint">
+      No equity history yet — funds need at least one daily mark.
     </div>
   {/if}
 </div>

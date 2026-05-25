@@ -43,6 +43,7 @@ from .ingesters import (
 )
 from .llm import get_llm
 from .pipelines import (
+    auto_research_pre_earnings,
     auto_thesis,
     book_risk,
     briefing,
@@ -87,6 +88,7 @@ _RUN_ONCE_REGISTRY = {
     "thesis_review": thesis.run_review_cycle,
     "auto_thesis": auto_thesis.run_auto_thesis,
     "risk_circuit": risk_circuit.run_risk_circuit,
+    "auto_research_pre_earnings": auto_research_pre_earnings.run_auto_research_pre_earnings,
     "briefing": briefing.run_premarket_briefing,
     "news": news.poll_news,
     "macro_themes": macro_themes.run_macro_themes,

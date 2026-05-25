@@ -31,6 +31,7 @@ from .ingesters import (
     reddit,
 )
 from .pipelines import (
+    auto_research_pre_earnings,
     auto_thesis,
     book_risk,
     briefing,
@@ -321,6 +322,16 @@ def make_scheduler() -> AsyncIOScheduler:
         risk_circuit.run_risk_circuit,
         _every(minutes=15),
         id="risk_circuit",
+        **_COMMON,
+    )
+    # `auto_research_pre_earnings`: 07:30 ET every weekday, scan
+    # earnings within the next 3 days and queue a research task per
+    # watchlist ticker that doesn't already have one. Bounded to
+    # 3 tasks/day so the heavy LLM budget isn't drained.
+    sched.add_job(
+        auto_research_pre_earnings.run_auto_research_pre_earnings,
+        CronTrigger(day_of_week="mon-fri", hour=7, minute=30, timezone=ET),
+        id="auto_research_pre_earnings",
         **_COMMON,
     )
     # Dedicated Reddit-stream channel — notable r/ posts (moving/surging
