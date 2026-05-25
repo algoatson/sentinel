@@ -193,8 +193,9 @@
 
       <div class="flex items-center justify-between border-t border-border bg-surface-2/40 px-3 py-1.5 text-[10.5px] text-faint">
         <div class="flex items-center gap-2">
-          <kbd class="rounded border border-border bg-surface-2 px-1 py-px">↑↓</kbd> navigate
+          <kbd class="rounded border border-border bg-surface-2 px-1 py-px">↑↓</kbd> nav
           <kbd class="rounded border border-border bg-surface-2 px-1 py-px">⏎</kbd> open
+          <kbd class="rounded border border-border bg-surface-2 px-1 py-px">?</kbd> all shortcuts
         </div>
         <div>{items.length} match{items.length === 1 ? '' : 'es'}</div>
       </div>

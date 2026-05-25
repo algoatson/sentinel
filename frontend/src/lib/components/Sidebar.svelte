@@ -113,11 +113,21 @@
   {/each}
 
   <div class="mt-auto px-2 pt-3 text-[10px] text-faint">
-    Side-by-side with NiceGUI · <a
+    <a
       href="/"
       class="underline hover:text-muted"
       data-sveltekit-reload
     >v1</a>
+    <span> · </span>
+    <button
+      type="button"
+      onclick={(e) => {
+        e.preventDefault();
+        // bubble a "?" key so the layout's global handler opens help
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }));
+      }}
+      class="underline hover:text-muted"
+    >shortcuts (?)</button>
   </div>
 {/snippet}
 
