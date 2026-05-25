@@ -14,6 +14,7 @@ import type {
   CallDossier,
   CallItem,
   EquityCurve,
+  FilingItem,
   HealthReport,
   KpiSnapshot,
   LookupResult,
@@ -121,6 +122,19 @@ export const newsDossier = (id: number, refresh = false) =>
   );
 export const askNews = (id: number, question: string) =>
   post<{ answer: string }>(`/news/${id}/ask`, { question });
+
+/* ─── filings ─── */
+export const filings = (
+  opts: { hours?: number; ticker?: string; form?: string; min_materiality?: number } = {}
+) => {
+  const params = new URLSearchParams({
+    hours: String(opts.hours ?? 48),
+    min_materiality: String(opts.min_materiality ?? 0)
+  });
+  if (opts.ticker) params.set('ticker', opts.ticker);
+  if (opts.form) params.set('form', opts.form);
+  return get<FilingItem[]>(`/filings?${params}`);
+};
 
 /* ─── research ─── */
 export const researchTasks = (n = 30) =>

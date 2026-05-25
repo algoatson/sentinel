@@ -17,6 +17,7 @@ from fastapi import APIRouter
 from . import (
     calls,
     copilot,
+    filings,
     health as _health,
     lookup,
     markets,
@@ -35,6 +36,7 @@ router = APIRouter(prefix="/api", tags=["dashboard"])
 # docs; keeping alphabetical so a new endpoint is easy to find later.
 router.include_router(calls.router)
 router.include_router(copilot.router)
+router.include_router(filings.router)
 router.include_router(_health.router)
 router.include_router(lookup.router)
 router.include_router(markets.router)

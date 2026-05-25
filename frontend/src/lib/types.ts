@@ -266,6 +266,19 @@ export interface NewsItem {
   is_macro: boolean;
 }
 
+export interface FilingItem {
+  id: number;
+  cik: string;
+  ticker: string | null;
+  form_type: string;
+  accession_number: string;
+  filed_at: string;
+  primary_doc_url: string;
+  summary: string | null;
+  materiality_score: number | null;
+  materiality_reason: string | null;
+}
+
 export interface NewsDossier {
   news_id: number;
   body: string;
