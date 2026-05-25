@@ -317,11 +317,11 @@
               <Pill variant={c.direction === 'long' ? 'pos' : 'neg'}>
                 {c.direction[0].toUpperCase()}
               </Pill>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-baseline gap-1.5 text-[12px]">
+              <div class="min-w-0 flex-1 overflow-hidden">
+                <div class="flex items-baseline gap-1.5 text-[12px] whitespace-nowrap">
                   <TickerLink ticker={c.ticker} class="text-[12px]" />
-                  <span class="text-[10px] text-muted">{c.conviction}/5</span>
-                  <span class="ml-auto text-[10px] tabular text-faint">{timeAgo(c.ts)}</span>
+                  <span class="shrink-0 text-[10px] text-muted">{c.conviction}/5</span>
+                  <span class="ml-auto shrink-0 text-[10px] tabular text-faint">{timeAgo(c.ts)}</span>
                 </div>
                 <div class="mt-0.5 line-clamp-1 text-[11.5px] text-muted">{stripMd(c.thesis)}</div>
               </div>
@@ -362,17 +362,17 @@
               class="flex h-[3.25rem] items-start gap-2 rounded-md px-1.5 py-1.5 transition-colors hover:bg-white/[0.025]"
             >
               <Pill variant="violet" class="font-mono">{f.form_type}</Pill>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-baseline gap-1.5 text-[12px]">
+              <div class="min-w-0 flex-1 overflow-hidden">
+                <div class="flex items-baseline gap-1.5 text-[12px] whitespace-nowrap">
                   {#if f.ticker}<TickerLink ticker={f.ticker} class="text-[12px]" />{/if}
                   {#if f.materiality_score !== null}
                     <span class={[
-                      'text-[10px] tabular',
+                      'shrink-0 text-[10px] tabular',
                       f.materiality_score >= 7 ? 'text-bad' :
                       f.materiality_score >= 4 ? 'text-warn' : 'text-faint'
                     ].join(' ')}>mat {f.materiality_score}/10</span>
                   {/if}
-                  <span class="ml-auto text-[10px] tabular text-faint">{timeAgo(f.filed_at)}</span>
+                  <span class="ml-auto shrink-0 text-[10px] tabular text-faint">{timeAgo(f.filed_at)}</span>
                 </div>
                 {#if f.summary}
                   <div class="mt-0.5 line-clamp-1 text-[11.5px] text-muted">{stripMd(f.summary)}</div>
@@ -419,13 +419,13 @@
                   ? (n.sentiment > 0.15 ? '↑' : n.sentiment < -0.15 ? '↓' : '·')
                   : '·'}
               </Pill>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-baseline gap-1.5 text-[12px]">
+              <div class="min-w-0 flex-1 overflow-hidden">
+                <div class="flex items-baseline gap-1.5 text-[12px] whitespace-nowrap">
                   {#if n.ticker}<TickerLink ticker={n.ticker} class="text-[12px]" />{/if}
-                  <span class="text-[10px] text-faint">{n.source}</span>
-                  <span class="ml-auto text-[10px] tabular text-faint">{timeAgo(n.ts)}</span>
+                  <span class="truncate text-[10px] text-faint">{n.source}</span>
+                  <span class="ml-auto shrink-0 text-[10px] tabular text-faint">{timeAgo(n.ts)}</span>
                 </div>
-                <div class="mt-0.5 line-clamp-2 text-[11.5px] leading-snug text-muted">{n.title}</div>
+                <div class="mt-0.5 line-clamp-1 text-[11.5px] leading-snug text-muted">{n.title}</div>
               </div>
             </a>
           </li>
