@@ -64,3 +64,31 @@ export function price(n: number | null | undefined): string {
   if (n < 100) return n.toFixed(2);
   return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
+
+/** Strip the most common Markdown syntax for plain-text previews
+ * inside line-clamped cards. We render full Markdown in drawers
+ * where there's room for nested HTML; cards need the visual clamp
+ * to work, which means a single text node — hence stripping.
+ *
+ * Strips: **bold**, *italic*, _italic_, `code`, # headings,
+ * - bullets, > blockquotes, [text](url) → text, escaped chars,
+ * multiple newlines → one space. */
+export function stripMd(s: string | null | undefined): string {
+  if (!s) return '';
+  return s
+    .replace(/```[\s\S]*?```/g, ' ')              // fenced code
+    .replace(/`([^`]+)`/g, '$1')                   // inline code
+    .replace(/\*\*([^*]+)\*\*/g, '$1')             // **bold**
+    .replace(/__([^_]+)__/g, '$1')                 // __bold__
+    .replace(/(^|[^*])\*([^*]+)\*([^*]|$)/g, '$1$2$3')  // *italic*
+    .replace(/(^|\s)_([^_]+)_(\s|$)/g, '$1$2$3')   // _italic_
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')       // [text](url) → text
+    .replace(/^>\s*/gm, '')                        // > quote
+    .replace(/^#+\s*/gm, '')                       // # heading
+    .replace(/^\s*[-*+]\s+/gm, '· ')               // - bullet → ·
+    .replace(/^\s*\d+\.\s+/gm, '· ')               // 1. ordered
+    .replace(/\\([_*`#])/g, '$1')                  // escaped chars
+    .replace(/\n{2,}/g, ' · ')                     // paragraph → ·
+    .replace(/\s+/g, ' ')
+    .trim();
+}

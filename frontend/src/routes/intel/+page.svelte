@@ -11,7 +11,8 @@
   import DossierBlock from '$components/DossierBlock.svelte';
   import AskBox from '$components/AskBox.svelte';
   import TickerLink from '$components/TickerLink.svelte';
-  import { timeAgo, compact } from '$lib/format';
+  import Markdown from '$components/Markdown.svelte';
+  import { timeAgo, compact, stripMd } from '$lib/format';
   import { Newspaper, ExternalLink, Globe, FileText, MessageCircle } from 'lucide-svelte';
 
   type Hours = { label: string; value: number };
@@ -458,7 +459,7 @@
             </div>
             {#if f.summary}
               <div class="mt-2 line-clamp-3 text-[12.5px] leading-snug text-muted">
-                {f.summary}
+                {stripMd(f.summary)}
               </div>
             {/if}
             <div class="mt-2 text-[10.5px] tabular text-faint">
@@ -669,7 +670,7 @@
     {#if selectedFilingItem.summary}
       <div class="rounded-lg border border-border bg-surface-2 px-4 py-3">
         <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">Summary</div>
-        <div class="mt-1.5 text-[13px] leading-snug text-text">{selectedFilingItem.summary}</div>
+        <Markdown source={selectedFilingItem.summary} class="mt-1.5" />
       </div>
     {/if}
     {#if selectedFilingItem.materiality_reason}
@@ -677,9 +678,7 @@
         <div class="text-[10px] font-semibold uppercase tracking-wider text-warn">
           Why it might matter
         </div>
-        <div class="mt-1 text-[12.5px] leading-snug text-text">
-          {selectedFilingItem.materiality_reason}
-        </div>
+        <Markdown source={selectedFilingItem.materiality_reason} class="mt-1" />
       </div>
     {/if}
   {/if}

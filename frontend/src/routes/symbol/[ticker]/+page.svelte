@@ -15,7 +15,7 @@
     ArrowLeft, ExternalLink, Newspaper, FileText, Target as TargetIcon,
     Brain, MessageCircle, Activity as ActivityIcon, LineChart
   } from 'lucide-svelte';
-  import { price, compact, timeAgo, pct } from '$lib/format';
+  import { price, compact, timeAgo, pct, stripMd } from '$lib/format';
 
   const ticker = $derived(page.params.ticker?.toUpperCase() ?? '');
 
@@ -331,7 +331,7 @@
                 <ExternalLink class="ml-1 inline h-3 w-3 align-baseline opacity-60" />
               </a>
               {#if n.summary}
-                <div class="mt-1 line-clamp-2 text-[11.5px] text-muted">{n.summary}</div>
+                <div class="mt-1 line-clamp-2 text-[11.5px] text-muted">{stripMd(n.summary)}</div>
               {/if}
             </Card>
           {/each}
@@ -356,7 +356,7 @@
                 {/if}
                 <span class="ml-auto text-[10px] tabular text-faint">{timeAgo(c.ts)}</span>
               </div>
-              <div class="mt-1.5 text-[12.5px] leading-snug text-muted">{c.thesis}</div>
+              <Markdown source={c.thesis} class="mt-1.5" />
               {#if c.ret_1d_pct !== null || c.ret_5d_pct !== null || c.ret_20d_pct !== null}
                 <div class="mt-2 flex gap-3 border-t border-border-soft pt-2 text-[11px]">
                   <Delta value={c.ret_1d_pct} label="1d" />
@@ -395,11 +395,11 @@
                 <span class="ml-auto text-[10px] tabular text-faint">{timeAgo(f.filed_at)}</span>
               </div>
               {#if f.summary}
-                <div class="mt-1.5 text-[12px] leading-snug text-muted">{f.summary}</div>
+                <Markdown source={f.summary} class="mt-1.5" />
               {/if}
               {#if f.materiality_reason}
                 <div class="mt-1 text-[11px] text-warn">
-                  <span class="font-semibold">Why:</span> {f.materiality_reason}
+                  <span class="font-semibold">Why:</span> {stripMd(f.materiality_reason)}
                 </div>
               {/if}
             </Card>

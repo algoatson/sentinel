@@ -11,7 +11,7 @@
   import Sparkline from '$components/Sparkline.svelte';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
-  import { usd, compact, timeAgo, pct, tone } from '$lib/format';
+  import { usd, compact, timeAgo, pct, tone, stripMd } from '$lib/format';
   import {
     Newspaper, FileText, Target as TargetIcon, ArrowUpRight, ArrowDownRight,
     Wallet, TrendingUp, Activity as ActivityIcon, Brain, Sparkles, Zap, Flame
@@ -323,7 +323,7 @@
                   <span class="text-[10px] text-muted">{c.conviction}/5</span>
                   <span class="ml-auto text-[10px] tabular text-faint">{timeAgo(c.ts)}</span>
                 </div>
-                <div class="mt-0.5 line-clamp-1 text-[11.5px] text-muted">{c.thesis}</div>
+                <div class="mt-0.5 line-clamp-1 text-[11.5px] text-muted">{stripMd(c.thesis)}</div>
               </div>
             </a>
           </li>
@@ -375,7 +375,7 @@
                   <span class="ml-auto text-[10px] tabular text-faint">{timeAgo(f.filed_at)}</span>
                 </div>
                 {#if f.summary}
-                  <div class="mt-0.5 line-clamp-1 text-[11.5px] text-muted">{f.summary}</div>
+                  <div class="mt-0.5 line-clamp-1 text-[11.5px] text-muted">{stripMd(f.summary)}</div>
                 {/if}
               </div>
             </a>

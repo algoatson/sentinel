@@ -14,7 +14,7 @@
   import AskBox from '$components/AskBox.svelte';
   import TickerLink from '$components/TickerLink.svelte';
   import Markdown from '$components/Markdown.svelte';
-  import { price, timeAgo } from '$lib/format';
+  import { price, timeAgo, stripMd } from '$lib/format';
   import { Target } from 'lucide-svelte';
 
   type SortKey = 'date' | 'conv' | 'ret_1d' | 'ret_5d' | 'ret_20d';
@@ -315,7 +315,7 @@
             <span class="ml-auto text-[10px] tabular text-faint">{timeAgo(c.ts)}</span>
           </div>
           {#if c.thesis}
-            <div class="mt-2 line-clamp-3 text-[12.5px] leading-snug text-text">{c.thesis}</div>
+            <div class="mt-2 line-clamp-3 text-[12.5px] leading-snug text-text">{stripMd(c.thesis)}</div>
           {/if}
           <div class="mt-2 flex items-center gap-x-3 gap-y-1 text-[10.5px] tabular text-faint">
             <span class="font-medium">{c.source}</span>

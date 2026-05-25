@@ -86,22 +86,53 @@
     chart.timeScale().fitContent();
   }
 
+  /** Unix-seconds Time. The bot writes intraday PriceBars (multiple
+   * per day) so the previous date-string key (`YYYY-MM-DD`) collapsed
+   * many bars onto the same time and lightweight-charts silently
+   * dropped all but the first. Unix-seconds is monotonic and matches
+   * the lib's `UTCTimestamp` type. */
+  const toUnix = (iso: string): Time =>
+    Math.floor(new Date(iso).getTime() / 1000) as unknown as Time;
+
+  /** Drop strict-monotonicity violations (duplicate or backwards
+   * timestamps) — the lib refuses an unsorted feed. Sort first, then
+   * collapse equal timestamps to the latest bar at that time. */
+  function normalize<T extends { time: Time }>(rows: T[]): T[] {
+    const sorted = [...rows].sort(
+      (a, b) => (a.time as number) - (b.time as number)
+    );
+    const out: T[] = [];
+    for (const r of sorted) {
+      const prev = out[out.length - 1];
+      if (prev && (prev.time as number) === (r.time as number)) {
+        out[out.length - 1] = r;
+      } else {
+        out.push(r);
+      }
+    }
+    return out;
+  }
+
   function syncData() {
     if (!candleSeries || !volumeSeries) return;
-    const candles = bars.map((b) => ({
-      time: b.ts.slice(0, 10) as Time,
-      open: b.open,
-      high: b.high,
-      low: b.low,
-      close: b.close
-    }));
+    const candles = normalize(
+      bars.map((b) => ({
+        time: toUnix(b.ts),
+        open: b.open,
+        high: b.high,
+        low: b.low,
+        close: b.close
+      }))
+    );
     candleSeries.setData(candles);
 
-    const vols = bars.map((b) => ({
-      time: b.ts.slice(0, 10) as Time,
-      value: b.volume,
-      color: b.close >= b.open ? PALETTE.upVol : PALETTE.downVol
-    }));
+    const vols = normalize(
+      bars.map((b) => ({
+        time: toUnix(b.ts),
+        value: b.volume,
+        color: b.close >= b.open ? PALETTE.upVol : PALETTE.downVol
+      }))
+    );
     volumeSeries.setData(vols);
 
     // Entry line for the open position
@@ -126,12 +157,12 @@
       );
     }
 
-    // Closed-trade markers
-    const markers = [
+    // Closed-trade markers (also need Unix seconds + monotonicity).
+    const markers = normalize([
       ...(closedTrades || []).flatMap((t) => {
-        const out = [
+        const out: any[] = [
           {
-            time: t.entry_at.slice(0, 10) as Time,
+            time: toUnix(t.entry_at),
             position: 'belowBar' as const,
             color: 'rgba(255,255,255,0.55)',
             shape: 'circle' as const,
@@ -140,7 +171,7 @@
         ];
         if (t.exit_at) {
           out.push({
-            time: t.exit_at.slice(0, 10) as Time,
+            time: toUnix(t.exit_at),
             position: 'aboveBar' as const,
             color: (t.pnl ?? 0) >= 0 ? PALETTE.up : PALETTE.down,
             shape: 'circle' as const,
@@ -152,7 +183,7 @@
       ...(openPosition
         ? [
             {
-              time: openPosition.entry_at.slice(0, 10) as Time,
+              time: toUnix(openPosition.entry_at),
               position:
                 openPosition.side === 'long'
                   ? ('belowBar' as const)
@@ -166,7 +197,7 @@
             }
           ]
         : [])
-    ];
+    ]);
     candleSeries.setMarkers(markers);
   }
 
