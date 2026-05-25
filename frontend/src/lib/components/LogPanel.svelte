@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { createQuery } from '@tanstack/svelte-query';
+  import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
   import { systemLogs } from '$api';
   import Spinner from './Spinner.svelte';
   import { Pause, Play, Trash2 } from 'lucide-svelte';
@@ -17,11 +18,11 @@
   let paused = $state(false);
   let container: HTMLDivElement;
 
-  const logsQ = createQuery(() => ({
+  const logsQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['system-logs', n],
     queryFn: () => systemLogs(n),
     refetchInterval: paused ? false : intervalMs
-  }));
+  })));
 
   // Re-pin to bottom whenever the data changes, but only if the user is
   // already near the bottom — so a scrolled-up reader doesn't get yanked.

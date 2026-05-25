@@ -4,6 +4,7 @@
     createMutation,
     useQueryClient
   } from '@tanstack/svelte-query';
+  import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
   import {
     thesesActive,
     thesesClosed,
@@ -50,12 +51,12 @@
   });
 
   let selectedId = $state<number | null>(null);
-  const detailQ = createQuery(() => ({
+  const detailQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['thesis', selectedId],
     queryFn: () =>
       selectedId !== null ? thesisDetail(selectedId) : Promise.reject('no id'),
     enabled: selectedId !== null
-  }));
+  })));
 
   const qc = useQueryClient();
   const closeM = createMutation({

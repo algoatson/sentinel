@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
+  import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
   import { news, newsDossier, askNews, newsArticle, filings } from '$api';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
@@ -23,7 +24,9 @@
 
   type Mode = 'news' | 'filings';
   let mode: Mode = $state('news');
-  let hours = $state(24);
+  // 72h default so a freshly-opened tab on a quiet day always shows
+  // something — 24h was too narrow when the bot is bursty.
+  let hours = $state(72);
   let tickerFilter = $state('');
   let sentimentFilter: 'all' | 'pos' | 'neg' | 'macro' = $state('all');
   let formFilter: string = $state('all');
@@ -34,25 +37,25 @@
   let refreshing = $state(false);
 
   /* ── news queries ────────────────────────── */
-  const newsQ = createQuery(() => ({
+  const newsQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['news', hours, tickerFilter],
     queryFn: () => news(hours, tickerFilter.trim() || undefined),
     refetchInterval: mode === 'news' ? 60_000 : false,
     enabled: mode === 'news'
-  }));
+  })));
 
-  const dossierQ = createQuery(() => ({
+  const dossierQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['news-dossier', selectedNewsId, refreshing],
     queryFn: () => newsDossier(selectedNewsId!, refreshing),
     enabled: selectedNewsId !== null
-  }));
+  })));
 
-  const articleQ = createQuery(() => ({
+  const articleQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['news-article', selectedNewsId],
     queryFn: () => newsArticle(selectedNewsId!),
     enabled: selectedNewsId !== null,
     staleTime: 60 * 60_000 // article body never changes once cached
-  }));
+  })));
 
   let articleExpanded = $state(false);
   $effect(() => {
@@ -62,7 +65,7 @@
   });
 
   /* ── filings queries ─────────────────────── */
-  const filingsQ = createQuery(() => ({
+  const filingsQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['filings', hours, tickerFilter, formFilter, materialityMin],
     queryFn: () =>
       filings({
@@ -73,7 +76,7 @@
       }),
     refetchInterval: mode === 'filings' ? 60_000 : false,
     enabled: mode === 'filings'
-  }));
+  })));
 
   const qc = useQueryClient();
 

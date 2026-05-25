@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
+  import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
   import { calls, callDossier, askCall, scorecard } from '$api';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
@@ -25,21 +26,21 @@
   let selected = $state<number | null>(null);
   let refreshing = $state(false);
 
-  const callsQ = createQuery(() => ({
+  const callsQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['calls', days],
     queryFn: () => calls(days),
     refetchInterval: 60_000
-  }));
+  })));
   const scorecardQ = createQuery({
     queryKey: ['scorecard'],
     queryFn: scorecard,
     refetchInterval: 90_000
   });
-  const dossierQ = createQuery(() => ({
+  const dossierQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['call-dossier', selected, refreshing],
     queryFn: () => callDossier(selected!, refreshing),
     enabled: selected !== null
-  }));
+  })));
 
   const qc = useQueryClient();
 

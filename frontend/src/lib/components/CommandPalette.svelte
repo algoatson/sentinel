@@ -11,6 +11,7 @@
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
   import { createQuery } from '@tanstack/svelte-query';
+  import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
   import { watchlist } from '$api';
   import {
     LayoutDashboard, Briefcase, LineChart, FlaskConical, Brain,
@@ -46,12 +47,12 @@
   ];
 
   // Cache watchlist for tickers; only fetched when the palette opens.
-  const wlQ = createQuery(() => ({
+  const wlQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['watchlist'],
     queryFn: watchlist,
     enabled: open,
     staleTime: 5 * 60_000
-  }));
+  })));
 
   const tickerItems = $derived<Item[]>(
     ($wlQ.data ?? []).slice(0, 200).map((r) => ({

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
   import {
     researchTasks,
     researchTask,
@@ -24,11 +25,11 @@
   // Refetch faster when there's an in-flight task (verdict still null
   // because the heavy LLM is still composing). Idle: 30s. In-flight: 4s.
   let activeInflight = $state(false);
-  const tasksQ = createQuery(() => ({
+  const tasksQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['research-tasks'],
     queryFn: () => researchTasks(40),
     refetchInterval: activeInflight ? 4_000 : 30_000
-  }));
+  })));
   $effect(() => {
     activeInflight = ($tasksQ.data ?? []).some(
       (t) => t.verdict === null
@@ -39,11 +40,11 @@
     queryFn: researchRemaining,
     refetchInterval: 60_000
   });
-  const detailQ = createQuery(() => ({
+  const detailQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['research-task', selected],
     queryFn: () => researchTask(selected!),
     enabled: selected !== null
-  }));
+  })));
 
   const qc = useQueryClient();
   const runM = createMutation({

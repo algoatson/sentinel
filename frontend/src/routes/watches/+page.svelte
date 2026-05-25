@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
   import { listWatches, getWatch, addWatch, removeWatch } from '$api';
   import { toast } from '$lib/toast.svelte';
   import Card from '$components/Card.svelte';
@@ -18,11 +19,11 @@
     queryFn: listWatches,
     refetchInterval: 30_000
   });
-  const detailQ = createQuery(() => ({
+  const detailQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['watch', selectedId],
     queryFn: () => getWatch(selectedId!),
     enabled: selectedId !== null
-  }));
+  })));
   const qc = useQueryClient();
 
   const addM = createMutation({

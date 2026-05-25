@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createQuery } from '@tanstack/svelte-query';
+  import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
@@ -64,16 +65,16 @@
   });
   // svelte-query 5.x: pass a function returning options so the query
   // re-evaluates whenever the reactive dependencies (selectedTicker/Range) change.
-  const chartQ = createQuery(() => ({
+  const chartQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['ticker-chart', selectedTicker, selectedRange.days],
     queryFn: () => tickerChart(selectedTicker, selectedRange.days),
     enabled: !!selectedTicker
-  }));
-  const statsQ = createQuery(() => ({
+  })));
+  const statsQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['ticker-stats', selectedTicker],
     queryFn: () => tickerStats(selectedTicker),
     enabled: !!selectedTicker
-  }));
+  })));
 
   // Watchlist column-sort state
   type SortKey =
