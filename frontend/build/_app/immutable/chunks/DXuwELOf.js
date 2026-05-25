@@ -1,0 +1,1 @@
+import{aI as a,bq as u,a2 as t,aH as c,bn as e}from"./V-2qbepi.js";function l(n){t===null&&a(),c&&t.l!==null?s(t).m.push(n):u(()=>{const o=e(n);if(typeof o=="function")return o})}function i(n){t===null&&a(),l(()=>()=>e(n))}function s(n){var o=n.l;return o.u??(o.u={a:[],b:[],m:[]})}export{l as a,i as o};

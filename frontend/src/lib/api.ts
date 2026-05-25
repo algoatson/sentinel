@@ -21,6 +21,7 @@ import type {
   RealizedCurvePoint,
   ResearchExecuteResult,
   ResearchTask,
+  ResearchTaskDetail,
   Scorecard,
   SystemMetrics,
   Thesis,
@@ -28,6 +29,7 @@ import type {
   TickerChart,
   TickerStats,
   Wallet,
+  WalletHistory,
   WatchlistRow,
 } from './types';
 
@@ -91,9 +93,9 @@ export const runThesisReview = () =>
 /* ─── wallets ─── */
 export const wallets = () => get<Wallet[]>('/wallets');
 export const walletDetail = (name: string) =>
-  get(`/wallets/${encodeURIComponent(name)}`);
+  get<WalletHistory>(`/wallets/${encodeURIComponent(name)}`);
 export const walletHistory = (name: string, days = 90) =>
-  get(`/wallets/${encodeURIComponent(name)}/history?days=${days}`);
+  get<WalletHistory>(`/wallets/${encodeURIComponent(name)}/history?days=${days}`);
 
 /* ─── calls ─── */
 export const calls = (days = 7) => get<CallItem[]>(`/calls?days=${days}`);
@@ -121,7 +123,8 @@ export const askNews = (id: number, question: string) =>
 /* ─── research ─── */
 export const researchTasks = (n = 30) =>
   get<ResearchTask[]>(`/research?n=${n}`);
-export const researchTask = (id: number) => get(`/research/${id}`);
+export const researchTask = (id: number) =>
+  get<ResearchTaskDetail>(`/research/${id}`);
 export const runResearch = (prompt: string) =>
   post<{ task_id: number }>('/research/run', { prompt });
 export const executeResearch = (id: number) =>

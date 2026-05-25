@@ -181,6 +181,57 @@ export interface Wallet {
   wins: number;
 }
 
+export interface WalletOpenRow {
+  id: number;
+  ticker: string;
+  side: 'long' | 'short';
+  qty: number;
+  entry: number;
+  entry_at: string;
+  mark: number;
+  mark_live: boolean;
+  upnl: number;
+  upnl_pct: number;
+  open_reason: string | null;
+  call_id: number | null;
+}
+
+export interface WalletClosedRow {
+  id: number;
+  ticker: string;
+  side: 'long' | 'short';
+  qty: number;
+  entry: number;
+  entry_at: string;
+  exit: number | null;
+  exit_at: string | null;
+  realized_pnl: number | null;
+  realized_pct: number;
+  open_reason: string | null;
+  close_reason: string | null;
+  call_id: number | null;
+}
+
+export interface WalletHistory {
+  name: string;
+  mandate: string;
+  cash: number;
+  equity: number;
+  starting: number;
+  ret_pct: number;
+  open: WalletOpenRow[];
+  closed: WalletClosedRow[];
+  as_of: string;
+}
+
+export interface ResearchTaskDetail extends ResearchTask {
+  dossier: string;
+  rec_thesis: string | null;
+  rec_risks: string | null;
+  executed_trade_id: number | null;
+  model: string;
+}
+
 export interface CallItem {
   id: number;
   ticker: string;

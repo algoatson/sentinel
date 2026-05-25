@@ -24,6 +24,7 @@
     "@tanstack/svelte-query": "^5.59.0",
     "clsx": "^2.1.1",
     "lightweight-charts": "^4.2.1",
-    "lucide-svelte": "^0.460.0"
+    "lucide-svelte": "^0.460.0",
+    "marked": "^18.0.4"
   }
 }
