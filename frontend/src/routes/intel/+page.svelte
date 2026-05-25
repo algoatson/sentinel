@@ -12,6 +12,7 @@
   import AskBox from '$components/AskBox.svelte';
   import TickerLink from '$components/TickerLink.svelte';
   import Markdown from '$components/Markdown.svelte';
+  import Pager from '$components/Pager.svelte';
   import { timeAgo, compact, stripMd } from '$lib/format';
   import { Newspaper, ExternalLink, Globe, FileText, MessageCircle } from 'lucide-svelte';
 
@@ -37,6 +38,15 @@
   let selectedFiling = $state<number | null>(null);
   let refreshing = $state(false);
   let dedupeNews = $state(true); // collapse syndicated copies of the same event
+
+  // Pagination — one set of state shared across mode tabs (reset on
+  // any meaningful axis change).
+  let page = $state(1);
+  let pageSize = $state(25);
+  $effect(() => {
+    mode; hours; tickerFilter; sentimentFilter; formFilter; materialityMin; textFilter;
+    page = 1;
+  });
 
   /* ── news queries ────────────────────────── */
   const newsQ = createQuery(reactiveQueryOptions(() => ({
@@ -381,8 +391,9 @@
         description={$newsQ.data?.length ? 'Try widening the time window or clearing filters.' : 'Ingesters run every 5min. New items will appear here.'}
       />
     {:else}
+      <Pager bind:page bind:pageSize total={filteredNews.length} class="mb-2" />
       <div class="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
-        {#each filteredNews as n (n.id)}
+        {#each filteredNews.slice((page - 1) * pageSize, page * pageSize) as n (n.id)}
           <Card interactive onclick={() => (selectedNewsId = n.id)} class="px-4 py-3">
             <div class="flex items-center gap-1.5">
               <Pill variant={variantForSentiment(n.sentiment)}>
@@ -428,6 +439,7 @@
           </Card>
         {/each}
       </div>
+      <Pager bind:page bind:pageSize total={filteredNews.length} class="mt-3" />
     {/if}
   </div>
 {:else if mode === 'filings'}
@@ -440,8 +452,9 @@
         description={$filingsQ.data?.length ? 'Try widening the time window, lowering materiality, or clearing filters.' : 'EDGAR poll runs every 10min. New filings will appear here.'}
       />
     {:else}
+      <Pager bind:page bind:pageSize total={filteredFilings.length} class="mb-2" />
       <div class="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
-        {#each filteredFilings as f (f.id)}
+        {#each filteredFilings.slice((page - 1) * pageSize, page * pageSize) as f (f.id)}
           <Card interactive onclick={() => (selectedFiling = f.id)} class="px-4 py-3">
             <div class="flex items-center gap-1.5">
               <Pill variant="violet" class="font-mono">{f.form_type}</Pill>
@@ -468,6 +481,7 @@
           </Card>
         {/each}
       </div>
+      <Pager bind:page bind:pageSize total={filteredFilings.length} class="mt-3" />
     {/if}
   </div>
 {:else}
@@ -482,8 +496,9 @@
           description="The reddit poll runs every 30min across the tracked subreddits."
         />
       {:else}
+        <Pager bind:page bind:pageSize total={$socialQ.data.length} class="mb-2" />
         <div class="space-y-2">
-          {#each $socialQ.data as r (r.id)}
+          {#each $socialQ.data.slice((page - 1) * pageSize, page * pageSize) as r (r.id)}
             <Card class="px-3.5 py-2.5">
               <div class="flex items-center gap-1.5">
                 <Pill variant={variantForSentimentSimple(r.sentiment)}>
@@ -509,6 +524,7 @@
             </Card>
           {/each}
         </div>
+        <Pager bind:page bind:pageSize total={$socialQ.data.length} class="mt-3" />
       {/if}
     </div>
 

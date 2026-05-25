@@ -16,6 +16,7 @@
   import TickerLink from '$components/TickerLink.svelte';
   import Spinner from '$components/Spinner.svelte';
   import EmptyState from '$components/EmptyState.svelte';
+  import Pager from '$components/Pager.svelte';
   import {
     Activity as ActivityIcon, Newspaper, FileText, Target as TargetIcon,
     Bell, Sparkles, Trash2
@@ -25,6 +26,9 @@
   type Kind = 'all' | 'news' | 'call' | 'filing' | 'watch' | 'trade';
   let kind: Kind = $state('all');
   let tickerFilter = $state('');
+  let page = $state(1);
+  let pageSize = $state(25);
+  $effect(() => { kind; tickerFilter; page = 1; });
 
   // Hydrate with backend history once.
   const historyQ = createQuery({
@@ -207,8 +211,9 @@
       description="Events stream in as the bot ingests news / calls / filings / watch trips. The bell counter also tracks unread."
     />
   {:else}
+    <Pager bind:page bind:pageSize total={filtered.length} class="mb-2" />
     <div class="space-y-1">
-      {#each filtered as ev (ev.id)}
+      {#each filtered.slice((page - 1) * pageSize, page * pageSize) as ev (ev.id)}
         {@const Icon = iconFor(ev.kind)}
         <a
           href={hrefFor(ev)}
@@ -231,5 +236,6 @@
         </a>
       {/each}
     </div>
+    <Pager bind:page bind:pageSize total={filtered.length} class="mt-3" />
   {/if}
 </div>

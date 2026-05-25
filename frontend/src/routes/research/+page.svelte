@@ -15,12 +15,15 @@
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
   import Markdown from '$components/Markdown.svelte';
+  import Pager from '$components/Pager.svelte';
   import { timeAgo } from '$lib/format';
   import { FlaskConical, PlayCircle, Send, CheckCircle2, XCircle, AlertCircle } from 'lucide-svelte';
 
   let prompt = $state('');
   let selected = $state<number | null>(null);
   let confirmExecute = $state(false);
+  let page = $state(1);
+  let pageSize = $state(10);
 
   // Refetch faster when there's an in-flight task (verdict still null
   // because the heavy LLM is still composing). Idle: 30s. In-flight: 4s.
@@ -176,8 +179,9 @@
       description="Use the box above to ask the bot to look into something. The task list is your audit trail."
     />
   {:else}
+    <Pager bind:page bind:pageSize total={$tasksQ.data.length} class="mb-2" />
     <div class="grid grid-cols-1 gap-2.5 md:grid-cols-2">
-      {#each $tasksQ.data as t (t.id)}
+      {#each $tasksQ.data.slice((page - 1) * pageSize, page * pageSize) as t (t.id)}
         <Card interactive onclick={() => (selected = t.id)} class="px-4 py-3">
           <div class="flex items-center gap-1.5">
             {#if t.verdict}
@@ -216,6 +220,7 @@
         </Card>
       {/each}
     </div>
+    <Pager bind:page bind:pageSize total={$tasksQ.data.length} class="mt-3" />
   {/if}
 </div>
 
