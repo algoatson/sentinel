@@ -53,6 +53,70 @@ def test_snapshot_is_total_and_never_raises():
 # ── verdict marker ──────────────────────────────────────────────────────────
 
 
+def test_tick_now_gates_on_active_tab(monkeypatch):
+    """Tab-aware pausing: a `_tick_now(tab='X')` body only runs when
+    `_ACTIVE_TAB == 'X'`. First-paint tick is unconditional so the
+    panel isn't blank when the user later switches to it."""
+    import asyncio as _asyncio
+    from sentinel.dashboard import app
+
+    calls = {"normal": 0, "first": 0}
+
+    async def _coro():
+        calls["normal"] += 1
+
+    # Fake `ui.timer` that immediately calls the function once if it's
+    # the once=True kind, and once otherwise — enough to exercise both
+    # paths without needing a real event loop.
+    class _FakeUI:
+        @staticmethod
+        def timer(interval, callback, once=False):
+            if once:
+                # First-paint: always runs (force=True path)
+                async def _go():
+                    calls["first"] += 1
+                    await callback()
+                _asyncio.run(_go())
+            else:
+                # Interval-tick: respects the active-tab gate
+                _asyncio.run(callback())
+
+    # Wrong tab → only the first-paint fires; interval body is gated out
+    monkeypatch.setattr(app, "_ACTIVE_TAB", "markets")
+    app._tick_now(_FakeUI, _coro, 0.0, tab="overview")
+    assert calls == {"normal": 1, "first": 1}  # first-paint forced, interval skipped
+
+    # Right tab → both fire
+    calls["normal"] = 0
+    calls["first"] = 0
+    monkeypatch.setattr(app, "_ACTIVE_TAB", "overview")
+    app._tick_now(_FakeUI, _coro, 0.0, tab="overview")
+    assert calls == {"normal": 2, "first": 1}  # first-paint + interval
+
+
+def test_tick_now_with_no_tab_always_runs(monkeypatch):
+    """Backwards-compat: `_tick_now(...)` without `tab=` keeps the
+    old always-on behaviour. Important for any legacy panels that
+    haven't been migrated."""
+    import asyncio as _asyncio
+    from sentinel.dashboard import app
+
+    counter = {"n": 0}
+
+    async def _coro():
+        counter["n"] += 1
+
+    class _FakeUI:
+        @staticmethod
+        def timer(interval, callback, once=False):
+            _asyncio.run(callback())
+
+    monkeypatch.setattr(app, "_ACTIVE_TAB", "anything")
+    app._tick_now(_FakeUI, _coro, 0.0)  # no tab kwarg
+    # Both the first-paint and the interval ran → 2 calls
+    assert counter["n"] == 2
+
+
 def test_swap_chart_mutates_dict_in_place_and_updates():
     """Regression: NiceGUI 3.12's `EChart.options` is read-only — direct
     assignment raises 'property has no setter' and the chart never updates.

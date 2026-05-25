@@ -877,7 +877,7 @@ def _equity_curve_panel(ui, span: str = "c7") -> None:
         except Exception as e:
             logger.debug("equity chart render: {}", e)
 
-    _tick_now(ui, refresh, _i("equity_curve"))
+    _tick_now(ui, refresh, _i("equity_curve"), tab="overview")
 
 
 # ── realised P&L curve (Overview tab) ──────────────────────────────────────
@@ -904,7 +904,7 @@ def _realized_curve_panel(ui, span: str = "c5") -> None:
         except Exception as e:
             logger.debug("realized chart render: {}", e)
 
-    _tick_now(ui, refresh, _i("realized_curve"))
+    _tick_now(ui, refresh, _i("realized_curve"), tab="overview")
 
 
 # ── ticker chart (Markets tab) — the star feature ─────────────────────────
@@ -1037,7 +1037,7 @@ def _ticker_chart_panel(ui, span: str = "c12") -> None:
             state["_opens"] = []
         _paint_chips()
 
-    _tick_now(ui, _refresh_chips, _i("ticker_chips"))
+    _tick_now(ui, _refresh_chips, _i("ticker_chips"), tab="markets")
 
 
 def _render_stats(host, ticker: str, d: dict) -> None:
@@ -1401,7 +1401,7 @@ def _watchlist_panel(ui, span: str = "c12") -> None:
                 "Watchlist is empty — !add a ticker to start tracking."
             )
 
-    _tick_now(ui, refresh, _i("watchlist"))
+    _tick_now(ui, refresh, _i("watchlist"), tab="markets")
 
 
 def _click_load(ticker: str) -> None:
@@ -1502,7 +1502,7 @@ def _filings_feed_panel(ui, span: str = "c6") -> None:
                         )
                     ui.html(f'<span class="ts">{ago}</span>')
 
-    _tick_now(ui, refresh, _i("filings_feed"))
+    _tick_now(ui, refresh, _i("filings_feed"), tab="intel")
 
 
 # ── news feed (Intel tab) ──────────────────────────────────────────────────
@@ -1568,7 +1568,7 @@ def _news_feed_panel(ui, span: str = "c6") -> None:
                 for r in rows:
                     _render_news_card(ui, r, now)
 
-    _tick_now(ui, refresh, _i("news_feed"))
+    _tick_now(ui, refresh, _i("news_feed"), tab="intel")
 
 
 def _render_news_card(ui, r: dict, now: datetime) -> None:
@@ -1709,7 +1709,7 @@ def _social_pulse_panel(ui, span: str = "c12") -> None:
                         )
                     ui.html(f'<span class="ts">{ago}</span>')
 
-    _tick_now(ui, refresh, _i("social_pulse"))
+    _tick_now(ui, refresh, _i("social_pulse"), tab="intel")
 
 
 # ── catalyst calendar (Intel tab) ──────────────────────────────────────────
@@ -1766,7 +1766,7 @@ def _catalysts_panel(ui, span: str = "c12") -> None:
                         )
                         ui.html('<span class="mut">earnings report</span>')
 
-    _tick_now(ui, refresh, _i("catalysts"))
+    _tick_now(ui, refresh, _i("catalysts"), tab="intel")
 
 
 # ── recent activity feed (Overview tab) ────────────────────────────────────
@@ -1916,7 +1916,7 @@ def _activity_panel(ui, span: str = "c12") -> None:
                         )
                     ui.html(f'<span class="ts">{ago}</span>')
 
-    _tick_now(ui, refresh, _i("activity"))
+    _tick_now(ui, refresh, _i("activity"), tab="overview")
 
 
 # ── LLM grounding card (System tab) ────────────────────────────────────────
@@ -1973,7 +1973,7 @@ def _grounding_panel(ui, span: str = "c12") -> None:
                 f'overflow:auto;white-space:pre-wrap">{html.escape(body)}</pre>'
             )
 
-    _tick_now(ui, refresh, _i("grounding"))
+    _tick_now(ui, refresh, _i("grounding"), tab="system")
 
 
 # ── recent-calls list (Calls tab) ──────────────────────────────────────────
@@ -2028,7 +2028,7 @@ def _calls_history_panel(ui, span: str = "c12") -> None:
                 for r in rows:
                     _render_call_card(ui, r, now)
 
-    _tick_now(ui, refresh, _i("calls_history"))
+    _tick_now(ui, refresh, _i("calls_history"), tab="calls")
 
 
 def _render_call_card(ui, r: dict, now: datetime) -> None:
@@ -2410,6 +2410,28 @@ def _build_page(ui) -> None:
 
         ui.timer(0.3, _init_nav, once=True)
 
+        # Poll the client's location.hash to keep `_ACTIVE_TAB` synced —
+        # that's what `_tick_now(tab=…)` reads when deciding whether to
+        # run a refresh body. 2s is brisk enough that switching tabs
+        # feels responsive (the new tab's interval timer wakes up on its
+        # next firing rather than instantly, which is acceptable) while
+        # keeping the JS round-trip rate low.
+        async def _sync_active_tab() -> None:
+            global _ACTIVE_TAB
+            try:
+                value = await ui.run_javascript(
+                    "location.hash ? location.hash.replace('#','') : 'overview'",
+                    timeout=1.0,
+                )
+                if isinstance(value, str) and value:
+                    _ACTIVE_TAB = value
+            except Exception:
+                # WS slow, browser tab backgrounded, etc. — last-known
+                # active tab keeps running, which is the safe default.
+                pass
+
+        ui.timer(2.0, _sync_active_tab)
+
 
 # ── KPI ribbon ──────────────────────────────────────────────────────────────
 
@@ -2530,7 +2552,7 @@ def _kpi_ribbon(ui, uptime_lbl) -> None:
         except Exception:
             pass
 
-    _tick_now(ui, refresh, _i("kpi"))
+    _tick_now(ui, refresh, _i("kpi"), tab="overview")
 
 
 # Refresh intervals per panel, in seconds. All in one table so the
@@ -2570,7 +2592,17 @@ def _i(name: str) -> float:
     return _INTERVALS.get(name, 60.0)
 
 
-def _tick_now(ui, coro, interval: float) -> None:
+# Active-tab tracker. Set by a 2-second JS poll registered in cockpit()
+# that reads `location.hash`. Panels that pass `tab=` to `_tick_now`
+# only run their coroutine body when this matches their tab — so 8 of
+# the 9 tabs sit silent at any moment, cutting baseline DB + WS load
+# by ~8x relative to the always-running mode. Module-level (not
+# per-client) since this is a single-user bot; if multiple browser
+# tabs are open with different active tabs, last-write-wins is fine.
+_ACTIVE_TAB = "overview"
+
+
+def _tick_now(ui, coro, interval: float, *, tab: str | None = None) -> None:
     """Run an async refresh immediately, then on an interval.
 
     Wraps the caller's coroutine in a try/except so a single bad refresh
@@ -2579,8 +2611,16 @@ def _tick_now(ui, coro, interval: float) -> None:
     lost". A dropped panel is a much better failure mode than a dropped
     page. Errors are logged with the panel callable's name so they're
     findable in the live journal.
+
+    When `tab=` is provided, the body is SKIPPED whenever the user is
+    on a different tab — silent panels for ~8 of 9 tabs at any moment.
+    The first-paint tick (`once=True` at 0.1s) is NOT gated, so every
+    panel renders its initial state regardless of the starting tab —
+    users see fresh data the first time they switch to any tab.
     """
-    async def _safe() -> None:
+    async def _safe(*, force: bool = False) -> None:
+        if not force and tab is not None and _ACTIVE_TAB != tab:
+            return
         try:
             await coro()
         except Exception as e:
@@ -2589,7 +2629,13 @@ def _tick_now(ui, coro, interval: float) -> None:
                 getattr(coro, "__qualname__", "?"), e,
             )
 
-    ui.timer(0.1, _safe, once=True)
+    async def _first() -> None:
+        # First paint: always run so the panel isn't blank when the
+        # user lands on its tab later. After that, the interval timer
+        # honours the active-tab gate.
+        await _safe(force=True)
+
+    ui.timer(0.1, _first, once=True)
     ui.timer(interval, _safe)
 
 
@@ -2695,7 +2741,7 @@ def _funds_panel(ui, span: str = "c7") -> None:
                             f"{html.escape(v[:34])}</span>"
                         )
 
-    _tick_now(ui, refresh, _i("funds"))
+    _tick_now(ui, refresh, _i("funds"), tab="portfolio")
 
 
 # ── wallet drill-in (click a row → open positions dialog) ───────────────────
@@ -3477,7 +3523,7 @@ def _research_wallet_panel(ui, span: str = "c12") -> None:
                             f'</span>'
                         )
 
-    _tick_now(ui, refresh, _i("research_wallet"))
+    _tick_now(ui, refresh, _i("research_wallet"), tab="research")
 
 
 # ── research desk panel (Research tab) ────────────────────────────────────
@@ -3641,7 +3687,7 @@ def _research_panel(ui, span: str = "c12") -> None:
                             )
                     ui.html(f'<span class="ts">{ago}</span>')
 
-    _tick_now(ui, refresh, _i("research_desk"))
+    _tick_now(ui, refresh, _i("research_desk"), tab="research")
 
 
 # ── scorecard ───────────────────────────────────────────────────────────────
@@ -3739,7 +3785,7 @@ def _scorecard_panel(ui, span: str = "c5") -> None:
                 with ui.element("div").classes("fr-alert warn"):
                     ui.html(f"⚠️&nbsp;&nbsp;{html.escape(note)}")
 
-    _tick_now(ui, refresh, _i("scorecard"))
+    _tick_now(ui, refresh, _i("scorecard"), tab="calls")
 
 
 # ── paper book ──────────────────────────────────────────────────────────────
@@ -3844,7 +3890,7 @@ def _book_panel(ui, span: str = "c7") -> None:
                         f'<div class="v">{wr}</div>'
                     )
 
-    _tick_now(ui, refresh, _i("book"))
+    _tick_now(ui, refresh, _i("book"), tab="portfolio")
 
 
 async def _close_position_action(ui, ticker: str, refresh_fn) -> None:
@@ -3982,7 +4028,7 @@ def _health_panel(ui, verdict_chip, span: str = "c5") -> None:
                     f'{html.escape(" · ".join(rep["faded"]))}</div>'
                 )
 
-    _tick_now(ui, refresh, _i("health"))
+    _tick_now(ui, refresh, _i("health"), tab="system")
 
 
 # ── scheduler control ───────────────────────────────────────────────────────
@@ -4192,7 +4238,7 @@ def _system_panel(ui, span: str = "c4") -> None:
             replace="v " + ("neg" if s["llm_errors"] else "")
         )
 
-    _tick_now(ui, refresh, _i("system"))
+    _tick_now(ui, refresh, _i("system"), tab="system")
 
 
 # ── open paper position (!buy / !short on the dashboard) ────────────────────
@@ -4391,7 +4437,7 @@ def _holds_panel(ui, span: str = "c4") -> None:
                 ui.notify(res["message"], type="warning")
 
         add_btn.on_click(_add)
-        _tick_now(ui, refresh, _i("holds"))
+        _tick_now(ui, refresh, _i("holds"), tab="portfolio")
 
 
 async def _remove_hold_action(ui, ticker: str, refresh_fn) -> None:
@@ -4509,7 +4555,7 @@ def _watches_panel(ui, span: str = "c4") -> None:
                     await refresh()
 
         add_btn.on_click(_add)
-        _tick_now(ui, refresh, _i("watches"))
+        _tick_now(ui, refresh, _i("watches"), tab="watches")
 
 
 async def _remove_watch_action(ui, wid: int, refresh_fn) -> None:
@@ -4607,7 +4653,7 @@ def _log_panel(ui, span: str = "c12") -> None:
         except Exception:
             pass
 
-    _tick_now(ui, refresh, _i("live_log"))
+    _tick_now(ui, refresh, _i("live_log"), tab="system")
 
 
 # ── chat ────────────────────────────────────────────────────────────────────
