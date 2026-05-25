@@ -28,6 +28,7 @@ from . import (
     health,
     interactions,
     scorecard,
+    thesis,
 )
 from .config import settings
 from .db import archive_database, init_db
@@ -80,6 +81,8 @@ _RUN_ONCE_REGISTRY = {
     "convergence": convergence.run_convergence_cycle,
     "movers": movers.run_movers_cycle,
     "hot_movers": hot_movers.run_hot_movers,
+    "thesis_generate": thesis.run_generate_cycle,
+    "thesis_review": thesis.run_review_cycle,
     "briefing": briefing.run_premarket_briefing,
     "news": news.poll_news,
     "macro_themes": macro_themes.run_macro_themes,

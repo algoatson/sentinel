@@ -656,6 +656,87 @@ async def _handle_command(msg: discord.Message, body: str) -> None:
         from . import health
 
         emb = _embed(None, health.health_text(), color=_COL_INFO)
+    elif cmd in ("theses", "thesis"):
+        # `!theses` → list active running theses (compact). `!thesis <id>`
+        # → detail view (body + invalidation criteria + event count).
+        # Full timeline / close actions live on the dashboard's Theses
+        # tab; Discord is a read surface.
+        from . import thesis as _thesis_mod
+
+        target = arg.strip()
+        if target and target.isdigit():
+            t = _thesis_mod.get_thesis(int(target))
+            if t is None:
+                emb = _ack(f"thesis #{target} not found", ok=False)
+            else:
+                direction = (t.get("direction") or "neutral").upper()
+                state = (t.get("state") or "active").upper()
+                lines = [
+                    f"**{direction} ${t['ticker']}** — {t['title']}",
+                    f"_{state} · conv {t.get('conviction')}/5_",
+                    "",
+                    t.get("body") or "",
+                ]
+                if t.get("target_price"):
+                    lines.append(f"_Target: {t['target_price']:.4g}_")
+                if t.get("horizon_days"):
+                    lines.append(f"_Horizon: {t['horizon_days']}d_")
+                if t.get("invalidation_criteria"):
+                    lines.append("")
+                    lines.append(f"**Kills it:** {t['invalidation_criteria']}")
+                lines.append("")
+                lines.append(
+                    f"_Linked events: +{t.get('supporting_events') or 0} "
+                    f"supporting / -{t.get('challenging_events') or 0} "
+                    f"challenging_"
+                )
+                emb = _embed(
+                    f"🧠 Thesis #{target}",
+                    "\n".join(lines)[:3800],
+                    color=_COL_INFO,
+                )
+        else:
+            active = _thesis_mod.list_active()
+            if not active:
+                emb = _embed(
+                    "🧠 Theses",
+                    "_No active theses. The generator runs daily at 08:15 "
+                    "ET, or trigger one now via `--run-once "
+                    "thesis_generate`._",
+                    color=_COL_INFO,
+                )
+            else:
+                lines = ["**🧠 Active running theses**", ""]
+                for t in active[:12]:
+                    direction = (t.get("direction") or "neutral").upper()
+                    arrow = (
+                        "🟢" if direction == "LONG"
+                        else "🔴" if direction == "SHORT"
+                        else "⚪"
+                    )
+                    sup = t.get("supporting_events") or 0
+                    chal = t.get("challenging_events") or 0
+                    target_str = (
+                        f" → {t['target_price']:.4g}"
+                        if t.get("target_price") else ""
+                    )
+                    lines.append(
+                        f"{arrow} `#{t['id']:>3}` "
+                        f"**${t['ticker']}**{target_str} · "
+                        f"conv {t.get('conviction')}/5 · "
+                        f"+{sup} / -{chal} · "
+                        f"{t['title'][:80]}"
+                    )
+                lines.append("")
+                lines.append(
+                    "_Read full body + event timeline on the dashboard's "
+                    "Theses tab, or `!thesis <id>` for one._"
+                )
+                emb = _embed(
+                    None,
+                    "\n".join(lines)[:3800],
+                    color=_COL_INFO,
+                )
     elif cmd in ("research", "desk"):
         # `!research <prompt>` — kicks off a Research Desk task. The user
         # then opens the dashboard's Research tab to read the dossier and

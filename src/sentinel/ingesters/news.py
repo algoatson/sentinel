@@ -33,6 +33,19 @@ from ..utils import extract_tickers
 
 _FEEDS_PATH = CONFIG_DIR / "news_feeds.yaml"
 
+
+def _safe_link_news(news_id: int) -> None:
+    """Try to link a fresh NewsItem against active theses for the
+    same ticker. Best-effort — the thesis engine is a downstream
+    enrichment, not a hard dependency of news ingestion. Wrapping
+    the import lazily so a missing `thesis` module (older deploys,
+    test isolation) never breaks the news poll."""
+    try:
+        from .. import thesis
+        thesis.link_news(news_id)
+    except Exception as e:
+        logger.debug("link_news({}) outer failed: {}", news_id, e)
+
 # Cross-source dedup window. yfinance + RSS often republish the same
 # underlying article URL (typically Reuters/CNBC/etc) under different
 # `external_id`s, so the existing source+id unique constraint doesn't
@@ -186,6 +199,7 @@ def _poll_rss() -> None:
             )
             ticker = next(iter(tickers_in_title)) if tickers_in_title else None
 
+            new_id = None
             with session_scope() as session:
                 existing = session.exec(
                     select(NewsItem).where(NewsItem.external_id == ext_id)
@@ -205,20 +219,26 @@ def _poll_rss() -> None:
                     skipped_dup += 1
                     continue
                 seen_urls.add(canon)
-                session.add(
-                    NewsItem(
-                        source=source,
-                        external_id=ext_id,
-                        title=title[:500],
-                        url=link[:1000],
-                        summary=summary,
-                        ticker=ticker,
-                        is_macro=is_macro and ticker is None,
-                        published_at=published_at,
-                        fetched_at=datetime.now(timezone.utc),
-                    )
+                item = NewsItem(
+                    source=source,
+                    external_id=ext_id,
+                    title=title[:500],
+                    url=link[:1000],
+                    summary=summary,
+                    ticker=ticker,
+                    is_macro=is_macro and ticker is None,
+                    published_at=published_at,
+                    fetched_at=datetime.now(timezone.utc),
                 )
+                session.add(item)
+                session.flush()  # populates item.id for the linker
+                new_id = item.id
                 new_count += 1
+            # Outside the session: link to active theses on the ticker
+            # (best-effort; doesn't slow ingestion meaningfully and
+            # failure is logged + skipped inside `thesis.link_news`).
+            if ticker and new_id is not None:
+                _safe_link_news(new_id)
 
     logger.info(
         "news RSS: inserted {} new items across {} feeds (skipped {} url dups)",
@@ -286,6 +306,7 @@ def _poll_yfinance() -> None:
                 published_at = datetime.now(timezone.utc)
 
             ext_id = _stable_id("yfinance", str(external_id))
+            new_id = None
             with session_scope() as session:
                 existing = session.exec(
                     select(NewsItem).where(NewsItem.external_id == ext_id)
@@ -299,20 +320,23 @@ def _poll_yfinance() -> None:
                     skipped_dup += 1
                     continue
                 seen_urls.add(canon)
-                session.add(
-                    NewsItem(
-                        source="yfinance",
-                        external_id=ext_id,
-                        title=title[:500],
-                        url=url[:1000],
-                        summary=(summary or "")[:1000],
-                        ticker=ticker,
-                        is_macro=False,
-                        published_at=published_at,
-                        fetched_at=datetime.now(timezone.utc),
-                    )
+                item = NewsItem(
+                    source="yfinance",
+                    external_id=ext_id,
+                    title=title[:500],
+                    url=url[:1000],
+                    summary=(summary or "")[:1000],
+                    ticker=ticker,
+                    is_macro=False,
+                    published_at=published_at,
+                    fetched_at=datetime.now(timezone.utc),
                 )
+                session.add(item)
+                session.flush()
+                new_id = item.id
                 new_count += 1
+            if ticker and new_id is not None:
+                _safe_link_news(new_id)
 
     logger.info(
         "news yfinance: inserted {} new items across {} tickers (skipped {} url dups)",

@@ -19,7 +19,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
 
-from . import funds, health, scorecard
+from . import funds, health, scorecard, thesis
 from .config import settings
 from .edgar import watchlist_builder
 from .ingesters import (
@@ -279,6 +279,26 @@ def make_scheduler() -> AsyncIOScheduler:
         funds.run_funds_meta,
         CronTrigger(day_of_week="sun", hour=12, minute=0, timezone=ET),
         id="funds_meta",
+        **_COMMON,
+    )
+    # Thesis engine.
+    # `generate_cycle`: heavy LLM proposes new running theses (+ closes
+    # no-longer-valid ones) once a day, just before market open ET so
+    # the day's headlines feed into yesterday's mental model. Bounded
+    # to 12 active theses; quality > quantity.
+    sched.add_job(
+        thesis.run_generate_cycle,
+        CronTrigger(hour=8, minute=15, timezone=ET),
+        id="thesis_generate",
+        **_COMMON,
+    )
+    # `review_cycle`: pure-rules sweep that closes theses on target hit,
+    # decisive challenge accumulation, or horizon-elapsed. Cheap; runs
+    # after market close so end-of-day price action is reflected.
+    sched.add_job(
+        thesis.run_review_cycle,
+        CronTrigger(hour=17, minute=10, timezone=ET),
+        id="thesis_review",
         **_COMMON,
     )
     # Dedicated Reddit-stream channel — notable r/ posts (moving/surging

@@ -306,4 +306,18 @@ async def _process_filing(client: EdgarClient, llm, meta: FilingMeta) -> bool:
 
     with session_scope() as session:
         session.add(filing_obj)
+        session.flush()
+        filing_id = filing_obj.id
+
+    # Link this filing to any active theses on the same ticker so the
+    # thesis timeline tracks the event. Best-effort; failure logs and
+    # doesn't bubble — filings ingestion is not a hard dependency of
+    # the thesis engine, and we'd rather ship the filing than block
+    # on a downstream enrichment.
+    if filing_obj.ticker and filing_id is not None:
+        try:
+            from .. import thesis
+            thesis.link_filing(filing_id)
+        except Exception as e:
+            logger.debug("thesis.link_filing({}) failed: {}", filing_id, e)
     return posted

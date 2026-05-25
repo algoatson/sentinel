@@ -2111,6 +2111,7 @@ _NAV: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
         ("portfolio", "💼", "Portfolio"),
         ("markets",   "📈", "Markets"),
         ("research",  "🔬", "Research"),
+        ("theses",    "🧠", "Theses"),
         ("intel",     "🛰", "Intel"),
         ("calls",     "🎯", "Calls"),
     )),
@@ -2136,6 +2137,10 @@ _TAB_META: dict[str, tuple[str, str, str]] = {
     "research":  ("🔬", "Research desk",
                   "Ask the bot to research a topic and recommend a trade. "
                   "You confirm the execution — nothing fires autonomously."),
+    "theses":    ("🧠", "Running theses",
+                  "Hypotheses the bot is tracking across days. New news + "
+                  "filings link in automatically and tag as supporting or "
+                  "challenging — the cross-pollination loop."),
     "intel":     ("🛰", "Intel",
                   "Filings + news feed and the forward catalyst calendar."),
     "calls":     ("🎯", "Calls",
@@ -2191,8 +2196,8 @@ def _tab_header(ui, tab: str) -> None:
 _TAB_NAV_JS = """
 (()=>{
   const KNOWN = new Set(["overview","portfolio","markets","research",
-                          "intel","calls","watches","lookup","copilot",
-                          "system"]);
+                          "theses","intel","calls","watches","lookup",
+                          "copilot","system"]);
   const activate = (raw) => {
     let id = (raw || location.hash || '#overview').replace(/^#/, '');
     if (!KNOWN.has(id)) id = 'overview';
@@ -2323,6 +2328,19 @@ def _build_page(ui) -> None:
                     with ui.element("div").classes("fr-grid"):
                         _ticker_chart_panel(ui, span="c12")
                         _watchlist_panel(ui, span="c12")
+
+                # ── THESES ───────────────────────────────────────────────
+                # Running hypotheses the bot tracks across days. New
+                # news + filings on a thesis's ticker auto-link as
+                # `supports` / `challenges` / `neutral`; periodic
+                # review closes on target hit / decisive challenges /
+                # horizon-elapsed.
+                with ui.element("div").classes("fr-tab").props(
+                    "data-tab=theses"
+                ):
+                    _tab_header(ui, "theses")
+                    with ui.element("div").classes("fr-grid"):
+                        _theses_panel(ui, span="c12")
 
                 # ── RESEARCH ─────────────────────────────────────────────
                 # User-prompted research with confirm-before-trade. Goes
@@ -2585,6 +2603,7 @@ _INTERVALS: dict[str, float] = {
     "holds":          120.0,    # holds are user-pace; calm
     "watches":        120.0,    # watch defs are user-pace
     "live_log":         8.0,    # was 3s — half the DOM churn, still live
+    "theses":         120.0,    # theses change slowly; daily generator
 }
 
 
@@ -3361,6 +3380,342 @@ def _render_research_action(ui, dlg, t: dict) -> None:
             exec_btn.props(remove="loading")
 
     exec_btn.on_click(_do_execute)
+
+
+# ── theses (Theses tab) ────────────────────────────────────────────────────
+
+
+def _theses_panel(ui, span: str = "c12") -> None:
+    """Active running theses + recently-closed graveyard.
+
+    Two sections: active cards on top (clickable → modal with the
+    full body, invalidation criteria, and the timeline of linked
+    events) and a `30d closed` section below for the won/lost/
+    matured trail. The whole thing is read-only here — closes
+    happen via the modal's action buttons or the daily review
+    pipeline."""
+    from .. import thesis
+
+    with _Panel(ui, "Running theses", "🧠", span, anchor="theses"):
+        host = ui.element("div").classes("fr-w")
+
+    async def refresh() -> None:
+        try:
+            active = await asyncio.to_thread(thesis.list_active)
+            closed = await asyncio.to_thread(thesis.list_recent_closed, 30)
+        except Exception as e:
+            host.clear()
+            with host:
+                ui.label(f"theses unavailable: {e}").classes("fnt")
+            return
+        host.clear()
+        with host:
+            # Headline tiles — quick at-a-glance.
+            validated = sum(1 for t in closed if t["state"] == "validated")
+            invalidated = sum(1 for t in closed if t["state"] == "invalidated")
+            matured = sum(1 for t in closed if t["state"] == "matured")
+            with ui.element("div").classes("fr-tiles").style(
+                "margin-bottom:.85rem"
+            ):
+                for label, val, tone in (
+                    ("Active",        str(len(active)),     ""),
+                    ("Validated 30d", str(validated),       "pos"),
+                    ("Invalidated 30d", str(invalidated),   "neg"),
+                    ("Matured 30d",   str(matured),         "mut"),
+                ):
+                    with ui.element("div").classes("fr-tile"):
+                        ui.html(f'<div class="l">{html.escape(label)}</div>')
+                        ui.html(
+                            f'<div class="v {tone}">{html.escape(val)}</div>'
+                        )
+
+            # Active cards
+            ui.html(
+                '<div class="fnt" style="font-size:10.5px;letter-spacing:.13em;'
+                'text-transform:uppercase;margin:.6rem 0 .4rem">Active</div>'
+            )
+            if not active:
+                ui.label(
+                    "No active theses yet — the generator runs daily at "
+                    "08:15 ET, or trigger one now via `!run-once "
+                    "thesis_generate`."
+                ).classes("mut").style("font-size:13px")
+            else:
+                with ui.element("div").classes("fr-card-grid"):
+                    for t in active:
+                        _render_thesis_card(ui, t)
+
+            # Closed graveyard (compact)
+            if closed:
+                ui.html(
+                    '<div class="fnt" style="font-size:10.5px;'
+                    'letter-spacing:.13em;text-transform:uppercase;'
+                    'margin:1rem 0 .4rem">Closed (30d)</div>'
+                )
+                with ui.element("div").classes("fr-card-grid"):
+                    for t in closed:
+                        _render_thesis_card(ui, t, compact=True)
+
+    _tick_now(ui, refresh, _i("theses"), tab="theses")
+
+
+def _render_thesis_card(ui, t: dict, *, compact: bool = False) -> None:
+    """One thesis card — direction chip, ticker, title, invalidation
+    criteria, support/challenge tally, click → modal."""
+    direction = (t.get("direction") or "neutral").upper()
+    state = t.get("state") or "active"
+    kind_cls = (
+        "call" if direction == "LONG"
+        else "call short" if direction == "SHORT"
+        else "news"
+    )
+    if state == "validated":
+        state_chip = '<span class="kind call">VALIDATED</span>'
+    elif state == "invalidated":
+        state_chip = '<span class="kind call short">INVALIDATED</span>'
+    elif state == "matured":
+        state_chip = '<span class="kind">MATURED</span>'
+    elif state == "closed":
+        state_chip = '<span class="kind">CLOSED</span>'
+    else:
+        state_chip = ""
+
+    target = t.get("target_price")
+    horizon = t.get("horizon_days")
+    supports = t.get("supporting_events") or 0
+    challenges = t.get("challenging_events") or 0
+
+    with ui.element("div").classes("fr-call-card").on(
+        "click", lambda _e, tid=t["id"]: _open_thesis_dialog(ui, tid),
+    ):
+        # ── meta row ──
+        meta_bits = [
+            f'<span class="kind {kind_cls}">{direction}</span>',
+            f'<span>conv {t.get("conviction") or 0}/5</span>',
+        ]
+        if state_chip:
+            meta_bits.append(state_chip)
+        meta_bits.append(
+            f'<span class="ts">'
+            f'{html.escape((t.get("created_at") or "")[:10])}</span>'
+        )
+        ui.html('<div class="card-meta">' + "".join(meta_bits) + '</div>')
+
+        # ── title with ticker prefix ──
+        ui.html(
+            f'<div class="card-title">'
+            f'<span style="color:#8fb6ff;font-weight:600;'
+            f'font-family:ui-monospace,Menlo,monospace">'
+            f'${html.escape(t.get("ticker") or "")}</span>'
+            f'  &nbsp; {html.escape((t.get("title") or "")[:200])}</div>'
+        )
+
+        # ── tags: target/horizon/event counts ──
+        tag_bits: list[str] = []
+        if target is not None:
+            tag_bits.append(f'<span class="src">target {target:.4g}</span>')
+        if horizon:
+            tag_bits.append(f'<span class="src">{horizon}d horizon</span>')
+        if supports or challenges:
+            ratio_tone = (
+                "pos" if supports >= challenges * 2 and supports > 0
+                else "neg" if challenges >= supports * 2 and challenges > 0
+                else "mut"
+            )
+            tag_bits.append(
+                f'<span class="delta {ratio_tone}">'
+                f'+{supports} / -{challenges} events</span>'
+            )
+        if tag_bits:
+            ui.html(
+                '<div class="card-tags">' + "".join(tag_bits) + '</div>'
+            )
+
+        # ── invalidation criteria (excerpt) — compact rows skip this ──
+        if not compact and t.get("invalidation_criteria"):
+            ui.html(
+                f'<div class="card-excerpt">'
+                f'<b>Kills it:</b> '
+                f'{html.escape(t["invalidation_criteria"][:200])}</div>'
+            )
+
+        # ── actions ──
+        if state == "active":
+            ui.html(
+                '<div class="card-actions">'
+                '<span class="btn primary">🧠 Open thesis</span>'
+                '<a class="btn" href="#markets" '
+                'onclick="event.stopPropagation()">📈 Markets</a>'
+                '</div>'
+            )
+        else:
+            close_reason = t.get("close_reason") or ""
+            ui.html(
+                '<div class="card-actions">'
+                '<span class="btn primary">🧠 Read trail</span>'
+                + (f'<span class="btn">{html.escape(close_reason[:80])}</span>'
+                   if close_reason else "")
+                + '</div>'
+            )
+
+
+async def _open_thesis_dialog(ui, thesis_id: int) -> None:
+    """Click handler on a thesis card — modal with the full body,
+    invalidation criteria, the chronological event timeline, and
+    action buttons to validate / invalidate / mark matured / close."""
+    from .. import thesis
+
+    try:
+        t = await asyncio.to_thread(thesis.get_thesis, thesis_id)
+    except Exception as e:
+        ui.notify(f"thesis load failed: {e}", type="negative")
+        return
+    if t is None:
+        ui.notify(f"thesis #{thesis_id} not found", type="warning")
+        return
+
+    direction = (t.get("direction") or "neutral").upper()
+    icon = (
+        "🟢" if direction == "LONG"
+        else "🔴" if direction == "SHORT"
+        else "⚪"
+    )
+    state = t.get("state") or "active"
+    subtitle = f"#{thesis_id} · {state.upper()}"
+    if t.get("target_price"):
+        subtitle += f" · target {t['target_price']:.4g}"
+
+    with (_MODAL_PARENT or ui.element("div")):
+        dlg = ui.dialog()
+    with dlg, ui.element("div").classes("fr-card fr-dlg"):
+        _dossier_header(
+            ui, dlg, icon, f"{direction} ${t.get('ticker') or ''}",
+            subtitle=subtitle,
+        )
+        body = ui.element("div").classes("fr-bd")
+        with body:
+            # Full thesis body
+            ui.html(
+                '<div class="fnt" style="font-size:10.5px;'
+                'letter-spacing:.13em;text-transform:uppercase;'
+                'margin-bottom:.35rem">Thesis</div>'
+            )
+            with ui.element("div").style(
+                "background:var(--surface2);border:1px solid var(--border);"
+                "border-radius:8px;padding:.7rem .9rem;margin-bottom:.7rem;"
+                "font-size:13px;line-height:1.5"
+            ):
+                ui.html(html.escape(t.get("title") or "")).classes(
+                    "card-title"
+                )
+                ui.html(
+                    f'<div style="margin-top:.45rem">'
+                    f'{html.escape(t.get("body") or "")}</div>'
+                )
+                if t.get("invalidation_criteria"):
+                    ui.html(
+                        f'<div style="margin-top:.55rem;color:var(--warn)">'
+                        f'<b>Kills it:</b> '
+                        f'{html.escape(t["invalidation_criteria"])}</div>'
+                    )
+
+            # Action buttons (active theses only)
+            if state == "active":
+                with ui.element("div").classes("fr-row").style(
+                    "margin-bottom:.7rem;gap:.4rem"
+                ):
+                    for label, st, tone in (
+                        ("✅ Validated",   "validated",   "color=positive"),
+                        ("❌ Invalidated", "invalidated", "color=negative"),
+                        ("⏳ Matured",     "matured",     "color=primary"),
+                        ("✖ Close",        "closed",      "flat dense"),
+                    ):
+                        ui.button(
+                            label,
+                            on_click=lambda _e, s=st, lbl=label:
+                                _close_thesis(ui, dlg, t["id"], s, lbl),
+                        ).props(f"size=sm {tone} unelevated").style(
+                            "font-size:10px"
+                        )
+            elif t.get("close_reason"):
+                ui.html(
+                    f'<div class="fr-alert" style="background:var(--surface2);'
+                    f'border:1px solid var(--border);color:var(--muted);'
+                    f'margin-bottom:.7rem">'
+                    f'Closed as <b>{html.escape(state)}</b>: '
+                    f'{html.escape(t["close_reason"])}</div>'
+                )
+
+            # Event timeline
+            events = t.get("events") or []
+            ui.html(
+                '<div class="fnt" style="font-size:10.5px;'
+                'letter-spacing:.13em;text-transform:uppercase;'
+                'margin-bottom:.35rem">Linked events (timeline)</div>'
+            )
+            if not events:
+                ui.label(
+                    "No events linked yet. New news/filings on this "
+                    "ticker will appear here automatically."
+                ).classes("mut").style("font-size:12px")
+            else:
+                with ui.element("div").classes("fr-feed"):
+                    for e in events:
+                        _render_event_row(ui, e)
+
+
+def _close_thesis(ui, dlg, thesis_id: int, state: str, label: str) -> None:
+    """Action button handler — close the thesis with the chosen state."""
+    from .. import thesis
+    try:
+        ok = thesis.close_thesis(thesis_id, state=state, reason=label)
+    except Exception as e:
+        ui.notify(f"close failed: {e}", type="negative")
+        return
+    if ok:
+        ui.notify(f"thesis #{thesis_id} → {state}", type="positive")
+        dlg.close()
+    else:
+        ui.notify(
+            f"thesis #{thesis_id} couldn't be closed (already non-active?)",
+            type="warning",
+        )
+
+
+def _render_event_row(ui, e: dict) -> None:
+    """One row in the thesis timeline."""
+    impact = (e.get("impact") or "neutral").lower()
+    impact_cls = (
+        "call" if impact == "supports"
+        else "call short" if impact == "challenges"
+        else "news"
+    )
+    impact_label = (
+        "SUPPORTS" if impact == "supports"
+        else "CHALLENGES" if impact == "challenges"
+        else "NEUTRAL"
+    )
+    ts = (e.get("created_at") or "")[:16].replace("T", " ")
+    kind = (e.get("kind") or "").upper()[:8]
+    with ui.element("div").classes("fr-feed-row"):
+        ui.html(
+            f'<span class="kind {impact_cls}">{impact_label}</span>'
+        )
+        with ui.element("div").classes("body"):
+            ui.html(
+                f'<span style="color:var(--text)">'
+                f'{html.escape((e.get("description") or "")[:200])}</span>'
+            )
+            meta_bits = [
+                f'<span class="src">{html.escape(kind)}</span>',
+            ]
+            if e.get("rationale"):
+                meta_bits.append(
+                    f'<span class="mut">'
+                    f'{html.escape(e["rationale"][:160])}</span>'
+                )
+            ui.html('<div class="meta">' + " · ".join(meta_bits) + "</div>")
+        ui.html(f'<span class="ts">{html.escape(ts)}</span>')
 
 
 # ── research wallet trade history (Research tab) ──────────────────────────
