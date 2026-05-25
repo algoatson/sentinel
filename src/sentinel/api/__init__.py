@@ -25,6 +25,7 @@ from . import (
     markets,
     news,
     overview,
+    positions,
     research,
     social,
     symbol,
@@ -48,6 +49,7 @@ router.include_router(lookup.router)
 router.include_router(markets.router)
 router.include_router(news.router)
 router.include_router(overview.router)
+router.include_router(positions.router)
 router.include_router(research.router)
 router.include_router(social.router)
 router.include_router(symbol.router)

@@ -865,6 +865,93 @@ def fund_positions(name: str) -> dict | None:
     }
 
 
+def open_positions_all() -> list[dict]:
+    """Every open trade across every wallet, with live marks + uPnL.
+    Single batched query over FundTrade; useful for the dashboard's
+    unified book view. One row per open trade."""
+    now = datetime.now(timezone.utc)
+    out: list[dict] = []
+    with session_scope() as s:
+        funds_by_id = {
+            f.id: f for f in s.exec(select(Fund)).all()
+        }
+        opens = s.exec(
+            select(FundTrade).where(FundTrade.status == "open")
+            .order_by(FundTrade.entry_at)
+        ).all()
+        for t in opens:
+            fund = funds_by_id.get(t.fund_id)
+            if fund is None:
+                continue
+            mark_val = _mark(s, t.ticker)
+            mark = mark_val if mark_val is not None else t.entry_price
+            d = 1 if t.side == "long" else -1
+            upnl = (t.qty * (mark - t.entry_price) * d) or 0.0
+            cost = t.entry_price * t.qty
+            entry_at = t.entry_at if t.entry_at.tzinfo else (
+                t.entry_at.replace(tzinfo=timezone.utc)
+            )
+            out.append({
+                "id": t.id,
+                "fund": fund.name,
+                "fund_mandate": fund.mandate,
+                "ticker": t.ticker,
+                "side": t.side,
+                "qty": t.qty,
+                "entry": t.entry_price,
+                "entry_at": entry_at.isoformat(),
+                "age_h": round((now - entry_at).total_seconds() / 3600, 1),
+                "mark": mark,
+                "mark_live": mark_val is not None,
+                "upnl": round(upnl, 2),
+                "upnl_pct": round(upnl / cost * 100, 2) if cost else 0.0,
+                "open_reason": t.open_reason,
+                "call_id": t.call_id,
+            })
+    return out
+
+
+def close_trade_by_id(trade_id: int, reason: str = "manual") -> dict:
+    """Close one open position at the current mark. Used by the
+    dashboard book view. Returns ``{"ok": bool, "message": str,
+    "trade_id": int, "realized_pnl": float | None}``."""
+    with session_scope() as s:
+        t = s.get(FundTrade, trade_id)
+        if t is None:
+            return {"ok": False, "message": f"no trade #{trade_id}",
+                    "trade_id": trade_id, "realized_pnl": None}
+        if t.status != "open":
+            return {"ok": False,
+                    "message": f"trade #{trade_id} is {t.status}",
+                    "trade_id": trade_id, "realized_pnl": None}
+        fund = s.get(Fund, t.fund_id)
+        if fund is None:
+            return {"ok": False, "message": "fund missing",
+                    "trade_id": trade_id, "realized_pnl": None}
+        mark_val = _mark(s, t.ticker)
+        if mark_val is None:
+            return {"ok": False,
+                    "message": f"no mark for {t.ticker}; cannot close",
+                    "trade_id": trade_id, "realized_pnl": None}
+        _close(s, fund, t, mark_val, reason or "manual")
+        pnl = t.realized_pnl
+    # Publish event for live dashboard subscribers (best-effort).
+    try:
+        from . import events
+        events.publish("trade", {
+            "trade_id": trade_id,
+            "ticker": t.ticker,
+            "side": t.side,
+            "realized_pnl": pnl,
+            "fund": fund.name,
+            "summary": f"closed {t.side} {t.ticker} · pnl {pnl:+.2f}",
+        })
+    except Exception:
+        pass
+    return {"ok": True, "message": f"closed #{trade_id}",
+            "trade_id": trade_id, "realized_pnl": pnl}
+
+
 def funds_brief() -> str:
     """One-liner for the synthesis snapshot — the bot seeing its own scoreboard."""
     rows = fund_standings()

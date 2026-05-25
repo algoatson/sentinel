@@ -84,6 +84,7 @@
   const GO_MAP: Record<string, string> = {
     o: '/overview',
     p: '/portfolio',
+    b: '/book',
     m: '/markets',
     r: '/research',
     t: '/theses',

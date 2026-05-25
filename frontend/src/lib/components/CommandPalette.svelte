@@ -35,6 +35,7 @@
   const PAGES: Item[] = [
     { kind: 'page', label: 'Overview', href: '/overview', icon: LayoutDashboard },
     { kind: 'page', label: 'Portfolio', href: '/portfolio', icon: Briefcase },
+    { kind: 'page', label: 'Book (open positions)', href: '/book', icon: Briefcase },
     { kind: 'page', label: 'Markets', href: '/markets', icon: LineChart },
     { kind: 'page', label: 'Research', href: '/research', icon: FlaskConical },
     { kind: 'page', label: 'Theses', href: '/theses', icon: Brain },

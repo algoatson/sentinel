@@ -35,6 +35,7 @@
       items: [
         { href: '/overview', label: 'Overview', icon: LayoutDashboard },
         { href: '/portfolio', label: 'Portfolio', icon: Briefcase },
+        { href: '/book', label: 'Book', icon: Briefcase },
         { href: '/markets', label: 'Markets', icon: LineChart },
         { href: '/research', label: 'Research', icon: FlaskConical },
         { href: '/theses', label: 'Theses', icon: Brain },

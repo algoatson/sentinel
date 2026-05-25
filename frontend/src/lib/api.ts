@@ -216,3 +216,29 @@ export const recentEvents = (sinceId?: number) =>
   get<{ events: LiveEvent[] }>(
     `/events/recent${sinceId ? `?since_id=${sinceId}` : ''}`
   );
+
+/* ─── positions (unified book + close action) ─── */
+export interface OpenPositionRow {
+  id: number;
+  fund: string;
+  fund_mandate: string;
+  ticker: string;
+  side: 'long' | 'short';
+  qty: number;
+  entry: number;
+  entry_at: string;
+  age_h: number;
+  mark: number;
+  mark_live: boolean;
+  upnl: number;
+  upnl_pct: number;
+  open_reason: string | null;
+  call_id: number | null;
+}
+export const openPositions = () =>
+  get<OpenPositionRow[]>('/positions/open');
+export const closePosition = (id: number, reason?: string) =>
+  post<{ ok: boolean; message: string; trade_id: number; realized_pnl: number | null }>(
+    `/positions/${id}/close`,
+    reason ? { reason } : {}
+  );
