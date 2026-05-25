@@ -43,7 +43,8 @@
     { kind: 'page', label: 'Watches', href: '/watches', icon: Bell },
     { kind: 'page', label: 'Lookup', href: '/lookup', icon: Search },
     { kind: 'page', label: 'Copilot', href: '/copilot', icon: Sparkles },
-    { kind: 'page', label: 'System', href: '/system', icon: Cog }
+    { kind: 'page', label: 'System', href: '/system', icon: Cog },
+    { kind: 'page', label: 'Settings', href: '/settings', icon: Cog }
   ];
 
   // Cache watchlist for tickers; only fetched when the palette opens.

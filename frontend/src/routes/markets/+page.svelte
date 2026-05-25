@@ -12,6 +12,7 @@
   import Spinner from '$components/Spinner.svelte';
   import CandleChart from '$components/CandleChart.svelte';
   import Sparkline from '$components/Sparkline.svelte';
+  import Heatmap from '$components/Heatmap.svelte';
   import { usd, price, compact } from '$lib/format';
 
   type Range = { label: string; days: number | null };
@@ -75,6 +76,9 @@
     queryFn: () => tickerStats(selectedTicker),
     enabled: !!selectedTicker
   })));
+
+  type WlView = 'table' | 'heatmap';
+  let wlView: WlView = $state('table');
 
   // Watchlist column-sort state
   type SortKey =
@@ -301,7 +305,29 @@
       placeholder="Filter…"
       class="w-48 rounded-md border border-border bg-surface-2 px-2 py-1 text-[12px] text-text placeholder:text-faint/50 focus:border-primary/60 focus:outline-none"
     />
-    <span class="ml-auto text-[11px] text-faint">
+
+    <div class="ml-auto flex items-center gap-1">
+      <button
+        onclick={() => (wlView = 'table')}
+        class={[
+          'rounded-md border px-2 py-1 text-[10.5px] transition-colors',
+          wlView === 'table'
+            ? 'border-primary/50 bg-primary-soft text-primary'
+            : 'border-border bg-surface-2 text-muted hover:text-text'
+        ].join(' ')}
+      >Table</button>
+      <button
+        onclick={() => (wlView = 'heatmap')}
+        class={[
+          'rounded-md border px-2 py-1 text-[10.5px] transition-colors',
+          wlView === 'heatmap'
+            ? 'border-primary/50 bg-primary-soft text-primary'
+            : 'border-border bg-surface-2 text-muted hover:text-text'
+        ].join(' ')}
+      >Heatmap</button>
+    </div>
+
+    <span class="text-[11px] text-faint">
       {sortedRows.length} symbol{sortedRows.length === 1 ? '' : 's'}
     </span>
   </div>
@@ -310,6 +336,10 @@
     <div class="flex items-center justify-center py-12"><Spinner /></div>
   {:else if !sortedRows.length}
     <EmptyState title="Watchlist empty" />
+  {:else if wlView === 'heatmap'}
+    <div class="p-4">
+      <Heatmap rows={sortedRows} limit={80} />
+    </div>
   {:else}
     <div class="overflow-x-auto">
       <table class="w-full text-[12.5px] tabular">

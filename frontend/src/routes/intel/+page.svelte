@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
-  import { news, newsDossier, askNews, newsArticle, filings } from '$api';
+  import { news, newsDossier, askNews, newsArticle, filings, socialRecent, socialTopTickers } from '$api';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import Delta from '$components/Delta.svelte';
@@ -11,8 +11,8 @@
   import DossierBlock from '$components/DossierBlock.svelte';
   import AskBox from '$components/AskBox.svelte';
   import TickerLink from '$components/TickerLink.svelte';
-  import { timeAgo } from '$lib/format';
-  import { Newspaper, ExternalLink, Globe, FileText } from 'lucide-svelte';
+  import { timeAgo, compact } from '$lib/format';
+  import { Newspaper, ExternalLink, Globe, FileText, MessageCircle } from 'lucide-svelte';
 
   type Hours = { label: string; value: number };
   const RANGES: Hours[] = [
@@ -22,7 +22,7 @@
     { label: '7d', value: 168 }
   ];
 
-  type Mode = 'news' | 'filings';
+  type Mode = 'news' | 'filings' | 'social';
   let mode: Mode = $state('news');
   // 72h default so a freshly-opened tab on a quiet day always shows
   // something — 24h was too narrow when the bot is bursty.
@@ -77,6 +77,27 @@
     refetchInterval: mode === 'filings' ? 60_000 : false,
     enabled: mode === 'filings'
   })));
+
+  /* ── social queries ─────────────────────── */
+  const socialQ = createQuery(reactiveQueryOptions(() => ({
+    queryKey: ['social', hours, tickerFilter],
+    queryFn: () => socialRecent(hours, tickerFilter.trim() || undefined),
+    refetchInterval: mode === 'social' ? 90_000 : false,
+    enabled: mode === 'social'
+  })));
+  const topTickersQ = createQuery(reactiveQueryOptions(() => ({
+    queryKey: ['social-top', hours],
+    queryFn: () => socialTopTickers(hours, 10),
+    refetchInterval: mode === 'social' ? 5 * 60_000 : false,
+    enabled: mode === 'social'
+  })));
+
+  function variantForSentimentSimple(s: number | null): 'pos' | 'neg' | 'info' {
+    if (s === null || s === undefined) return 'info';
+    if (s > 0.15) return 'pos';
+    if (s < -0.15) return 'neg';
+    return 'info';
+  }
 
   const qc = useQueryClient();
 
@@ -211,6 +232,23 @@
         </span>
       {/if}
     </button>
+    <button
+      onclick={() => (mode = 'social')}
+      class={[
+        'flex items-center gap-1.5 rounded-sm px-3 py-1.5 text-[12px] transition-colors',
+        mode === 'social'
+          ? 'bg-white/[0.09] font-medium text-text'
+          : 'text-muted hover:text-text'
+      ].join(' ')}
+    >
+      <MessageCircle class="h-3.5 w-3.5" />
+      Reddit
+      {#if $socialQ.data?.length}
+        <span class="rounded bg-surface-2 px-1.5 py-px text-[9px] text-faint">
+          {$socialQ.data.length}
+        </span>
+      {/if}
+    </button>
   </div>
 </div>
 
@@ -253,6 +291,8 @@
           >{label}</button>
         {/each}
       </div>
+    {:else if mode === 'social'}
+      <span class="text-[11px] text-faint">Reddit mentions across tracked subreddits.</span>
     {:else}
       <div class="flex items-center gap-1">
         <span class="mr-2 text-[10px] font-semibold uppercase tracking-wider text-faint">Form</span>
@@ -311,6 +351,8 @@
     <span class="ml-auto text-[11px] tabular text-faint">
       {#if mode === 'news'}
         {filteredNews.length} of {$newsQ.data?.length ?? 0}
+      {:else if mode === 'social'}
+        {$socialQ.data?.length ?? 0} mentions
       {:else}
         {filteredFilings.length} of {$filingsQ.data?.length ?? 0}
       {/if}
@@ -365,7 +407,7 @@
       </div>
     {/if}
   </div>
-{:else}
+{:else if mode === 'filings'}
   <div class="mt-3">
     {#if $filingsQ.isLoading}
       <div class="flex justify-center py-12"><Spinner /></div>
@@ -404,6 +446,75 @@
         {/each}
       </div>
     {/if}
+  </div>
+{:else}
+  <!-- ── social mode ──────────────────────────── -->
+  <div class="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_15rem]">
+    <div>
+      {#if $socialQ.isLoading}
+        <div class="flex justify-center py-12"><Spinner /></div>
+      {:else if !$socialQ.data?.length}
+        <EmptyState
+          title="No Reddit mentions in window"
+          description="The reddit poll runs every 30min across the tracked subreddits."
+        />
+      {:else}
+        <div class="space-y-2">
+          {#each $socialQ.data as r (r.id)}
+            <Card class="px-3.5 py-2.5">
+              <div class="flex items-center gap-1.5">
+                <Pill variant={variantForSentimentSimple(r.sentiment)}>
+                  r/{r.subreddit}
+                </Pill>
+                {#if r.ticker}
+                  <TickerLink ticker={r.ticker} class="text-[12px]" />
+                {/if}
+                <span class="text-[10.5px] tabular text-faint">↑ {compact(r.score)}</span>
+                <span class="text-[10.5px] tabular text-faint">💬 {r.num_comments}</span>
+                <span class="ml-auto text-[10px] tabular text-faint">{timeAgo(r.ts)}</span>
+              </div>
+              <a
+                href={`https://www.reddit.com${r.permalink}`}
+                target="_blank"
+                rel="noopener"
+                class="mt-1 block text-[12.5px] leading-snug text-text hover:text-primary"
+              >
+                {r.title}
+                <ExternalLink class="ml-1 inline h-3 w-3 align-baseline opacity-60" />
+              </a>
+              <div class="mt-1 text-[10.5px] text-faint">u/{r.author}</div>
+            </Card>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <aside>
+      <div class="rounded-xl border border-border bg-surface px-3.5 py-3">
+        <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+          Top tickers (window)
+        </div>
+        {#if !$topTickersQ.data?.length}
+          <div class="mt-2 text-[11.5px] text-faint">No mentions yet.</div>
+        {:else}
+          <ul class="mt-2 space-y-1">
+            {#each $topTickersQ.data as t (t.ticker)}
+              <li class="flex items-center gap-2 text-[12px] tabular">
+                <TickerLink ticker={t.ticker} class="text-[12px] flex-1" />
+                <span class="text-muted">{t.mentions}</span>
+                <span class={[
+                  'w-12 text-right',
+                  t.sentiment_avg > 0.15 ? 'text-good'
+                    : t.sentiment_avg < -0.15 ? 'text-bad' : 'text-faint'
+                ].join(' ')}>
+                  {t.sentiment_avg > 0 ? '+' : ''}{t.sentiment_avg.toFixed(2)}
+                </span>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+    </aside>
   </div>
 {/if}
 

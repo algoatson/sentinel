@@ -12,7 +12,8 @@
     Bell,
     Search,
     Sparkles,
-    Cog
+    Cog,
+    SlidersHorizontal
   } from 'lucide-svelte';
 
   interface Props {
@@ -50,7 +51,10 @@
     },
     {
       label: 'Operations',
-      items: [{ href: '/system', label: 'System', icon: Cog }]
+      items: [
+        { href: '/system', label: 'System', icon: Cog },
+        { href: '/settings', label: 'Settings', icon: SlidersHorizontal }
+      ]
     }
   ];
 
