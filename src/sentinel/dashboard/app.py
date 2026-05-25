@@ -690,6 +690,20 @@ def mount(scheduler) -> "asyncio.Task | None":
         _scheduler = scheduler
 
         fastapi_app = FastAPI(title="Sentinel Cockpit")
+
+        # ── v2 dashboard (SvelteKit) — side-by-side with NiceGUI ─────
+        # The new frontend lives under /app/* and reads from /api/*.
+        # Existing NiceGUI keeps serving / for backward compat until
+        # v2 covers every tab; then we'll swap the root route.
+        try:
+            from .. import api as _api
+            from .v2_serve import attach_v2
+            fastapi_app.include_router(_api.router)
+            attach_v2(fastapi_app)
+            logger.info("v2 dashboard mounted at /app + /api")
+        except Exception as e:
+            logger.warning("v2 dashboard NOT mounted ({}); NiceGUI only", e)
+
         _build_page(ui)
         ui.run_with(
             fastapi_app,

@@ -24,6 +24,9 @@ __pycache__/
 build/
 dist/
 .eggs/
+# v2 SvelteKit dashboard ships as static assets the Pi serves directly,
+# so its build output is intentionally tracked.
+!/frontend/build/
 
 # ── tooling caches ─────────────────────────────────────────────────────────
 .pytest_cache/
