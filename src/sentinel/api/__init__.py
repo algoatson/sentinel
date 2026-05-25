@@ -16,13 +16,16 @@ from fastapi import APIRouter
 
 from . import (
     calls,
+    copilot,
     health as _health,
+    lookup,
     markets,
     news,
     overview,
     research,
     theses,
     wallets,
+    watches,
 )
 
 
@@ -31,10 +34,13 @@ router = APIRouter(prefix="/api", tags=["dashboard"])
 # Mount sub-routers. Order doesn't matter beyond grouping in the auto-
 # docs; keeping alphabetical so a new endpoint is easy to find later.
 router.include_router(calls.router)
+router.include_router(copilot.router)
 router.include_router(_health.router)
+router.include_router(lookup.router)
 router.include_router(markets.router)
 router.include_router(news.router)
 router.include_router(overview.router)
 router.include_router(research.router)
 router.include_router(theses.router)
 router.include_router(wallets.router)
+router.include_router(watches.router)

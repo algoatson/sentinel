@@ -326,3 +326,18 @@ export interface SystemMetrics {
   llm_calls: number;
   llm_errors: number;
 }
+
+export interface Watch {
+  id: number;
+  raw_text: string;
+  active: boolean;
+  trigger_count: number;
+  last_triggered_at: string | null;
+  created_at: string | null;
+}
+
+export interface LookupResult {
+  kind: string;
+  arg: string;
+  body: string;
+}

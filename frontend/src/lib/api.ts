@@ -16,6 +16,7 @@ import type {
   EquityCurve,
   HealthReport,
   KpiSnapshot,
+  LookupResult,
   NewsDossier,
   NewsItem,
   RealizedCurvePoint,
@@ -30,6 +31,7 @@ import type {
   TickerStats,
   Wallet,
   WalletHistory,
+  Watch,
   WatchlistRow,
 } from './types';
 
@@ -135,3 +137,25 @@ export const researchRemaining = () =>
 /* ─── health ─── */
 export const health = () => get<HealthReport>('/health');
 export const systemMetrics = () => get<SystemMetrics>('/health/system');
+
+/* ─── watches ─── */
+export const listWatches = () => get<Watch[]>('/watches');
+export const addWatch = (text: string) =>
+  post<{ ok: boolean; message: string }>('/watches', { text });
+export const removeWatch = (wid: number) =>
+  fetch(`/api/watches/${wid}`, { method: 'DELETE' }).then(async (r) => {
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json() as Promise<{ ok: boolean; message: string }>;
+  });
+
+/* ─── lookup ─── */
+export const lookup = (kind: string, arg: string = '') => {
+  const params = new URLSearchParams();
+  if (arg) params.set('arg', arg);
+  const q = params.toString() ? `?${params}` : '';
+  return get<LookupResult>(`/lookup/${encodeURIComponent(kind)}${q}`);
+};
+
+/* ─── copilot ─── */
+export const askCopilot = (question: string) =>
+  post<{ answer: string }>('/copilot/ask', { question });
