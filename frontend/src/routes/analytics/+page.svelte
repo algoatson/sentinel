@@ -12,7 +12,7 @@
    */
   import { createQuery } from '@tanstack/svelte-query';
   import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
-  import { hotTickers, calibration, attribution } from '$api';
+  import { hotTickers, calibration, attribution, sentimentQuality, monthlyPnl, concentration } from '$api';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import Spinner from '$components/Spinner.svelte';
@@ -38,6 +38,21 @@
     queryFn: () => attribution(days),
     refetchInterval: 5 * 60_000
   })));
+  const sqQ = createQuery(reactiveQueryOptions(() => ({
+    queryKey: ['sentiment-quality', days],
+    queryFn: () => sentimentQuality(days),
+    refetchInterval: 10 * 60_000
+  })));
+  const monthlyQ = createQuery({
+    queryKey: ['monthly', 12],
+    queryFn: () => monthlyPnl(12),
+    refetchInterval: 10 * 60_000
+  });
+  const concQ = createQuery({
+    queryKey: ['concentration'],
+    queryFn: concentration,
+    refetchInterval: 60_000
+  });
 
   /** Colour-code by hit-rate vs predicted prob: green when realised ≥
    * predicted, red when realised much lower (overconfident). */
@@ -441,6 +456,212 @@
           </div>
         </div>
       </div>
+    </div>
+  {/if}
+</Card>
+
+<!-- ── SENTIMENT QUALITY ─────────────────────────────── -->
+<Card class="mt-4 px-4 py-3">
+  <div class="mb-2 flex items-baseline gap-3">
+    <div class="flex items-center gap-1.5">
+      <Newspaper class="h-3.5 w-3.5 text-primary" />
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+        Sentiment quality
+      </div>
+    </div>
+    <span class="text-[10.5px] text-faint">
+      did the bot's news-sentiment direction predict next-day price?
+    </span>
+  </div>
+
+  {#if !$sqQ.data || !$sqQ.data.overall.n}
+    <EmptyState
+      title="No graded news in window"
+      description="Needs items with both a sentiment score AND a populated 24h impact."
+    />
+  {:else}
+    {@const o = $sqQ.data.overall}
+    {@const dir = (o.right + o.wrong) || 1}
+    <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div class="rounded-lg border border-border bg-surface-2 px-3 py-2">
+        <div class="text-[10px] uppercase tracking-wider text-faint">Sample</div>
+        <div class="mt-0.5 text-[18px] font-semibold tabular text-text">{o.n}</div>
+        <div class="text-[10.5px] text-faint">graded · {$sqQ.data.window_days}d</div>
+      </div>
+      <div class="rounded-lg border border-border bg-surface-2 px-3 py-2">
+        <div class="text-[10px] uppercase tracking-wider text-faint">Directional accuracy</div>
+        <div class={[
+          'mt-0.5 text-[18px] font-semibold tabular',
+          (o.directional_accuracy ?? 0) >= 0.55 ? 'text-good' :
+          (o.directional_accuracy ?? 0) < 0.45 ? 'text-bad' : 'text-text'
+        ].join(' ')}>
+          {o.directional_accuracy !== null ? `${(o.directional_accuracy * 100).toFixed(0)}%` : '—'}
+        </div>
+        <div class="text-[10.5px] text-faint">{o.right}/{o.right + o.wrong} dir. right</div>
+      </div>
+      <div class="rounded-lg border border-border bg-surface-2 px-3 py-2">
+        <div class="text-[10px] uppercase tracking-wider text-faint">Muted moves</div>
+        <div class="mt-0.5 text-[18px] font-semibold tabular text-faint">{o.muted}</div>
+        <div class="text-[10.5px] text-faint">|impact| ≤ 0.5%</div>
+      </div>
+      <div class="rounded-lg border border-border bg-surface-2 px-3 py-2">
+        <div class="text-[10px] uppercase tracking-wider text-faint">Neutral scores</div>
+        <div class="mt-0.5 text-[18px] font-semibold tabular text-faint">{o.neutral}</div>
+        <div class="text-[10.5px] text-faint">|sentiment| ≤ 0.15</div>
+      </div>
+    </div>
+
+    {#if $sqQ.data.by_source.length}
+      <div class="mt-3 grid grid-cols-1 gap-1.5 md:grid-cols-2 lg:grid-cols-3">
+        {#each $sqQ.data.by_source as src (src.source)}
+          {@const directional = src.right + src.wrong}
+          <div class="flex items-center justify-between rounded-md border border-border-soft bg-surface-2/40 px-2.5 py-1.5 text-[11.5px] tabular">
+            <span class="truncate text-muted" title={src.source}>{src.source}</span>
+            <span class={[
+              'ml-2 font-medium',
+              src.directional_accuracy === null ? 'text-faint'
+                : src.directional_accuracy >= 0.55 ? 'text-good'
+                : src.directional_accuracy < 0.45 ? 'text-bad' : 'text-text'
+            ].join(' ')}>
+              {src.directional_accuracy !== null
+                ? `${(src.directional_accuracy * 100).toFixed(0)}%`
+                : '—'}
+              <span class="ml-1 text-[10px] text-faint">({src.right}/{directional || src.n})</span>
+            </span>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  {/if}
+</Card>
+
+<!-- ── MONTHLY P&L MATRIX ───────────────────────────── -->
+<Card class="mt-4 px-4 py-3">
+  <div class="mb-2 flex items-baseline gap-3">
+    <div class="flex items-center gap-1.5">
+      <BarChart3 class="h-3.5 w-3.5 text-good" />
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+        Month-over-month P&L
+      </div>
+    </div>
+    <span class="text-[10.5px] text-faint">
+      realised PnL per wallet × month (12 months)
+    </span>
+  </div>
+
+  {#if !$monthlyQ.data || !$monthlyQ.data.wallets.length}
+    <EmptyState title="No closed trades to attribute" />
+  {:else}
+    {@const data = $monthlyQ.data}
+    {@const maxAbs = Math.max(
+      1,
+      ...data.wallets.flatMap((w) => w.cells.map((c) => Math.abs(c.realized_pnl)))
+    )}
+    <div class="overflow-x-auto">
+      <table class="w-full text-[11.5px] tabular">
+        <thead>
+          <tr class="border-b border-border text-[10px] uppercase tracking-wider text-faint">
+            <th class="px-2 py-1.5 text-left">Wallet</th>
+            {#each data.months as m (m)}
+              <th class="px-2 py-1.5 text-center font-mono">{m.slice(5)}/{m.slice(2, 4)}</th>
+            {/each}
+            <th class="px-2 py-1.5 text-right">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each data.wallets as w (w.wallet)}
+            <tr class="border-b border-border-soft">
+              <td class="px-2 py-1.5 text-left capitalize text-muted">{w.wallet}</td>
+              {#each w.cells as c (c.month)}
+                {@const intensity = Math.min(1, Math.abs(c.realized_pnl) / maxAbs)}
+                {@const bg = c.realized_pnl > 0
+                  ? `rgba(61, 220, 151, ${(intensity * 0.5).toFixed(2)})`
+                  : c.realized_pnl < 0
+                    ? `rgba(255, 107, 107, ${(intensity * 0.5).toFixed(2)})`
+                    : 'transparent'}
+                <td
+                  class={[
+                    'px-2 py-1.5 text-center',
+                    c.realized_pnl > 0 ? 'text-good' : c.realized_pnl < 0 ? 'text-bad' : 'text-faint'
+                  ].join(' ')}
+                  style:background-color={bg}
+                  title={`${c.month} · ${c.wins}/${c.closed} won`}
+                >
+                  {c.closed > 0 ? (c.realized_pnl >= 0 ? '+' : '') + c.realized_pnl.toFixed(0) : '—'}
+                </td>
+              {/each}
+              <td class={[
+                'px-2 py-1.5 text-right font-semibold',
+                w.total_pnl > 0 ? 'text-good' : w.total_pnl < 0 ? 'text-bad' : 'text-text'
+              ].join(' ')}>
+                {w.total_pnl >= 0 ? '+' : ''}{w.total_pnl.toFixed(0)}
+                <span class="ml-1 text-[10px] text-faint">{w.total_wins}/{w.total_closed}</span>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {/if}
+</Card>
+
+<!-- ── CONCENTRATION ─────────────────────────────── -->
+<Card class="mt-4 px-4 py-3">
+  <div class="mb-2 flex items-baseline gap-3">
+    <div class="flex items-center gap-1.5">
+      <FileText class="h-3.5 w-3.5 text-warn" />
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+        Sector concentration
+      </div>
+    </div>
+    <span class="text-[10.5px] text-faint">
+      open-position exposure by asset class per wallet
+    </span>
+  </div>
+
+  {#if !$concQ.data || !Object.keys($concQ.data.wallets).length}
+    <EmptyState title="No open positions" />
+  {:else}
+    <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+      {#each Object.entries($concQ.data.wallets) as [name, w] (name)}
+        <div class="rounded-lg border border-border bg-surface-2/40 px-3 py-2.5">
+          <div class="flex items-baseline justify-between">
+            <div class="text-[12px] font-semibold capitalize text-text">{name}</div>
+            <div class="text-[10.5px] tabular text-faint">
+              ${w.total_notional.toFixed(0)} notional
+            </div>
+          </div>
+          <div class="mt-2 space-y-1">
+            {#each w.groups as g (g.asset_class)}
+              <div>
+                <div class="flex items-center justify-between text-[10.5px] tabular">
+                  <span class={[
+                    'truncate',
+                    g.pct >= 50 ? 'text-bad font-medium' :
+                    g.pct >= 35 ? 'text-warn' : 'text-muted'
+                  ].join(' ')}>{g.asset_class}</span>
+                  <span class={[
+                    g.pct >= 50 ? 'text-bad' :
+                    g.pct >= 35 ? 'text-warn' : 'text-muted'
+                  ].join(' ')}>{g.pct.toFixed(0)}%</span>
+                </div>
+                <div class="mt-0.5 flex h-1 overflow-hidden rounded-full bg-bg/40">
+                  <div
+                    style:width="{g.pct}%"
+                    style:background-color={
+                      g.pct >= 50 ? 'var(--color-bad)' :
+                      g.pct >= 35 ? 'var(--color-warn)' : 'var(--color-primary)'
+                    }
+                  ></div>
+                </div>
+                <div class="mt-0.5 text-[9.5px] text-faint tabular truncate" title={g.tickers.join(', ')}>
+                  {g.tickers.slice(0, 6).join(' · ')}{g.tickers.length > 6 ? ' …' : ''}
+                </div>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/each}
     </div>
   {/if}
 </Card>

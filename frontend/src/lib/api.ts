@@ -236,6 +236,54 @@ export const newsClusters = (hours = 24) =>
   get<{ clusters: Record<string, number[]> }>(
     `/analytics/news-clusters?hours=${hours}`
   );
+export interface SentimentQuality {
+  window_days: number;
+  overall: {
+    n: number; right: number; wrong: number; muted: number; neutral: number;
+    directional_accuracy: number | null;
+  };
+  by_source: Array<{
+    source: string; n: number; right: number; wrong: number; muted: number;
+    neutral: number; directional_accuracy: number | null;
+  }>;
+}
+export const sentimentQuality = (days = 60) =>
+  get<SentimentQuality>(`/analytics/sentiment-quality?days=${days}`);
+
+export interface MonthlyCell {
+  month: string;
+  realized_pnl: number;
+  closed: number;
+  wins: number;
+}
+export interface MonthlyWallet {
+  wallet: string;
+  cells: MonthlyCell[];
+  total_pnl: number;
+  total_closed: number;
+  total_wins: number;
+}
+export const monthlyPnl = (months = 12) =>
+  get<{ months: string[]; wallets: MonthlyWallet[] }>(
+    `/analytics/monthly?months=${months}`
+  );
+
+export interface ConcentrationGroup {
+  asset_class: string;
+  notional: number;
+  pct: number;
+  tickers: string[];
+  count: number;
+}
+export interface ConcentrationWallet {
+  mandate: string | null;
+  total_notional: number;
+  groups: ConcentrationGroup[];
+}
+export const concentration = () =>
+  get<{ wallets: Record<string, ConcentrationWallet> }>(
+    '/analytics/concentration'
+  );
 
 /* ─── positions (unified book + close action) ─── */
 export interface OpenPositionRow {
