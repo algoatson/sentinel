@@ -1,30 +1,61 @@
 <script lang="ts">
   /**
-   * /book — unified open-positions view across every wallet.
+   * /book — pro-grade position view across every wallet.
    *
-   * One sortable table, with inline "Close" buttons that fire
-   * POST /api/positions/{id}/close. Live SSE invalidates the list
-   * on any trade event.
+   * Inspired by ThinkOrSwim's Monitor tab + TradingView's Portfolio
+   * widget. Features that exist on real platforms and are now here:
+   *  - Aggregate header (count, uPnL, winners/losers, longs/shorts,
+   *    notional, average R-multiple)
+   *  - Wallet / side / ticker filters
+   *  - Sortable 12-column table with R-multiple + %-equity
+   *  - Visual risk-reward bar per row (red distance-to-stop +
+   *    green distance-to-target)
+   *  - Per-position drawer: set stop / target / trailing stop / notes,
+   *    plus inline close
+   *  - Multi-select checkboxes + Bulk Close in the header
+   *  - CSV export (1-click)
+   *
+   * Refreshes every 30s + invalidated by SSE trade events. The
+   * auto_exits pipeline closes positions when stops/targets fire.
    */
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { openPositions, closePosition } from '$api';
+  import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
+  import { openPositions, closePosition, updateRisk, bulkClose, csvExportUrl } from '$api';
   import type { OpenPositionRow } from '$api';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import TickerLink from '$components/TickerLink.svelte';
   import Spinner from '$components/Spinner.svelte';
   import EmptyState from '$components/EmptyState.svelte';
+  import Drawer from '$components/Drawer.svelte';
   import { toast } from '$lib/toast.svelte';
   import { usd, price, timeAgo } from '$lib/format';
-  import { Briefcase, AlertCircle, X } from 'lucide-svelte';
+  import {
+    Briefcase, AlertCircle, X, Download, Shield, Target as TargetIcon,
+    Edit3, TrendingUp, TrendingDown, Save, Layers, MoreVertical
+  } from 'lucide-svelte';
 
-  type SortKey = 'fund' | 'ticker' | 'side' | 'age' | 'entry' | 'mark' | 'upnl' | 'upnl_pct';
+  type SortKey =
+    | 'fund' | 'ticker' | 'side' | 'age' | 'entry' | 'mark'
+    | 'upnl' | 'upnl_pct' | 'r' | 'pct_eq' | 'notional';
+
   let sortKey: SortKey = $state('upnl');
   let sortDir: 'asc' | 'desc' = $state('desc');
   let fundFilter = $state('all');
   let sideFilter: 'all' | 'long' | 'short' = $state('all');
   let tickerFilter = $state('');
+  let onlyHasRisk = $state(false);
+
   let confirmId = $state<number | null>(null);
+  let bulkConfirm = $state(false);
+  const selected = $state(new Set<number>());
+
+  let drawerId = $state<number | null>(null);
+  // Risk-form draft (controlled inputs).
+  let dStop = $state<string>('');
+  let dTarget = $state<string>('');
+  let dTrail = $state<string>('');
+  let dNotes = $state<string>('');
 
   const positionsQ = createQuery({
     queryKey: ['positions-open'],
@@ -46,10 +77,77 @@
       qc.invalidateQueries({ queryKey: ['kpi'] });
       qc.invalidateQueries({ queryKey: ['realized-curve'] });
       confirmId = null;
+      drawerId = null;
     },
     onError: (err) =>
       toast.error(err instanceof Error ? err.message : String(err))
   });
+
+  const bulkM = createMutation({
+    mutationFn: ({ ids, reason }: { ids: number[]; reason: string }) =>
+      bulkClose(ids, reason),
+    onSuccess: (res) => {
+      const pnl = res.total_realized_pnl;
+      toast.success(
+        `Closed ${res.closed} / ${res.attempted} · realised ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`
+      );
+      selected.clear();
+      bulkConfirm = false;
+      qc.invalidateQueries({ queryKey: ['positions-open'] });
+      qc.invalidateQueries({ queryKey: ['wallets'] });
+      qc.invalidateQueries({ queryKey: ['kpi'] });
+    },
+    onError: (err) =>
+      toast.error(err instanceof Error ? err.message : String(err))
+  });
+
+  const riskM = createMutation({
+    mutationFn: ({ id, body }: { id: number; body: Parameters<typeof updateRisk>[1] }) =>
+      updateRisk(id, body),
+    onSuccess: () => {
+      toast.success('Risk settings saved');
+      qc.invalidateQueries({ queryKey: ['positions-open'] });
+    },
+    onError: (err) =>
+      toast.error(err instanceof Error ? err.message : String(err))
+  });
+
+  const drawerRow = $derived(
+    drawerId !== null
+      ? ($positionsQ.data ?? []).find((p) => p.id === drawerId) ?? null
+      : null
+  );
+
+  // Pre-seed the risk-form draft when a row opens.
+  $effect(() => {
+    if (drawerRow) {
+      dStop = drawerRow.stop_price != null ? String(drawerRow.stop_price) : '';
+      dTarget = drawerRow.target_price != null ? String(drawerRow.target_price) : '';
+      dTrail =
+        drawerRow.trailing_stop_pct != null
+          ? String(Math.round(drawerRow.trailing_stop_pct * 100))
+          : '';
+      dNotes = drawerRow.notes ?? '';
+    }
+  });
+
+  function saveRisk() {
+    if (drawerId === null) return;
+    const body: Parameters<typeof updateRisk>[1] = { clear: [] };
+    const stop = dStop.trim() ? Number(dStop) : NaN;
+    const tgt = dTarget.trim() ? Number(dTarget) : NaN;
+    const trail = dTrail.trim() ? Number(dTrail) / 100 : NaN;
+    if (Number.isFinite(stop) && stop > 0) body.stop_price = stop;
+    else body.clear!.push('stop_price');
+    if (Number.isFinite(tgt) && tgt > 0) body.target_price = tgt;
+    else body.clear!.push('target_price');
+    if (Number.isFinite(trail) && trail > 0 && trail < 1)
+      body.trailing_stop_pct = trail;
+    else body.clear!.push('trailing_stop_pct');
+    if (dNotes.trim()) body.notes = dNotes.trim();
+    else body.clear!.push('notes');
+    $riskM.mutate({ id: drawerId, body });
+  }
 
   const funds = $derived(
     Array.from(new Set(($positionsQ.data ?? []).map((p) => p.fund))).sort()
@@ -74,6 +172,9 @@
       case 'mark':     return p.mark;
       case 'upnl':     return p.upnl;
       case 'upnl_pct': return p.upnl_pct;
+      case 'r':        return p.r_multiple ?? -Infinity;
+      case 'pct_eq':   return p.pct_of_equity;
+      case 'notional': return p.notional;
     }
   }
 
@@ -82,6 +183,7 @@
       .filter((p) => {
         if (fundFilter !== 'all' && p.fund !== fundFilter) return false;
         if (sideFilter !== 'all' && p.side !== sideFilter) return false;
+        if (onlyHasRisk && p.stop_price == null && p.target_price == null && p.trailing_stop_pct == null) return false;
         const t = tickerFilter.trim().toUpperCase().replace(/^\$/, '');
         if (t && p.ticker !== t) return false;
         return true;
@@ -103,30 +205,63 @@
   const totals = $derived.by(() => {
     const ps = $positionsQ.data ?? [];
     const upnl = ps.reduce((s, p) => s + p.upnl, 0);
+    const notional = ps.reduce((s, p) => s + p.notional, 0);
     const wins = ps.filter((p) => p.upnl > 0).length;
     const losses = ps.filter((p) => p.upnl < 0).length;
     const longs = ps.filter((p) => p.side === 'long').length;
     const shorts = ps.filter((p) => p.side === 'short').length;
-    return { upnl, wins, losses, longs, shorts, count: ps.length };
+    const rs = ps.map((p) => p.r_multiple).filter((r): r is number => r !== null);
+    const avgR = rs.length ? rs.reduce((s, r) => s + r, 0) / rs.length : null;
+    const stopped = ps.filter((p) => p.stop_price != null).length;
+    return {
+      upnl, notional, wins, losses, longs, shorts,
+      count: ps.length, avgR, stopped
+    };
   });
+
+  function toggleAll() {
+    if (selected.size === sorted.length) {
+      selected.clear();
+    } else {
+      sorted.forEach((p) => selected.add(p.id));
+    }
+  }
+  function toggle(id: number) {
+    if (selected.has(id)) selected.delete(id);
+    else selected.add(id);
+  }
 </script>
 
 <svelte:head><title>Book · Sentinel</title></svelte:head>
 
-<div class="mb-4 flex items-end justify-between border-b border-border pb-3">
+<div class="mb-4 flex items-end justify-between gap-3 border-b border-border pb-3">
   <div>
     <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
       <Briefcase class="h-5 w-5 text-primary" /><span>Book</span>
     </h1>
     <div class="mt-0.5 text-[11.5px] text-faint">
-      Every open position across every wallet — sortable, filterable,
-      with inline close. Auto-refreshes; trade events stream in via SSE.
+      Every open position. Set stops + targets per row — the
+      <code class="rounded bg-surface-2 px-1 text-[10px]">auto_exits</code>
+      pipeline enforces them every 5min. CSV export, bulk close, R-multiple,
+      risk-reward bars.
     </div>
+  </div>
+
+  <div class="flex items-center gap-1.5">
+    <a
+      href={csvExportUrl}
+      download
+      class="flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[11px] text-muted transition-colors hover:border-primary/40 hover:text-text"
+      title="Download the current open book as CSV"
+    >
+      <Download class="h-3 w-3" />
+      Export
+    </a>
   </div>
 </div>
 
 <!-- ── headline aggregates ─────────────────────────── -->
-<div class="grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-5">
+<div class="grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-6">
   <div class="rounded-lg border border-border bg-surface px-3 py-2">
     <div class="text-[10px] uppercase tracking-wider text-faint">Open positions</div>
     <div class="mt-0.5 text-[18px] font-semibold tabular text-text">{totals.count}</div>
@@ -147,25 +282,47 @@
   </div>
 
   <div class="rounded-lg border border-border bg-surface px-3 py-2">
-    <div class="text-[10px] uppercase tracking-wider text-faint">Winners</div>
-    <div class="mt-0.5 text-[18px] font-semibold tabular text-good">{totals.wins}</div>
-    <div class="text-[10.5px] tabular text-faint">positions in profit</div>
+    <div class="text-[10px] uppercase tracking-wider text-faint">Winners / Losers</div>
+    <div class="mt-0.5 text-[18px] font-semibold tabular">
+      <span class="text-good">{totals.wins}</span>
+      <span class="text-faint"> / </span>
+      <span class="text-bad">{totals.losses}</span>
+    </div>
+    <div class="text-[10.5px] tabular text-faint">in profit / underwater</div>
   </div>
 
   <div class="rounded-lg border border-border bg-surface px-3 py-2">
-    <div class="text-[10px] uppercase tracking-wider text-faint">Losers</div>
-    <div class="mt-0.5 text-[18px] font-semibold tabular text-bad">{totals.losses}</div>
-    <div class="text-[10.5px] tabular text-faint">positions underwater</div>
+    <div class="text-[10px] uppercase tracking-wider text-faint">Avg R</div>
+    <div class={[
+      'mt-0.5 text-[18px] font-semibold tabular',
+      (totals.avgR ?? 0) > 0 ? 'text-good' : (totals.avgR ?? 0) < 0 ? 'text-bad' : 'text-text'
+    ].join(' ')}>
+      {totals.avgR !== null ? (totals.avgR >= 0 ? '+' : '') + totals.avgR.toFixed(2) + 'R' : '—'}
+    </div>
+    <div class="text-[10.5px] tabular text-faint">across stop-set positions</div>
   </div>
 
   <div class="rounded-lg border border-border bg-surface px-3 py-2">
-    <div class="text-[10px] uppercase tracking-wider text-faint">Wallets active</div>
-    <div class="mt-0.5 text-[18px] font-semibold tabular text-text">{funds.length}</div>
-    <div class="text-[10.5px] tabular text-faint">with open trades</div>
+    <div class="text-[10px] uppercase tracking-wider text-faint">Notional</div>
+    <div class="mt-0.5 text-[18px] font-semibold tabular text-text">{usd(totals.notional)}</div>
+    <div class="text-[10.5px] tabular text-faint">total exposure</div>
+  </div>
+
+  <div class="rounded-lg border border-border bg-surface px-3 py-2">
+    <div class="text-[10px] uppercase tracking-wider text-faint">Risk-defined</div>
+    <div class={[
+      'mt-0.5 text-[18px] font-semibold tabular',
+      totals.count === 0 ? 'text-text' :
+      totals.stopped === totals.count ? 'text-good' :
+      totals.stopped >= totals.count * 0.5 ? 'text-warn' : 'text-bad'
+    ].join(' ')}>
+      {totals.stopped}<span class="text-[12px] text-faint"> / {totals.count}</span>
+    </div>
+    <div class="text-[10.5px] tabular text-faint">have stop set</div>
   </div>
 </div>
 
-<!-- ── filter ribbon ─────────────────────────────── -->
+<!-- ── filter ribbon ───────────────────────────── -->
 <Card class="mt-3 px-4 py-2.5">
   <div class="flex flex-wrap items-center gap-2">
     <span class="text-[10px] font-semibold uppercase tracking-wider text-faint">Wallet</span>
@@ -197,6 +354,16 @@
       >{label}</button>
     {/each}
 
+    <label class="flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px]">
+      <input
+        type="checkbox"
+        bind:checked={onlyHasRisk}
+        class="h-3 w-3 cursor-pointer accent-primary"
+      />
+      <Shield class="h-3 w-3 text-faint" />
+      <span class={onlyHasRisk ? 'text-text' : 'text-muted'}>Has stop/target</span>
+    </label>
+
     <input
       type="text"
       bind:value={tickerFilter}
@@ -204,13 +371,45 @@
       class="ml-2 w-24 rounded-md border border-border bg-surface-2 px-2 py-1 font-mono text-[12px] text-text placeholder:text-faint/50 focus:border-primary/60 focus:outline-none"
     />
 
-    <span class="ml-auto text-[11px] tabular text-faint">
-      {sorted.length} of {$positionsQ.data?.length ?? 0}
-    </span>
+    {#if selected.size > 0}
+      <div class="ml-auto flex items-center gap-2 rounded-md border border-bad/40 bg-bad-soft px-2 py-1 text-[11px] text-bad">
+        <Layers class="h-3 w-3" />
+        <span>{selected.size} selected</span>
+        {#if bulkConfirm}
+          <button
+            type="button"
+            onclick={() => $bulkM.mutate({ ids: [...selected], reason: 'bulk via /book' })}
+            disabled={$bulkM.isPending}
+            class="rounded border border-bad bg-bad/30 px-2 py-0.5 font-medium text-text hover:bg-bad/40 disabled:opacity-50"
+          >Confirm — close {selected.size}</button>
+          <button
+            type="button"
+            onclick={() => (bulkConfirm = false)}
+            class="rounded border border-border bg-bg px-2 py-0.5 text-muted hover:text-text"
+          >Cancel</button>
+        {:else}
+          <button
+            type="button"
+            onclick={() => (bulkConfirm = true)}
+            class="rounded border border-bad bg-bad/20 px-2 py-0.5 font-medium hover:bg-bad/30"
+          >Close selected</button>
+          <button
+            type="button"
+            onclick={() => selected.clear()}
+            class="text-muted hover:text-text"
+            title="Clear selection"
+          ><X class="h-3 w-3" /></button>
+        {/if}
+      </div>
+    {:else}
+      <span class="ml-auto text-[11px] tabular text-faint">
+        {sorted.length} of {$positionsQ.data?.length ?? 0}
+      </span>
+    {/if}
   </div>
 </Card>
 
-<!-- ── table ───────────────────────────────────── -->
+<!-- ── table ───────────────────────────────── -->
 <Card class="mt-3 overflow-hidden">
   {#if $positionsQ.isLoading}
     <div class="flex items-center justify-center py-12"><Spinner /></div>
@@ -224,6 +423,15 @@
       <table class="w-full text-[12.5px] tabular">
         <thead>
           <tr class="border-b border-border bg-surface-2/40 text-[10px] uppercase tracking-wider text-faint">
+            <th class="w-8 px-2 py-2 text-center">
+              <input
+                type="checkbox"
+                checked={selected.size === sorted.length && sorted.length > 0}
+                indeterminate={selected.size > 0 && selected.size < sorted.length}
+                onchange={toggleAll}
+                class="h-3 w-3 cursor-pointer accent-primary"
+              />
+            </th>
             {#snippet th(label: string, k: SortKey, align: 'left' | 'right' = 'right')}
               <th
                 class={[
@@ -241,24 +449,37 @@
             {@render th('Wallet', 'fund', 'left')}
             {@render th('Ticker', 'ticker', 'left')}
             {@render th('Side', 'side', 'left')}
-            {@render th('Qty', 'entry')}
             {@render th('Entry', 'entry')}
             {@render th('Mark', 'mark')}
             {@render th('uPnL', 'upnl')}
             {@render th('%', 'upnl_pct')}
+            {@render th('R', 'r')}
+            {@render th('% Eq', 'pct_eq')}
+            <th class="px-3 py-2 text-left font-semibold">Stop · Target</th>
             {@render th('Age', 'age')}
             <th class="px-3 py-2 text-right font-semibold">Action</th>
           </tr>
         </thead>
         <tbody>
           {#each sorted as p (p.id)}
-            <tr class="border-b border-border-soft hover:bg-white/[0.02]">
+            {@const checked = selected.has(p.id)}
+            <tr class={[
+              'border-b border-border-soft hover:bg-white/[0.02]',
+              checked ? 'bg-primary-soft/30' : ''
+            ].join(' ')}>
+              <td class="px-2 py-1.5 text-center">
+                <input
+                  type="checkbox"
+                  {checked}
+                  onchange={() => toggle(p.id)}
+                  class="h-3 w-3 cursor-pointer accent-primary"
+                />
+              </td>
               <td class="px-3 py-1.5 text-left text-muted capitalize" title={p.fund_mandate}>{p.fund}</td>
               <td class="px-3 py-1.5 text-left"><TickerLink ticker={p.ticker} /></td>
               <td class="px-3 py-1.5 text-left">
                 <Pill variant={p.side === 'long' ? 'pos' : 'neg'}>{p.side.toUpperCase()}</Pill>
               </td>
-              <td class="px-3 py-1.5 text-right">{p.qty}</td>
               <td class="px-3 py-1.5 text-right">{price(p.entry)}</td>
               <td class={['px-3 py-1.5 text-right', p.mark_live ? '' : 'text-faint'].join(' ')}>
                 {price(p.mark)}{p.mark_live ? '' : '*'}
@@ -268,6 +489,50 @@
               </td>
               <td class={['px-3 py-1.5 text-right', p.upnl_pct >= 0 ? 'text-good' : 'text-bad'].join(' ')}>
                 {p.upnl_pct >= 0 ? '+' : ''}{p.upnl_pct.toFixed(2)}%
+              </td>
+              <td class={[
+                'px-3 py-1.5 text-right font-medium',
+                p.r_multiple === null ? 'text-faint'
+                  : p.r_multiple >= 1 ? 'text-good'
+                  : p.r_multiple <= -0.7 ? 'text-bad' : 'text-text'
+              ].join(' ')}>
+                {p.r_multiple !== null
+                  ? (p.r_multiple >= 0 ? '+' : '') + p.r_multiple.toFixed(2) + 'R'
+                  : '—'}
+              </td>
+              <td class={[
+                'px-3 py-1.5 text-right',
+                p.pct_of_equity >= 25 ? 'text-warn' : p.pct_of_equity >= 50 ? 'text-bad' : 'text-muted'
+              ].join(' ')}>
+                {p.pct_of_equity.toFixed(1)}%
+              </td>
+              <td class="px-3 py-1.5 text-left">
+                {#if p.stop_price === null && p.target_price === null && p.trailing_stop_pct === null}
+                  <button
+                    type="button"
+                    onclick={() => (drawerId = p.id)}
+                    class="inline-flex items-center gap-1 rounded border border-border-soft bg-surface-2/40 px-1.5 py-0.5 text-[10px] text-faint hover:border-primary/40 hover:text-text"
+                  >
+                    <Edit3 class="h-2.5 w-2.5" />
+                    Set
+                  </button>
+                {:else}
+                  <button
+                    type="button"
+                    onclick={() => (drawerId = p.id)}
+                    class="inline-flex items-center gap-1 text-[10.5px] tabular hover:underline"
+                  >
+                    {#if p.stop_price !== null}
+                      <span class="text-bad">↓ {price(p.stop_price)}</span>
+                    {/if}
+                    {#if p.target_price !== null}
+                      <span class="text-good">↑ {price(p.target_price)}</span>
+                    {/if}
+                    {#if p.trailing_stop_pct !== null}
+                      <span class="text-warn">trail {(p.trailing_stop_pct * 100).toFixed(0)}%</span>
+                    {/if}
+                  </button>
+                {/if}
               </td>
               <td class="px-3 py-1.5 text-right text-[10.5px] text-faint">
                 {p.age_h < 24 ? `${p.age_h.toFixed(1)}h` : `${Math.round(p.age_h / 24)}d`}
@@ -285,24 +550,60 @@
                       type="button"
                       onclick={() => (confirmId = null)}
                       class="rounded-md border border-border bg-surface-2 px-2 py-0.5 text-[10.5px] text-muted hover:text-text"
-                    >Cancel</button>
+                    >×</button>
                   </span>
                 {:else}
-                  <button
-                    type="button"
-                    onclick={() => (confirmId = p.id)}
-                    class="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-0.5 text-[10.5px] text-muted hover:border-bad/30 hover:text-bad"
-                    title="Close this position at the current mark"
-                  >
-                    <X class="h-2.5 w-2.5" />
-                    Close
-                  </button>
+                  <span class="inline-flex items-center gap-1">
+                    <button
+                      type="button"
+                      onclick={() => (drawerId = p.id)}
+                      title="Edit risk + notes"
+                      class="rounded-md border border-border bg-surface-2 px-1.5 py-0.5 text-faint transition-colors hover:border-primary/40 hover:text-text"
+                    ><MoreVertical class="h-2.5 w-2.5" /></button>
+                    <button
+                      type="button"
+                      onclick={() => (confirmId = p.id)}
+                      title="Close at mark"
+                      class="rounded-md border border-border bg-surface-2 px-2 py-0.5 text-[10.5px] text-muted hover:border-bad/30 hover:text-bad"
+                    ><X class="h-2.5 w-2.5 inline" /> Close</button>
+                  </span>
                 {/if}
               </td>
             </tr>
+            <!-- risk-reward bar row -->
+            {#if p.stop_price !== null || p.target_price !== null || p.notes}
+              <tr class="border-b border-border-soft bg-surface-2/20">
+                <td colspan="13" class="px-4 py-1">
+                  <div class="flex items-center gap-3 text-[10.5px] tabular text-faint">
+                    {#if p.dist_to_stop_pct !== null}
+                      <span class="flex items-center gap-1">
+                        <Shield class="h-2.5 w-2.5 text-bad" />
+                        <span class={p.dist_to_stop_pct < 5 ? 'text-bad' : p.dist_to_stop_pct < 10 ? 'text-warn' : 'text-muted'}>
+                          {p.dist_to_stop_pct.toFixed(1)}% to stop
+                        </span>
+                      </span>
+                    {/if}
+                    {#if p.dist_to_target_pct !== null}
+                      <span class="flex items-center gap-1">
+                        <TargetIcon class="h-2.5 w-2.5 text-good" />
+                        <span class="text-muted">{p.dist_to_target_pct.toFixed(1)}% to target</span>
+                      </span>
+                    {/if}
+                    {#if p.watermark_price !== null}
+                      <span class="text-warn">trail wm {price(p.watermark_price)}</span>
+                    {/if}
+                    {#if p.notes}
+                      <span class="ml-auto max-w-md truncate italic text-muted" title={p.notes}>
+                        "{p.notes}"
+                      </span>
+                    {/if}
+                  </div>
+                </td>
+              </tr>
+            {/if}
             {#if p.open_reason}
               <tr class="border-b border-border-soft">
-                <td colspan="10" class="bg-surface-2/30 px-3 py-1 text-[10.5px] text-faint">
+                <td colspan="13" class="bg-surface-2/30 px-4 py-1 text-[10.5px] text-faint">
                   <span class="text-muted">opened:</span> {p.open_reason}
                 </td>
               </tr>
@@ -319,3 +620,160 @@
     {/if}
   {/if}
 </Card>
+
+<!-- ── risk-mgmt drawer ─────────────────────────── -->
+<Drawer
+  open={drawerId !== null}
+  onClose={() => (drawerId = null)}
+  class="max-w-md"
+>
+  {#snippet header()}
+    {#if drawerRow}
+      <div class="flex flex-1 items-center gap-2">
+        <Pill variant={drawerRow.side === 'long' ? 'pos' : 'neg'}>
+          {drawerRow.side.toUpperCase()}
+        </Pill>
+        <TickerLink ticker={drawerRow.ticker} class="text-sm font-bold" />
+        <span class="text-[11px] text-faint">·</span>
+        <span class="text-[11px] text-muted capitalize">{drawerRow.fund}</span>
+        <span class="text-[11px] text-faint">#{drawerRow.id}</span>
+      </div>
+    {/if}
+  {/snippet}
+
+  {#if drawerRow}
+    <div class="space-y-4">
+      <!-- snapshot strip -->
+      <div class="grid grid-cols-3 gap-2 text-center">
+        <div class="rounded-md border border-border bg-surface-2 px-2 py-1.5">
+          <div class="text-[10px] uppercase tracking-wider text-faint">Entry</div>
+          <div class="mt-0.5 text-[13px] tabular">{price(drawerRow.entry)}</div>
+        </div>
+        <div class="rounded-md border border-border bg-surface-2 px-2 py-1.5">
+          <div class="text-[10px] uppercase tracking-wider text-faint">Mark</div>
+          <div class="mt-0.5 text-[13px] tabular">{price(drawerRow.mark)}{drawerRow.mark_live ? '' : '*'}</div>
+        </div>
+        <div class="rounded-md border border-border bg-surface-2 px-2 py-1.5">
+          <div class="text-[10px] uppercase tracking-wider text-faint">uPnL</div>
+          <div class={[
+            'mt-0.5 text-[13px] tabular font-medium',
+            drawerRow.upnl >= 0 ? 'text-good' : 'text-bad'
+          ].join(' ')}>
+            {usd(drawerRow.upnl, true)}
+          </div>
+        </div>
+      </div>
+
+      <!-- risk form -->
+      <div>
+        <div class="mb-2 text-[10px] font-semibold uppercase tracking-wider text-faint">
+          Risk management
+        </div>
+        <div class="space-y-2.5">
+          <label class="block">
+            <span class="flex items-center gap-1.5 text-[11px] text-muted">
+              <Shield class="h-3 w-3 text-bad" />
+              Stop price
+              {#if drawerRow.side === 'long'}
+                <span class="text-faint">(below entry)</span>
+              {:else}
+                <span class="text-faint">(above entry)</span>
+              {/if}
+            </span>
+            <input
+              type="number"
+              step="0.01"
+              bind:value={dStop}
+              placeholder="—"
+              class="mt-1 w-full rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[13px] tabular text-text placeholder:text-faint/60 focus:border-primary/60 focus:outline-none"
+            />
+          </label>
+
+          <label class="block">
+            <span class="flex items-center gap-1.5 text-[11px] text-muted">
+              <TargetIcon class="h-3 w-3 text-good" />
+              Target price
+              {#if drawerRow.side === 'long'}
+                <span class="text-faint">(above entry)</span>
+              {:else}
+                <span class="text-faint">(below entry)</span>
+              {/if}
+            </span>
+            <input
+              type="number"
+              step="0.01"
+              bind:value={dTarget}
+              placeholder="—"
+              class="mt-1 w-full rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[13px] tabular text-text placeholder:text-faint/60 focus:border-primary/60 focus:outline-none"
+            />
+          </label>
+
+          <label class="block">
+            <span class="flex items-center gap-1.5 text-[11px] text-muted">
+              {#if drawerRow.side === 'long'}
+                <TrendingUp class="h-3 w-3 text-warn" />
+              {:else}
+                <TrendingDown class="h-3 w-3 text-warn" />
+              {/if}
+              Trailing stop %
+              <span class="text-faint">(0–99; ratchets off the best price)</span>
+            </span>
+            <input
+              type="number"
+              step="0.5"
+              min="0"
+              max="99"
+              bind:value={dTrail}
+              placeholder="—"
+              class="mt-1 w-full rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[13px] tabular text-text placeholder:text-faint/60 focus:border-primary/60 focus:outline-none"
+            />
+            {#if drawerRow.watermark_price !== null}
+              <div class="mt-1 text-[10.5px] text-faint">
+                watermark: {price(drawerRow.watermark_price)}
+              </div>
+            {/if}
+          </label>
+
+          <label class="block">
+            <span class="text-[11px] text-muted">Notes (journal)</span>
+            <textarea
+              bind:value={dNotes}
+              rows="3"
+              placeholder="Why did you open this? What's the exit plan? What would invalidate?"
+              class="mt-1 w-full resize-y rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[12.5px] text-text placeholder:text-faint/60 focus:border-primary/60 focus:outline-none"
+            ></textarea>
+          </label>
+        </div>
+
+        <button
+          type="button"
+          onclick={saveRisk}
+          disabled={$riskM.isPending}
+          class="mt-3 flex w-full items-center justify-center gap-1.5 rounded-md border border-primary/40 bg-primary-soft px-3 py-2 text-[12.5px] font-medium text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
+        >
+          {#if $riskM.isPending}<Spinner size={12} />{:else}<Save class="h-3.5 w-3.5" />{/if}
+          Save risk settings
+        </button>
+      </div>
+
+      <!-- close-position -->
+      <div class="border-t border-border pt-3">
+        <button
+          type="button"
+          onclick={() => $closeM.mutate(drawerRow!.id)}
+          disabled={$closeM.isPending}
+          class="flex w-full items-center justify-center gap-1.5 rounded-md border border-bad/40 bg-bad-soft px-3 py-2 text-[12.5px] font-medium text-bad transition-colors hover:bg-bad/15 disabled:opacity-50"
+        >
+          {#if $closeM.isPending}<Spinner size={12} />{:else}<X class="h-3.5 w-3.5" />{/if}
+          Close position at mark
+        </button>
+      </div>
+
+      {#if drawerRow.open_reason}
+        <div class="rounded-md border border-border-soft bg-surface-2/40 px-3 py-2 text-[11.5px] text-muted">
+          <span class="font-semibold text-faint">Opened:</span> {drawerRow.open_reason}
+        </div>
+      {/if}
+    </div>
+  {/if}
+</Drawer>

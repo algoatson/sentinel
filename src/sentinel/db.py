@@ -164,6 +164,20 @@ def init_db() -> None:
             "tradingcall",
             [("resolved_posted_at", "DATETIME")],
         )
+        # Per-position risk management + journal — set by user via
+        # the /book UI. Existing rows have NULL on every field which
+        # is the documented "no auto-exit, no trailing, no notes"
+        # default.
+        _migrate_add_columns(
+            "fundtrade",
+            [
+                ("stop_price", "FLOAT"),
+                ("target_price", "FLOAT"),
+                ("trailing_stop_pct", "FLOAT"),
+                ("watermark_price", "FLOAT"),
+                ("notes", "VARCHAR"),
+            ],
+        )
 
     from .funds import seed_funds
     from .prompts import seed_prompts

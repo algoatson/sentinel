@@ -201,6 +201,16 @@ class FundTrade(SQLModel, table=True):
     call_id: Optional[int] = Field(default=None)
     open_reason: Optional[str] = Field(default=None)
     close_reason: Optional[str] = Field(default=None)
+    # User-set risk management. The auto_exits pipeline scans every
+    # cycle and force-closes any open trade whose mark crosses the
+    # stop or target. Trailing stops ratchet via watermark_price.
+    stop_price: Optional[float] = Field(default=None)
+    target_price: Optional[float] = Field(default=None)
+    trailing_stop_pct: Optional[float] = Field(default=None)
+    watermark_price: Optional[float] = Field(default=None)
+    # Free-form journal slot — write decisions, regrets, what-ifs.
+    # Surfaced verbatim in the /book drawer and exported with CSV.
+    notes: Optional[str] = Field(default=None)
 
 
 class FundEquity(SQLModel, table=True):

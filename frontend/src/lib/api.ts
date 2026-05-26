@@ -318,6 +318,16 @@ export interface OpenPositionRow {
   upnl_pct: number;
   open_reason: string | null;
   call_id: number | null;
+  stop_price: number | null;
+  target_price: number | null;
+  trailing_stop_pct: number | null;
+  watermark_price: number | null;
+  notes: string | null;
+  dist_to_stop_pct: number | null;
+  dist_to_target_pct: number | null;
+  r_multiple: number | null;
+  pct_of_equity: number;
+  notional: number;
 }
 export const openPositions = () =>
   get<OpenPositionRow[]>('/positions/open');
@@ -326,3 +336,31 @@ export const closePosition = (id: number, reason?: string) =>
     `/positions/${id}/close`,
     reason ? { reason } : {}
   );
+
+export interface RiskPatch {
+  stop_price?: number | null;
+  target_price?: number | null;
+  trailing_stop_pct?: number | null;
+  notes?: string | null;
+  /** Names of fields to explicitly null out. */
+  clear?: Array<'stop_price' | 'target_price' | 'trailing_stop_pct' | 'notes'>;
+}
+export const updateRisk = (id: number, body: RiskPatch) =>
+  fetch(`/api/positions/${id}/risk`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(async (r) => {
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json() as Promise<{ ok: boolean; message: string }>;
+  });
+
+export const bulkClose = (ids: number[], reason?: string) =>
+  post<{
+    ok: boolean;
+    closed: number;
+    attempted: number;
+    total_realized_pnl: number;
+  }>('/positions/bulk-close', { trade_ids: ids, reason });
+
+export const csvExportUrl = '/api/positions/export.csv';

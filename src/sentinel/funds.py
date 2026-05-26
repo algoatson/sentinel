@@ -915,6 +915,39 @@ def open_positions_all() -> list[dict]:
             entry_at = t.entry_at if t.entry_at.tzinfo else (
                 t.entry_at.replace(tzinfo=timezone.utc)
             )
+            # Pre-compute "distance to stop / target" so the UI can
+            # render a risk-reward bar without doing math itself.
+            # For long: stop is below entry, target above. Short: reversed.
+            dist_to_stop_pct: float | None = None
+            dist_to_target_pct: float | None = None
+            r_multiple: float | None = None
+            if t.stop_price is not None and t.stop_price > 0 and mark > 0:
+                if t.side == "long":
+                    dist_to_stop_pct = round((mark - t.stop_price) / mark * 100, 2)
+                else:
+                    dist_to_stop_pct = round((t.stop_price - mark) / mark * 100, 2)
+            if t.target_price is not None and t.target_price > 0 and mark > 0:
+                if t.side == "long":
+                    dist_to_target_pct = round((t.target_price - mark) / mark * 100, 2)
+                else:
+                    dist_to_target_pct = round((mark - t.target_price) / mark * 100, 2)
+            # R-multiple = current PnL / initial risk per share. Tells
+            # you "this trade is up 2.3R" — universal across position
+            # sizing, the metric every trader watches.
+            if t.stop_price is not None and t.stop_price > 0:
+                initial_risk = (
+                    (t.entry_price - t.stop_price) if t.side == "long"
+                    else (t.stop_price - t.entry_price)
+                )
+                if initial_risk > 0:
+                    current_per_share = (
+                        (mark - t.entry_price) if t.side == "long"
+                        else (t.entry_price - mark)
+                    )
+                    r_multiple = round(current_per_share / initial_risk, 2)
+            # % of wallet equity exposed by this position.
+            pct_of_equity = round(cost / max(1e-9, _equity(s, fund, [t])) * 100, 1)
+
             out.append({
                 "id": t.id,
                 "fund": fund.name,
@@ -931,8 +964,71 @@ def open_positions_all() -> list[dict]:
                 "upnl_pct": round(upnl / cost * 100, 2) if cost else 0.0,
                 "open_reason": t.open_reason,
                 "call_id": t.call_id,
+                "stop_price": t.stop_price,
+                "target_price": t.target_price,
+                "trailing_stop_pct": t.trailing_stop_pct,
+                "watermark_price": t.watermark_price,
+                "notes": t.notes,
+                "dist_to_stop_pct": dist_to_stop_pct,
+                "dist_to_target_pct": dist_to_target_pct,
+                "r_multiple": r_multiple,
+                "pct_of_equity": pct_of_equity,
+                "notional": round(cost, 2),
             })
     return out
+
+
+def update_trade_risk(
+    trade_id: int,
+    *,
+    stop_price: float | None = None,
+    target_price: float | None = None,
+    trailing_stop_pct: float | None = None,
+    notes: str | None = None,
+    clear: list[str] | None = None,
+) -> dict:
+    """Update risk-management fields on an open trade. Pass None to
+    leave a field alone; pass `clear=["stop_price"]` to explicitly
+    null out a field. Returns `{"ok": bool, "message": str, ...}`."""
+    clear = set(clear or [])
+    with session_scope() as s:
+        t = s.get(FundTrade, trade_id)
+        if t is None:
+            return {"ok": False, "message": f"no trade #{trade_id}"}
+        if t.status != "open":
+            return {"ok": False,
+                    "message": f"trade #{trade_id} is {t.status}"}
+        if "stop_price" in clear:
+            t.stop_price = None
+        elif stop_price is not None:
+            if stop_price <= 0:
+                return {"ok": False, "message": "stop_price must be positive"}
+            t.stop_price = stop_price
+        if "target_price" in clear:
+            t.target_price = None
+        elif target_price is not None:
+            if target_price <= 0:
+                return {"ok": False, "message": "target_price must be positive"}
+            t.target_price = target_price
+        if "trailing_stop_pct" in clear:
+            t.trailing_stop_pct = None
+            t.watermark_price = None
+        elif trailing_stop_pct is not None:
+            if not (0 < trailing_stop_pct < 1):
+                return {"ok": False,
+                        "message": "trailing_stop_pct must be 0..1 (e.g. 0.10 = 10%)"}
+            t.trailing_stop_pct = trailing_stop_pct
+            # Seed watermark at current mark.
+            mark_val = _mark(s, t.ticker)
+            if mark_val is not None:
+                t.watermark_price = mark_val
+        if "notes" in clear:
+            t.notes = None
+        elif notes is not None:
+            t.notes = (notes or "")[:2000] or None
+        s.add(t)
+    return {"ok": True, "message": f"updated #{trade_id}",
+            "trade_id": trade_id}
 
 
 def close_trade_by_id(trade_id: int, reason: str = "manual") -> dict:

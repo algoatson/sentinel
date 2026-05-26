@@ -31,6 +31,7 @@ from .ingesters import (
     reddit,
 )
 from .pipelines import (
+    auto_exits,
     auto_research_pre_earnings,
     auto_thesis,
     book_risk,
@@ -332,6 +333,16 @@ def make_scheduler() -> AsyncIOScheduler:
         auto_research_pre_earnings.run_auto_research_pre_earnings,
         CronTrigger(day_of_week="mon-fri", hour=7, minute=30, timezone=ET),
         id="auto_research_pre_earnings",
+        **_COMMON,
+    )
+    # `auto_exits`: enforce user-set stops + targets + trailing stops
+    # on every open FundTrade. Runs every 5min — frequent enough that
+    # a fast move can't slip past the stop by much, infrequent enough
+    # that the marks have actually moved between ticks.
+    sched.add_job(
+        auto_exits.run_auto_exits,
+        _every(minutes=5),
+        id="auto_exits",
         **_COMMON,
     )
     # Dedicated Reddit-stream channel — notable r/ posts (moving/surging
