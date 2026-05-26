@@ -1,6 +1,8 @@
 <script lang="ts">
   import { page } from '$app/state';
   import { base } from '$app/paths';
+  import { createQuery } from '@tanstack/svelte-query';
+  import { openPositions, riskMonitor, closedPositions } from '$api';
   import {
     LayoutDashboard,
     Briefcase,
@@ -70,6 +72,61 @@
   const current = $derived(
     page.url.pathname.replace(new RegExp(`^${base}`), '') || '/'
   );
+
+  // Live-pulses for nav rows. These reuse the same cache keys the
+  // route pages already poll, so adding them to the sidebar costs
+  // nothing on the wire — TanStack Query dedupes the in-flight
+  // requests across mounts.
+  const positionsQ = createQuery({
+    queryKey: ['positions-open'],
+    queryFn: openPositions,
+    refetchInterval: 30_000
+  });
+  const riskQ = createQuery({
+    queryKey: ['risk-monitor'],
+    queryFn: riskMonitor,
+    refetchInterval: 60_000
+  });
+  const closedQ = createQuery({
+    queryKey: ['positions-closed-sidebar'],
+    queryFn: () => closedPositions({ limit: 250 }),
+    refetchInterval: 90_000
+  });
+
+  const openCount = $derived($positionsQ.data?.length ?? 0);
+  const nearStopCount = $derived($riskQ.data?.n_near_stop ?? 0);
+  const nakedCount = $derived($riskQ.data?.naked.length ?? 0);
+  const unreflectedCount = $derived(
+    ($closedQ.data ?? []).filter((t) => !(t.notes ?? '').trim()).length
+  );
+
+  type Badge = { label: string; tone: 'pos' | 'neg' | 'warn' | 'mute' };
+  function badgesFor(href: string): Badge[] {
+    if (href === '/book') {
+      const out: Badge[] = [];
+      if (openCount) out.push({ label: String(openCount), tone: 'mute' });
+      if (nearStopCount) out.push({
+        label: `${nearStopCount}!`,
+        tone: 'neg'
+      });
+      if (nakedCount) out.push({
+        label: `${nakedCount}∅`,
+        tone: 'warn'
+      });
+      return out;
+    }
+    if (href === '/journal' && unreflectedCount > 0) {
+      return [{ label: String(unreflectedCount), tone: 'warn' }];
+    }
+    return [];
+  }
+
+  const TONE_CLASS: Record<Badge['tone'], string> = {
+    pos: 'border-good/40 bg-good-soft text-good',
+    neg: 'border-bad/40 bg-bad-soft text-bad',
+    warn: 'border-warn/40 bg-warn-soft text-warn',
+    mute: 'border-border bg-surface-2 text-muted'
+  };
 </script>
 
 {#snippet inner()}
@@ -100,6 +157,7 @@
     </div>
     {#each section.items as item (item.href)}
       {@const active = current === item.href || current.startsWith(item.href + '/')}
+      {@const badges = badgesFor(item.href)}
       <a
         href={`${base}${item.href}`}
         onclick={() => onClose?.()}
@@ -121,6 +179,27 @@
           active ? 'text-primary opacity-100' : 'opacity-70'
         ].join(' ')} />
         <span>{item.label}</span>
+        {#if badges.length}
+          <span class="ml-auto inline-flex items-center gap-1">
+            {#each badges as b (b.label)}
+              <span
+                class={[
+                  'rounded border px-1 py-0 text-[9.5px] font-semibold tabular',
+                  TONE_CLASS[b.tone]
+                ].join(' ')}
+                title={
+                  item.href === '/book' && b.tone === 'neg'
+                    ? `${nearStopCount} positions within 1.5% of stop`
+                    : item.href === '/book' && b.tone === 'warn'
+                      ? `${nakedCount} open positions with no stop set`
+                      : item.href === '/journal' && b.tone === 'warn'
+                        ? `${unreflectedCount} closed trades without a reflection`
+                        : `${openCount} open positions`
+                }
+              >{b.label}</span>
+            {/each}
+          </span>
+        {/if}
       </a>
     {/each}
   {/each}

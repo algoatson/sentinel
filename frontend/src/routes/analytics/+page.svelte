@@ -12,7 +12,7 @@
    */
   import { createQuery } from '@tanstack/svelte-query';
   import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
-  import { hotTickers, calibration, attribution, sentimentQuality, monthlyPnl, concentration, dailyPnl, drawdownCurves, correlationMatrix } from '$api';
+  import { hotTickers, calibration, attribution, sentimentQuality, monthlyPnl, concentration, dailyPnl, drawdownCurves, correlationMatrix, perfBySource } from '$api';
   import PnlCalendar from '$components/PnlCalendar.svelte';
   import CorrelationMatrix from '$components/CorrelationMatrix.svelte';
   import Card from '$components/Card.svelte';
@@ -68,6 +68,11 @@
   const corrQ = createQuery({
     queryKey: ['correlation', 30],
     queryFn: () => correlationMatrix(undefined, 30),
+    refetchInterval: 5 * 60_000
+  });
+  const pbsQ = createQuery({
+    queryKey: ['perf-by-source'],
+    queryFn: () => perfBySource(500),
     refetchInterval: 5 * 60_000
   });
 
@@ -778,4 +783,108 @@
     </span>
   </div>
   <CorrelationMatrix data={$corrQ.data} />
+</Card>
+
+<!-- ── PERFORMANCE BY SOURCE ──────────────────────── -->
+<Card class="mt-4 px-4 py-3">
+  <div class="mb-2 flex items-baseline gap-3">
+    <div class="flex items-center gap-1.5">
+      <TrendingUp class="h-3.5 w-3.5 text-good" />
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+        Performance by source · which setup actually works
+      </div>
+    </div>
+    {#if $pbsQ.data}
+      <span class="text-[10.5px] text-faint">
+        {$pbsQ.data.n} closed trades · {$pbsQ.data.groups.length} entry sources
+      </span>
+    {/if}
+  </div>
+  {#if !$pbsQ.data}
+    <div class="py-6 text-center text-[12px] text-faint">Loading…</div>
+  {:else if $pbsQ.data.n === 0}
+    <div class="py-6 text-center text-[12px] text-faint">
+      No closed trades yet — once trades close they'll cluster here by entry source.
+    </div>
+  {:else}
+    <div class="overflow-x-auto">
+      <table class="w-full text-[12px] tabular">
+        <thead>
+          <tr class="border-b border-border bg-surface-2/40 text-[10px] uppercase tracking-wider text-faint">
+            <th class="px-2 py-2 text-left">Source</th>
+            <th class="px-2 py-2 text-right">N</th>
+            <th class="px-2 py-2 text-right">Win %</th>
+            <th class="px-2 py-2 text-right">Total PnL</th>
+            <th class="px-2 py-2 text-right">Expectancy</th>
+            <th class="px-2 py-2 text-right">Avg W / L</th>
+            <th class="px-2 py-2 text-right">Avg R</th>
+            <th class="px-2 py-2 text-right">Hold</th>
+            <th class="px-2 py-2 text-right">Recent</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each $pbsQ.data.groups as g (g.source)}
+            <tr class="border-b border-border-soft">
+              <td class="px-2 py-2 text-left font-mono text-text">{g.source}</td>
+              <td class="px-2 py-2 text-right text-text">{g.n}</td>
+              <td class={[
+                'px-2 py-2 text-right',
+                g.win_rate === null ? 'text-faint' :
+                g.win_rate >= 55 ? 'text-good' : g.win_rate >= 40 ? 'text-muted' : 'text-bad'
+              ].join(' ')}>
+                {g.win_rate !== null ? `${g.win_rate.toFixed(0)}%` : '—'}
+                <span class="ml-1 text-[9.5px] text-faint">
+                  {g.wins}W/{g.losses}L
+                </span>
+              </td>
+              <td class={[
+                'px-2 py-2 text-right font-semibold',
+                g.total_pnl >= 0 ? 'text-good' : 'text-bad'
+              ].join(' ')}>
+                {g.total_pnl >= 0 ? '+' : ''}{g.total_pnl.toFixed(2)}
+              </td>
+              <td class={[
+                'px-2 py-2 text-right',
+                g.expectancy >= 0 ? 'text-good' : 'text-bad'
+              ].join(' ')}>
+                {g.expectancy >= 0 ? '+' : ''}{g.expectancy.toFixed(2)}
+              </td>
+              <td class="px-2 py-2 text-right">
+                <span class="text-good">{g.avg_win !== null ? `+${g.avg_win.toFixed(0)}` : '—'}</span>
+                <span class="text-faint"> / </span>
+                <span class="text-bad">{g.avg_loss !== null ? g.avg_loss.toFixed(0) : '—'}</span>
+              </td>
+              <td class={[
+                'px-2 py-2 text-right',
+                g.avg_r === null ? 'text-faint' :
+                g.avg_r >= 0 ? 'text-good' : 'text-bad'
+              ].join(' ')}>
+                {g.avg_r !== null ? `${g.avg_r >= 0 ? '+' : ''}${g.avg_r.toFixed(2)}R` : '—'}
+              </td>
+              <td class="px-2 py-2 text-right text-muted">
+                {#if g.avg_hold_h !== null}
+                  {g.avg_hold_h < 24 ? `${g.avg_hold_h.toFixed(1)}h` : `${(g.avg_hold_h / 24).toFixed(1)}d`}
+                {:else}
+                  —
+                {/if}
+              </td>
+              <td class="px-2 py-2 text-right">
+                <div class="inline-flex items-center gap-0.5">
+                  {#each g.recent_pnls as p, i (i)}
+                    <span
+                      class={[
+                        'inline-block h-2.5 w-1.5 rounded-sm',
+                        p > 0 ? 'bg-good' : p < 0 ? 'bg-bad' : 'bg-faint/40'
+                      ].join(' ')}
+                      title={`${p >= 0 ? '+' : ''}${p.toFixed(2)}`}
+                    ></span>
+                  {/each}
+                </div>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {/if}
 </Card>

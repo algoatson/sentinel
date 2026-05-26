@@ -33,6 +33,7 @@
   type Quick = 'all' | 'winners' | 'losers' | 'big_r' | 'no_notes';
   let quick: Quick = $state('all');
   let search = $state('');
+  let walletFilter = $state<string>('all');
   let limit = $state(100);
   let expanded = $state(new Set<number>());
 
@@ -58,9 +59,13 @@
   });
 
   const rows = $derived($q.data ?? []);
+  const wallets = $derived(
+    Array.from(new Set(rows.map((r) => r.fund))).sort()
+  );
   const filtered = $derived.by(() => {
     const s = search.trim().toLowerCase();
     return rows.filter((r) => {
+      if (walletFilter !== 'all' && r.fund !== walletFilter) return false;
       switch (quick) {
         case 'winners': if ((r.realized_pnl ?? 0) <= 0) return false; break;
         case 'losers':  if ((r.realized_pnl ?? 0) >= 0) return false; break;
@@ -211,6 +216,19 @@
       {label}
     </button>
   {/each}
+
+  {#if wallets.length}
+    <span class="ml-2 text-[10px] font-semibold uppercase tracking-wider text-faint">Wallet</span>
+    <select
+      bind:value={walletFilter}
+      class="rounded-md border border-border bg-surface-2 px-2 py-1 text-[11.5px] text-text focus:border-primary/60 focus:outline-none"
+    >
+      <option value="all">all</option>
+      {#each wallets as w (w)}
+        <option value={w}>{w}</option>
+      {/each}
+    </select>
+  {/if}
 
   <div class="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1">
     <Search class="h-3 w-3 text-faint" />

@@ -18,6 +18,7 @@ from ..analytics import risk_monitor as _risk
 from ..analytics import earnings_exposure as _earn
 from ..analytics import holdings_news as _hnews
 from ..analytics import streaks as _streaks
+from ..analytics import perf_by_source as _pbs
 from ..analytics import hot as _hot
 from ..analytics import monthly as _monthly
 from ..analytics import sentiment_quality as _sq
@@ -143,3 +144,12 @@ def streaks(limit: int = 200) -> dict:
     hit rate, expectancy, avg win/loss, and the last 20 PnLs for a
     tiny inline scoreboard."""
     return _streaks.streaks(limit=limit)
+
+
+@router.get("/analytics/perf-by-source")
+def perf_by_source(limit: int = 500) -> dict:
+    """Closed-trade performance grouped by entry source (open_reason
+    bucket). Per group: count, wins/losses, win rate, total PnL,
+    expectancy, avg win / avg loss, avg R-multiple, avg hold time,
+    and the most-recent 5 PnLs."""
+    return _pbs.perf_by_source(limit=limit)

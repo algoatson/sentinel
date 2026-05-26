@@ -626,6 +626,27 @@ export interface StreakSnapshot {
 export const streaks = (limit = 200) =>
   get<StreakSnapshot>(`/analytics/streaks?limit=${limit}`);
 
+export interface PerfGroup {
+  source: string;
+  n: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  total_pnl: number;
+  expectancy: number;
+  avg_win: number | null;
+  avg_loss: number | null;
+  avg_r: number | null;
+  avg_hold_h: number | null;
+  recent_pnls: number[];
+}
+export interface PerfBySource {
+  n: number;
+  groups: PerfGroup[];
+}
+export const perfBySource = (limit = 500) =>
+  get<PerfBySource>(`/analytics/perf-by-source?limit=${limit}`);
+
 export interface TradeLifecycle {
   trade: {
     id: number;
