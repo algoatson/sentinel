@@ -1293,6 +1293,145 @@ def open_positions_all() -> list[dict]:
     return out
 
 
+def position_chart(ticker: str, days: int | None = 60) -> dict:
+    """Symbol page chart payload, sourced from the autonomous FundTrade
+    book (the v1 PaperTrade store was missing the bot's actual trades).
+
+    Returns ``{ticker, bars, open_positions[], closed[], context}`` where
+    ``open_positions`` is one row per WALLET currently holding the
+    ticker (multiple funds can hold the same name) with the
+    risk-management bands (stop / target / trailing) so the chart can
+    render levels per position.
+
+    Closed trades come from the same FundTrade table — one entry/exit
+    pair per round-trip, capped to the chart's time window so an
+    ancient trade doesn't pin a label to today's frame.
+
+    ``days=None`` returns full PriceBar history."""
+    from .models import PriceBar  # local; PriceBar already imported above
+    ticker = (ticker or "").upper().lstrip("$").strip()
+    if not ticker:
+        return {
+            "ticker": "", "bars": [], "open_positions": [],
+            "closed": [], "context": None,
+            "open_position": None,  # legacy: kept for SPA compatibility
+        }
+    now = datetime.now(timezone.utc)
+    bars_cutoff = (
+        now - timedelta(days=days) if days is not None else None
+    )
+    # Closed trades clamped to ≤365d regardless of bars window so a
+    # long-history "All" view doesn't paint 5-year-old markers onto a
+    # week of bars.
+    closed_cutoff_naive = (
+        now - timedelta(days=min(days, 365))
+        if days is not None
+        else now - timedelta(days=365)
+    ).replace(tzinfo=None)
+
+    with session_scope() as s:
+        bars_q = select(PriceBar).where(PriceBar.ticker == ticker)
+        if bars_cutoff is not None:
+            bars_q = bars_q.where(PriceBar.ts >= bars_cutoff)
+        bars = s.exec(bars_q.order_by(PriceBar.ts)).all()
+
+        funds_by_id = {f.id: f for f in s.exec(select(Fund)).all()}
+        open_rows = s.exec(
+            select(FundTrade)
+            .where(FundTrade.ticker == ticker)
+            .where(FundTrade.status == "open")
+            .order_by(FundTrade.entry_at)
+        ).all()
+        closed_rows = s.exec(
+            select(FundTrade)
+            .where(FundTrade.ticker == ticker)
+            .where(FundTrade.status == "closed")
+            .where(FundTrade.exit_at >= closed_cutoff_naive)
+            .order_by(FundTrade.exit_at)
+        ).all()
+        pc = s.get(PriceContext, ticker)
+        mark = pc.last_price if pc is not None else None
+
+    def _iso(dt: datetime) -> str:
+        return (
+            dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        ).isoformat()
+
+    open_positions: list[dict] = []
+    for t in open_rows:
+        fund = funds_by_id.get(t.fund_id)
+        cost = t.entry_price * t.qty
+        d = 1 if t.side == "long" else -1
+        pnl = None
+        pnl_pct = None
+        if mark is not None and mark > 0:
+            pnl = round(t.qty * (mark - t.entry_price) * d, 2)
+            pnl_pct = round(pnl / cost * 100, 2) if cost else None
+        open_positions.append({
+            "id": t.id,
+            "fund": fund.name if fund else None,
+            "side": t.side,
+            "qty": t.qty,
+            "entry": t.entry_price,
+            "entry_at": _iso(t.entry_at),
+            "mark": mark,
+            "pnl": pnl,
+            "pnl_pct": pnl_pct,
+            "stop_price": t.stop_price,
+            "target_price": t.target_price,
+            "trailing_stop_pct": t.trailing_stop_pct,
+            "watermark_price": t.watermark_price,
+            "open_reason": t.open_reason,
+        })
+
+    closed_out: list[dict] = []
+    for t in closed_rows:
+        fund = funds_by_id.get(t.fund_id)
+        closed_out.append({
+            "id": t.id,
+            "fund": fund.name if fund else None,
+            "side": t.side,
+            "qty": t.qty,
+            "entry": t.entry_price,
+            "entry_at": _iso(t.entry_at),
+            "exit": t.exit_price,
+            "exit_at": _iso(t.exit_at) if t.exit_at else None,
+            "pnl": (
+                round(t.realized_pnl, 2)
+                if t.realized_pnl is not None else None
+            ),
+            "close_reason": t.close_reason,
+        })
+
+    # Legacy `open_position` (singular) — the SPA's existing CandleChart
+    # used this shape. Picks the most-recent open as a reasonable single
+    # representative until the SPA is migrated to the list payload.
+    legacy_open = open_positions[-1] if open_positions else None
+
+    return {
+        "ticker": ticker,
+        "bars": [
+            {
+                "ts": _iso(b.ts), "open": b.open, "high": b.high,
+                "low": b.low, "close": b.close, "volume": b.volume,
+            }
+            for b in bars
+        ],
+        "open_positions": open_positions,
+        "closed": closed_out,
+        "open_position": legacy_open,
+        "context": (
+            {
+                "last_price": pc.last_price,
+                "change_1d_pct": pc.change_1d_pct,
+                "change_5d_pct": pc.change_5d_pct,
+                "volume_vs_20d_avg": pc.volume_vs_20d_avg,
+                "last_updated": _iso(pc.last_updated),
+            } if pc is not None else None
+        ),
+    }
+
+
 def book_summary() -> dict:
     """Cross-wallet KPI rollup for the Overview ribbon — open position
     count, total unrealised PnL on open positions (live marks; falls

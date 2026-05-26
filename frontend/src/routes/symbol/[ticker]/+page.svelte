@@ -190,6 +190,7 @@
     {:else if $chartQ.data?.bars?.length}
       <CandleChart
         bars={$chartQ.data.bars}
+        openPositions={$chartQ.data.open_positions ?? []}
         openPosition={$chartQ.data.open_position}
         closedTrades={$chartQ.data.closed}
         height={420}

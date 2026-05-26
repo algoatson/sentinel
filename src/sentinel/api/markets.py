@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from .. import funds as _funds
 from .. import portfolio as _portfolio
 
 
@@ -30,7 +31,13 @@ def ticker_chart(
     ticker. `days=null` returns full PriceBar history."""
     if days is not None and days <= 0:
         days = None
-    data = _portfolio.position_chart(ticker, days)
+    # Source open / closed trades from the autonomous fund book
+    # (FundTrade) — the legacy portfolio.position_chart read only
+    # PaperTrade, so the bot's own positions never showed on the
+    # Symbol chart. Returns the same shape + a new `open_positions`
+    # list (one row per wallet holding the ticker) so the SPA can
+    # render entry/stop/target lines per position.
+    data = _funds.position_chart(ticker, days)
     if data is None:
         raise HTTPException(404, f"no data for {ticker}")
     return data

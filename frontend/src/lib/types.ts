@@ -82,6 +82,8 @@ export interface OHLC {
 }
 
 export interface OpenPosition {
+  id?: number;
+  fund?: string | null;
   side: 'long' | 'short';
   qty: number;
   entry: number;
@@ -89,9 +91,16 @@ export interface OpenPosition {
   mark: number | null;
   pnl: number | null;
   pnl_pct: number | null;
+  stop_price?: number | null;
+  target_price?: number | null;
+  trailing_stop_pct?: number | null;
+  watermark_price?: number | null;
+  open_reason?: string | null;
 }
 
 export interface ClosedTrade {
+  id?: number;
+  fund?: string | null;
   side: 'long' | 'short';
   qty: number;
   entry: number;
@@ -99,6 +108,7 @@ export interface ClosedTrade {
   exit: number | null;
   exit_at: string | null;
   pnl: number | null;
+  close_reason?: string | null;
 }
 
 export interface PriceContextSnapshot {
@@ -112,7 +122,8 @@ export interface PriceContextSnapshot {
 export interface TickerChart {
   ticker: string;
   bars: OHLC[];
-  open_position: OpenPosition | null;
+  open_positions: OpenPosition[];
+  open_position: OpenPosition | null;  // legacy single-position field
   closed: ClosedTrade[];
   context: PriceContextSnapshot | null;
 }
