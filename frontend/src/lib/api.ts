@@ -85,6 +85,33 @@ export const tickerStats = (ticker: string, days = 365) =>
     `/markets/${encodeURIComponent(ticker)}/stats?days=${days}`
   );
 
+export interface AtrInfo {
+  ticker: string;
+  period: number;
+  last_close: number | null;
+  atr: number | null;
+  atr_pct: number | null;
+  suggested_long_stop: number | null;
+  suggested_short_stop: number | null;
+  suggested_long_stop_tight: number | null;
+  suggested_short_stop_tight: number | null;
+  bars_used: number;
+}
+export const tickerAtr = (ticker: string, period = 14) =>
+  get<AtrInfo>(`/markets/${encodeURIComponent(ticker)}/atr?period=${period}`);
+
+export interface MoverRow {
+  ticker: string;
+  asset_class: string;
+  last_price: number | null;
+  change_1d_pct: number;
+  volume_vs_20d_avg: number | null;
+}
+export const topMovers = (limit = 8) =>
+  get<{ gainers: MoverRow[]; losers: MoverRow[] }>(
+    `/markets/top-movers?limit=${limit}`
+  );
+
 /* ─── theses ─── */
 export const thesesActive = () => get<Thesis[]>('/theses/active');
 export const thesesClosed = (days = 30) =>

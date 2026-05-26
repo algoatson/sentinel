@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createQuery } from '@tanstack/svelte-query';
   import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
-  import { kpi, activity, realizedCurve, equityCurve, calls, news, filings, catalysts, hotTickers } from '$api';
+  import { kpi, activity, realizedCurve, equityCurve, calls, news, filings, catalysts, hotTickers, topMovers } from '$api';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import EmptyState from '$components/EmptyState.svelte';
@@ -66,6 +66,11 @@
     queryKey: ['hot', 24],
     queryFn: () => hotTickers(24, 8),
     refetchInterval: 90_000
+  });
+  const moversQ = createQuery({
+    queryKey: ['top-movers', 6],
+    queryFn: () => topMovers(6),
+    refetchInterval: 60_000
   });
 
   const realCum = $derived(($realQ.data ?? []).map((p) => p.cumulative));
@@ -255,6 +260,78 @@
           </div>
         </a>
       {/each}
+    </div>
+  </Card>
+{/if}
+
+<!-- ── TOP MOVERS ─────────────────────────────────── -->
+{#if $moversQ.data && ($moversQ.data.gainers.length || $moversQ.data.losers.length)}
+  <Card class="mt-4 px-4 py-3">
+    <div class="mb-2 flex items-baseline gap-2">
+      <ArrowUpRight class="h-3.5 w-3.5 text-good" />
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+        Top movers (1d)
+      </div>
+      <span class="ml-auto text-[10.5px] text-faint">
+        watchlist · sorted by % change
+      </span>
+    </div>
+    <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <!-- gainers -->
+      <div>
+        <div class="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-good">
+          <ArrowUpRight class="h-3 w-3" />
+          Gainers
+        </div>
+        <div class="space-y-1">
+          {#each $moversQ.data.gainers as m (m.ticker)}
+            <a
+              href={`${base}/symbol/${encodeURIComponent(m.ticker)}`}
+              class="flex items-center gap-2 rounded-md border border-border-soft bg-surface-2/40 px-2 py-1 transition-colors hover:border-good/40"
+            >
+              <TickerLink ticker={m.ticker} class="text-[12px]" />
+              <span class="text-[10px] text-faint">{m.asset_class}</span>
+              <span class="ml-auto text-[11.5px] tabular text-muted">
+                {m.last_price !== null ? m.last_price.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '—'}
+              </span>
+              <span class="w-16 text-right text-[12px] tabular font-semibold text-good">
+                +{m.change_1d_pct.toFixed(2)}%
+              </span>
+            </a>
+          {/each}
+        </div>
+      </div>
+
+      <!-- losers -->
+      <div>
+        <div class="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-bad">
+          <ArrowDownRight class="h-3 w-3" />
+          Losers
+        </div>
+        {#if !$moversQ.data.losers.length}
+          <div class="rounded-md border border-border-soft bg-surface-2/40 px-2.5 py-3 text-center text-[11px] text-faint">
+            No watchlist tickers in the red today 🎉
+          </div>
+        {:else}
+          <div class="space-y-1">
+            {#each $moversQ.data.losers as m (m.ticker)}
+              <a
+                href={`${base}/symbol/${encodeURIComponent(m.ticker)}`}
+                class="flex items-center gap-2 rounded-md border border-border-soft bg-surface-2/40 px-2 py-1 transition-colors hover:border-bad/40"
+              >
+                <TickerLink ticker={m.ticker} class="text-[12px]" />
+                <span class="text-[10px] text-faint">{m.asset_class}</span>
+                <span class="ml-auto text-[11.5px] tabular text-muted">
+                  {m.last_price !== null ? m.last_price.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '—'}
+                </span>
+                <span class="w-16 text-right text-[12px] tabular font-semibold text-bad">
+                  {m.change_1d_pct.toFixed(2)}%
+                </span>
+              </a>
+            {/each}
+          </div>
+        {/if}
+      </div>
     </div>
   </Card>
 {/if}

@@ -41,3 +41,19 @@ def ticker_stats(ticker: str, days: int = Query(365, ge=1)) -> dict | None:
     """TradingView-style summary: last price, day range, 52w range,
     volume, avg vol. None when ticker unknown."""
     return _portfolio.ticker_stats(ticker, days)
+
+
+@router.get("/markets/{ticker}/atr")
+def ticker_atr(ticker: str, period: int = Query(14, ge=2, le=60)) -> dict:
+    """Latest ATR + 2× and 1.5× stop suggestions — fuel for the
+    position-open form's "use ATR stop" hint."""
+    from ..analytics import volatility as _vol
+    return _vol.atr_for(ticker, period=period)
+
+
+@router.get("/markets/top-movers")
+def top_movers(limit: int = Query(8, ge=1, le=30)) -> dict:
+    """Top gainers + losers in the watchlist by 1d %. Yahoo Finance
+    style — feeds the Overview "Top movers" panel."""
+    from ..analytics import volatility as _vol
+    return _vol.top_movers(limit=limit)

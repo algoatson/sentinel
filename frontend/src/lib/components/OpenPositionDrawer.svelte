@@ -12,8 +12,9 @@
    * moment it opens). Other modes leave the stop blank — set it
    * later via the risk drawer.
    */
-  import { createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { openPosition, type OpenRequest } from '$api';
+  import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
+  import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
+  import { openPosition, tickerAtr, type OpenRequest } from '$api';
   import Drawer from './Drawer.svelte';
   import Spinner from './Spinner.svelte';
   import { toast } from '$lib/toast.svelte';
@@ -58,6 +59,19 @@
   });
 
   const selectedFund = $derived(funds.find((f) => f.name === fundName));
+
+  // ATR for the entered ticker — drives the "Use ATR stop" suggestions
+  // when in risk mode. Only fetches once the user has typed ≥1 char
+  // and the drawer is open.
+  const atrTicker = $derived(
+    ticker.trim().toUpperCase().replace(/^\$/, '')
+  );
+  const atrQ = createQuery(reactiveQueryOptions(() => ({
+    queryKey: ['atr', atrTicker],
+    queryFn: () => tickerAtr(atrTicker),
+    enabled: open && atrTicker.length >= 1,
+    staleTime: 5 * 60_000
+  })));
 
   const qc = useQueryClient();
   const openM = createMutation({
@@ -241,6 +255,38 @@
           <Calculator class="h-3 w-3" />
           qty = (equity × risk%) / |mark − stop| · stop persists with the trade
         </div>
+        {#if $atrQ.data && $atrQ.data.atr !== null}
+          {@const a = $atrQ.data}
+          {@const tight = side === 'long'
+            ? a.suggested_long_stop_tight
+            : a.suggested_short_stop_tight}
+          {@const wide = side === 'long'
+            ? a.suggested_long_stop
+            : a.suggested_short_stop}
+          <div class="mt-2 flex flex-wrap items-center gap-1.5 rounded-md border border-warn/25 bg-warn-soft/30 px-2 py-1.5 text-[10.5px]">
+            <span class="text-faint">ATR{a.period}:</span>
+            <span class="tabular text-warn">{a.atr?.toFixed(2)}</span>
+            {#if a.atr_pct !== null}
+              <span class="text-faint">({a.atr_pct.toFixed(2)}%)</span>
+            {/if}
+            {#if tight !== null}
+              <button
+                type="button"
+                onclick={() => (stopPrice = tight.toFixed(2))}
+                class="ml-auto rounded border border-border bg-surface-2 px-1.5 py-0.5 font-mono tabular text-muted transition-colors hover:border-warn/40 hover:text-text"
+                title="1.5× ATR — tighter; gets stopped on more wiggles"
+              >1.5× {tight.toFixed(2)}</button>
+            {/if}
+            {#if wide !== null}
+              <button
+                type="button"
+                onclick={() => (stopPrice = wide.toFixed(2))}
+                class="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 font-mono tabular text-warn transition-colors hover:bg-warn/20"
+                title="2× ATR — default; balances noise rejection vs locked risk"
+              >2× {wide.toFixed(2)}</button>
+            {/if}
+          </div>
+        {/if}
       {/if}
     </div>
 

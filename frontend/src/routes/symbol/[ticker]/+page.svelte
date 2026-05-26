@@ -3,7 +3,8 @@
   import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
   import { page } from '$app/state';
   import { base } from '$app/paths';
-  import { symbolProfile, tickerChart } from '$api';
+  import { symbolProfile, tickerChart, wallets as walletsApi } from '$api';
+  import OpenPositionDrawer from '$components/OpenPositionDrawer.svelte';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import Delta from '$components/Delta.svelte';
@@ -27,6 +28,17 @@
     { label: 'All', days: null }
   ];
   let chartRange: Range = $state(RANGES[1]);
+
+  // Manual paper-trade open from a symbol page. Pre-fills the
+  // drawer with the symbol so user goes ticker → 1 click → fill
+  // sizing → open.
+  let openTradeOpen = $state(false);
+  let openSide: 'long' | 'short' = $state('long');
+  const walletsQ = createQuery({
+    queryKey: ['wallets'],
+    queryFn: walletsApi,
+    refetchInterval: 60_000
+  });
 
   const profileQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['symbol-profile', ticker],
@@ -129,7 +141,21 @@
       {/if}
     </div>
 
-    <div class="flex items-center gap-1">
+    <div class="flex items-center gap-2">
+      <button
+        type="button"
+        onclick={() => { openSide = 'long'; openTradeOpen = true; }}
+        class="rounded-md border border-good/40 bg-good-soft px-2.5 py-1.5 text-[11.5px] font-medium text-good transition-colors hover:bg-good/15"
+        title="Open long paper position on this ticker"
+      >Buy ${ticker}</button>
+      <button
+        type="button"
+        onclick={() => { openSide = 'short'; openTradeOpen = true; }}
+        class="rounded-md border border-bad/40 bg-bad-soft px-2.5 py-1.5 text-[11.5px] font-medium text-bad transition-colors hover:bg-bad/15"
+        title="Open short paper position on this ticker"
+      >Short ${ticker}</button>
+
+      <span class="mx-1 text-faint">·</span>
       {#each RANGES as r (r.label)}
         <button
           onclick={() => (chartRange = r)}
@@ -465,4 +491,14 @@
       {/if}
     {/if}
   </div>
+
+  <!-- ── manual paper-trade open drawer ─────────────────── -->
+  <OpenPositionDrawer
+    open={openTradeOpen}
+    onClose={() => (openTradeOpen = false)}
+    funds={($walletsQ.data ?? []).map((w) => ({
+      name: w.name, mandate: w.mandate, equity: w.equity
+    }))}
+    preset={{ ticker, side: openSide }}
+  />
 {/if}

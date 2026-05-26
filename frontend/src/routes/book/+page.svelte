@@ -49,6 +49,10 @@
 
   let confirmId = $state<number | null>(null);
   let bulkConfirm = $state(false);
+  /** When true, clicking a row toggles selection. When false, click
+   * opens the drawer. Mirrors how IBKR TWS / TOS work — a "select
+   * mode" pill keeps the day-to-day click-to-inspect flow clean. */
+  let selectMode = $state(false);
   const selected = $state(new Set<number>());
 
   let drawerId = $state<number | null>(null);
@@ -416,6 +420,24 @@
       <span class={onlyHasRisk ? 'text-text' : 'text-muted'}>Has stop/target</span>
     </label>
 
+    <button
+      type="button"
+      onclick={() => {
+        selectMode = !selectMode;
+        if (!selectMode) selected.clear();
+      }}
+      class={[
+        'flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] transition-colors',
+        selectMode
+          ? 'border-primary/50 bg-primary-soft text-primary'
+          : 'border-border bg-surface-2 text-muted hover:text-text'
+      ].join(' ')}
+      title="Toggle multi-select rows for bulk actions"
+    >
+      <Layers class="h-3 w-3" />
+      {selectMode ? 'Selecting' : 'Select'}
+    </button>
+
     <input
       type="text"
       bind:value={tickerFilter}
@@ -475,15 +497,17 @@
       <table class="w-full text-[12.5px] tabular">
         <thead>
           <tr class="border-b border-border bg-surface-2/40 text-[10px] uppercase tracking-wider text-faint">
-            <th class="w-8 px-2 py-2 text-center">
-              <input
-                type="checkbox"
-                checked={selected.size === sorted.length && sorted.length > 0}
-                indeterminate={selected.size > 0 && selected.size < sorted.length}
-                onchange={toggleAll}
-                class="h-3 w-3 cursor-pointer accent-primary"
-              />
-            </th>
+            {#if selectMode}
+              <th class="w-8 px-2 py-2 text-center">
+                <input
+                  type="checkbox"
+                  checked={selected.size === sorted.length && sorted.length > 0}
+                  indeterminate={selected.size > 0 && selected.size < sorted.length}
+                  onchange={toggleAll}
+                  class="h-3 w-3 cursor-pointer accent-primary"
+                />
+              </th>
+            {/if}
             {#snippet th(label: string, k: SortKey, align: 'left' | 'right' = 'right')}
               <th
                 class={[
@@ -507,43 +531,61 @@
             {@render th('%', 'upnl_pct')}
             {@render th('R', 'r')}
             {@render th('% Eq', 'pct_eq')}
-            <th class="px-3 py-2 text-left font-semibold">Stop · Target</th>
+            <th class="px-3 py-2 text-left font-semibold">Risk · Note</th>
             {@render th('Age', 'age')}
-            <th class="px-3 py-2 text-right font-semibold">Action</th>
           </tr>
         </thead>
         <tbody>
           {#each sorted as p (p.id)}
             {@const checked = selected.has(p.id)}
-            <tr class={[
-              'border-b border-border-soft hover:bg-white/[0.02]',
-              checked ? 'bg-primary-soft/30' : ''
-            ].join(' ')}>
-              <td class="px-2 py-1.5 text-center">
-                <input
-                  type="checkbox"
-                  {checked}
-                  onchange={() => toggle(p.id)}
-                  class="h-3 w-3 cursor-pointer accent-primary"
-                />
+            {@const hasRisk =
+              p.stop_price !== null || p.target_price !== null || p.trailing_stop_pct !== null}
+            {@const stopWarn =
+              p.dist_to_stop_pct !== null && p.dist_to_stop_pct < 5}
+            <tr
+              class={[
+                'group cursor-pointer border-b border-border-soft transition-colors',
+                checked
+                  ? 'bg-primary-soft/40 hover:bg-primary-soft/50'
+                  : 'hover:bg-white/[0.03]'
+              ].join(' ')}
+              onclick={(e) => {
+                // Don't hijack the explicit Close confirmation flow
+                if (confirmId === p.id) return;
+                if (selectMode) toggle(p.id);
+                else drawerId = p.id;
+              }}
+            >
+              {#if selectMode}
+                <td class="px-2 py-1.5 text-center" onclick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    {checked}
+                    onchange={() => toggle(p.id)}
+                    class="h-3 w-3 cursor-pointer accent-primary"
+                  />
+                </td>
+              {/if}
+              <td class="px-3 py-2 text-left text-muted capitalize" title={p.fund_mandate}>{p.fund}</td>
+              <td class="px-3 py-2 text-left" onclick={(e) => e.stopPropagation()}>
+                <TickerLink ticker={p.ticker} />
               </td>
-              <td class="px-3 py-1.5 text-left text-muted capitalize" title={p.fund_mandate}>{p.fund}</td>
-              <td class="px-3 py-1.5 text-left"><TickerLink ticker={p.ticker} /></td>
-              <td class="px-3 py-1.5 text-left">
+              <td class="px-3 py-2 text-left">
                 <Pill variant={p.side === 'long' ? 'pos' : 'neg'}>{p.side.toUpperCase()}</Pill>
               </td>
-              <td class="px-3 py-1.5 text-right">{price(p.entry)}</td>
-              <td class={['px-3 py-1.5 text-right', p.mark_live ? '' : 'text-faint'].join(' ')}>
+              <td class="px-3 py-2 text-right">{price(p.entry)}</td>
+              <td class={['px-3 py-2 text-right', p.mark_live ? '' : 'text-faint'].join(' ')}
+                  title={p.mark_live ? '' : 'No live quote — falls back to entry'}>
                 {price(p.mark)}{p.mark_live ? '' : '*'}
               </td>
-              <td class={['px-3 py-1.5 text-right font-medium', p.upnl >= 0 ? 'text-good' : 'text-bad'].join(' ')}>
+              <td class={['px-3 py-2 text-right font-medium', p.upnl >= 0 ? 'text-good' : 'text-bad'].join(' ')}>
                 {usd(p.upnl, true)}
               </td>
-              <td class={['px-3 py-1.5 text-right', p.upnl_pct >= 0 ? 'text-good' : 'text-bad'].join(' ')}>
+              <td class={['px-3 py-2 text-right', p.upnl_pct >= 0 ? 'text-good' : 'text-bad'].join(' ')}>
                 {p.upnl_pct >= 0 ? '+' : ''}{p.upnl_pct.toFixed(2)}%
               </td>
               <td class={[
-                'px-3 py-1.5 text-right font-medium',
+                'px-3 py-2 text-right font-medium',
                 p.r_multiple === null ? 'text-faint'
                   : p.r_multiple >= 1 ? 'text-good'
                   : p.r_multiple <= -0.7 ? 'text-bad' : 'text-text'
@@ -553,113 +595,58 @@
                   : '—'}
               </td>
               <td class={[
-                'px-3 py-1.5 text-right',
-                p.pct_of_equity >= 25 ? 'text-warn' : p.pct_of_equity >= 50 ? 'text-bad' : 'text-muted'
-              ].join(' ')}>
+                'px-3 py-2 text-right',
+                p.pct_of_equity >= 50 ? 'text-bad' :
+                p.pct_of_equity >= 25 ? 'text-warn' : 'text-muted'
+              ].join(' ')}
+                  title="Position notional as % of wallet equity">
                 {p.pct_of_equity.toFixed(1)}%
               </td>
-              <td class="px-3 py-1.5 text-left">
-                {#if p.stop_price === null && p.target_price === null && p.trailing_stop_pct === null}
-                  <button
-                    type="button"
-                    onclick={() => (drawerId = p.id)}
-                    class="inline-flex items-center gap-1 rounded border border-border-soft bg-surface-2/40 px-1.5 py-0.5 text-[10px] text-faint hover:border-primary/40 hover:text-text"
-                  >
-                    <Edit3 class="h-2.5 w-2.5" />
-                    Set
-                  </button>
-                {:else}
-                  <button
-                    type="button"
-                    onclick={() => (drawerId = p.id)}
-                    class="inline-flex items-center gap-1 text-[10.5px] tabular hover:underline"
-                  >
-                    {#if p.stop_price !== null}
-                      <span class="text-bad">↓ {price(p.stop_price)}</span>
-                    {/if}
-                    {#if p.target_price !== null}
-                      <span class="text-good">↑ {price(p.target_price)}</span>
-                    {/if}
-                    {#if p.trailing_stop_pct !== null}
-                      <span class="text-warn">trail {(p.trailing_stop_pct * 100).toFixed(0)}%</span>
-                    {/if}
-                  </button>
-                {/if}
+              <td class="px-3 py-2 text-left">
+                <!-- Risk/note: compact icon pills. Stop chip glows red
+                     when within 5% of the trigger; target chip green;
+                     trail chip warn; note chip clickable for full text -->
+                <span class="inline-flex items-center gap-1 text-[10.5px] tabular">
+                  {#if p.stop_price !== null}
+                    <span
+                      class={[
+                        'inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5',
+                        stopWarn
+                          ? 'border-bad/60 bg-bad-soft text-bad font-semibold'
+                          : 'border-bad/25 bg-bad-soft/40 text-bad/90'
+                      ].join(' ')}
+                      title={stopWarn
+                        ? `WARNING: ${p.dist_to_stop_pct!.toFixed(1)}% from stop`
+                        : `Stop at ${price(p.stop_price)} (${p.dist_to_stop_pct?.toFixed(1)}% away)`}
+                    >↓ {price(p.stop_price)}</span>
+                  {/if}
+                  {#if p.target_price !== null}
+                    <span
+                      class="inline-flex items-center gap-0.5 rounded border border-good/25 bg-good-soft/40 px-1.5 py-0.5 text-good/90"
+                      title={`Target ${price(p.target_price)} (${p.dist_to_target_pct?.toFixed(1)}% away)`}
+                    >↑ {price(p.target_price)}</span>
+                  {/if}
+                  {#if p.trailing_stop_pct !== null}
+                    <span
+                      class="inline-flex items-center gap-0.5 rounded border border-warn/25 bg-warn-soft/40 px-1.5 py-0.5 text-warn/90"
+                      title={`Trailing ${(p.trailing_stop_pct * 100).toFixed(0)}% off watermark ${p.watermark_price !== null ? price(p.watermark_price) : '—'}`}
+                    >⇣{(p.trailing_stop_pct * 100).toFixed(0)}%</span>
+                  {/if}
+                  {#if p.notes}
+                    <Edit3
+                      class="h-3 w-3 text-muted"
+                      aria-label="Has notes"
+                    />
+                  {/if}
+                  {#if !hasRisk && !p.notes}
+                    <span class="text-faint italic">no rules</span>
+                  {/if}
+                </span>
               </td>
-              <td class="px-3 py-1.5 text-right text-[10.5px] text-faint">
+              <td class="px-3 py-2 text-right text-[11px] text-faint">
                 {p.age_h < 24 ? `${p.age_h.toFixed(1)}h` : `${Math.round(p.age_h / 24)}d`}
               </td>
-              <td class="px-3 py-1.5 text-right">
-                {#if confirmId === p.id}
-                  <span class="inline-flex items-center gap-1">
-                    <button
-                      type="button"
-                      onclick={() => $closeM.mutate(p.id)}
-                      disabled={$closeM.isPending}
-                      class="rounded-md border border-bad/40 bg-bad-soft px-2 py-0.5 text-[10.5px] font-medium text-bad hover:bg-bad/15 disabled:opacity-50"
-                    >Confirm</button>
-                    <button
-                      type="button"
-                      onclick={() => (confirmId = null)}
-                      class="rounded-md border border-border bg-surface-2 px-2 py-0.5 text-[10.5px] text-muted hover:text-text"
-                    >×</button>
-                  </span>
-                {:else}
-                  <span class="inline-flex items-center gap-1">
-                    <button
-                      type="button"
-                      onclick={() => (drawerId = p.id)}
-                      title="Edit risk + notes"
-                      class="rounded-md border border-border bg-surface-2 px-1.5 py-0.5 text-faint transition-colors hover:border-primary/40 hover:text-text"
-                    ><MoreVertical class="h-2.5 w-2.5" /></button>
-                    <button
-                      type="button"
-                      onclick={() => (confirmId = p.id)}
-                      title="Close at mark"
-                      class="rounded-md border border-border bg-surface-2 px-2 py-0.5 text-[10.5px] text-muted hover:border-bad/30 hover:text-bad"
-                    ><X class="h-2.5 w-2.5 inline" /> Close</button>
-                  </span>
-                {/if}
-              </td>
             </tr>
-            <!-- risk-reward bar row -->
-            {#if p.stop_price !== null || p.target_price !== null || p.notes}
-              <tr class="border-b border-border-soft bg-surface-2/20">
-                <td colspan="13" class="px-4 py-1">
-                  <div class="flex items-center gap-3 text-[10.5px] tabular text-faint">
-                    {#if p.dist_to_stop_pct !== null}
-                      <span class="flex items-center gap-1">
-                        <Shield class="h-2.5 w-2.5 text-bad" />
-                        <span class={p.dist_to_stop_pct < 5 ? 'text-bad' : p.dist_to_stop_pct < 10 ? 'text-warn' : 'text-muted'}>
-                          {p.dist_to_stop_pct.toFixed(1)}% to stop
-                        </span>
-                      </span>
-                    {/if}
-                    {#if p.dist_to_target_pct !== null}
-                      <span class="flex items-center gap-1">
-                        <TargetIcon class="h-2.5 w-2.5 text-good" />
-                        <span class="text-muted">{p.dist_to_target_pct.toFixed(1)}% to target</span>
-                      </span>
-                    {/if}
-                    {#if p.watermark_price !== null}
-                      <span class="text-warn">trail wm {price(p.watermark_price)}</span>
-                    {/if}
-                    {#if p.notes}
-                      <span class="ml-auto max-w-md truncate italic text-muted" title={p.notes}>
-                        "{p.notes}"
-                      </span>
-                    {/if}
-                  </div>
-                </td>
-              </tr>
-            {/if}
-            {#if p.open_reason}
-              <tr class="border-b border-border-soft">
-                <td colspan="13" class="bg-surface-2/30 px-4 py-1 text-[10.5px] text-faint">
-                  <span class="text-muted">opened:</span> {p.open_reason}
-                </td>
-              </tr>
-            {/if}
           {/each}
         </tbody>
       </table>
@@ -715,6 +702,72 @@
           </div>
         </div>
       </div>
+
+      <!-- secondary metrics -->
+      <div class="grid grid-cols-3 gap-2 text-center">
+        <div class="rounded-md border border-border bg-surface-2 px-2 py-1.5">
+          <div class="text-[10px] uppercase tracking-wider text-faint">R-multiple</div>
+          <div class={[
+            'mt-0.5 text-[13px] tabular font-medium',
+            drawerRow.r_multiple === null ? 'text-faint'
+              : drawerRow.r_multiple >= 1 ? 'text-good'
+              : drawerRow.r_multiple <= -0.7 ? 'text-bad' : 'text-text'
+          ].join(' ')}>
+            {drawerRow.r_multiple !== null
+              ? (drawerRow.r_multiple >= 0 ? '+' : '') + drawerRow.r_multiple.toFixed(2) + 'R'
+              : '—'}
+          </div>
+        </div>
+        <div class="rounded-md border border-border bg-surface-2 px-2 py-1.5">
+          <div class="text-[10px] uppercase tracking-wider text-faint">% Equity</div>
+          <div class={[
+            'mt-0.5 text-[13px] tabular',
+            drawerRow.pct_of_equity >= 50 ? 'text-bad' :
+            drawerRow.pct_of_equity >= 25 ? 'text-warn' : 'text-text'
+          ].join(' ')}>{drawerRow.pct_of_equity.toFixed(1)}%</div>
+        </div>
+        <div class="rounded-md border border-border bg-surface-2 px-2 py-1.5">
+          <div class="text-[10px] uppercase tracking-wider text-faint">Held</div>
+          <div class="mt-0.5 text-[13px] tabular text-text">
+            {drawerRow.age_h < 24 ? `${drawerRow.age_h.toFixed(1)}h` : `${Math.round(drawerRow.age_h / 24)}d`}
+          </div>
+        </div>
+      </div>
+
+      <!-- distance bars when stops/targets set -->
+      {#if drawerRow.dist_to_stop_pct !== null || drawerRow.dist_to_target_pct !== null}
+        <div class="space-y-1.5">
+          {#if drawerRow.dist_to_stop_pct !== null}
+            <div class="flex items-center gap-2 text-[11px]">
+              <Shield class="h-3 w-3 text-bad" />
+              <span class={[
+                'flex-1 tabular',
+                drawerRow.dist_to_stop_pct < 5 ? 'text-bad font-medium'
+                  : drawerRow.dist_to_stop_pct < 10 ? 'text-warn' : 'text-muted'
+              ].join(' ')}>
+                {drawerRow.dist_to_stop_pct.toFixed(2)}% to stop
+                {#if drawerRow.dist_to_stop_pct < 5}<span class="ml-1">⚠ close!</span>{/if}
+              </span>
+            </div>
+          {/if}
+          {#if drawerRow.dist_to_target_pct !== null}
+            <div class="flex items-center gap-2 text-[11px]">
+              <TargetIcon class="h-3 w-3 text-good" />
+              <span class="flex-1 tabular text-muted">
+                {drawerRow.dist_to_target_pct.toFixed(2)}% to target
+              </span>
+            </div>
+          {/if}
+          {#if drawerRow.watermark_price !== null}
+            <div class="flex items-center gap-2 text-[11px]">
+              <TrendingUp class="h-3 w-3 text-warn" />
+              <span class="flex-1 tabular text-muted">
+                Trailing watermark @ {price(drawerRow.watermark_price)}
+              </span>
+            </div>
+          {/if}
+        </div>
+      {/if}
 
       <!-- risk form -->
       <div>
