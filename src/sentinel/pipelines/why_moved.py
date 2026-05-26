@@ -482,6 +482,8 @@ async def _run() -> None:
                 model="heavy",
                 max_tokens=700,
                 max_iterations=3,
+                pipeline="why_moved",
+                ticker=ticker,
             )
             body = loop_res.text
             if loop_res.tool_calls:

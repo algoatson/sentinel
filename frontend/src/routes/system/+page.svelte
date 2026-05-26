@@ -6,6 +6,7 @@
   import StatTile from '$components/StatTile.svelte';
   import Spinner from '$components/Spinner.svelte';
   import LogPanel from '$components/LogPanel.svelte';
+  import ToolCallsPanel from '$components/ToolCallsPanel.svelte';
   import { compact } from '$lib/format';
   import { Cog, AlertTriangle, AlertOctagon, CheckCircle2 } from 'lucide-svelte';
 
@@ -230,6 +231,10 @@
         </div>
       {/if}
     </Card>
+  </div>
+
+  <div class="mt-4">
+    <ToolCallsPanel />
   </div>
 
   <div class="mt-4">

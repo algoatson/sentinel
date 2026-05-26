@@ -692,6 +692,30 @@ export interface DailyPlan {
   updated_at: string | null;
 }
 export const getDailyPlan = () => get<DailyPlan>('/plan/today');
+export interface ToolCallEvent {
+  id: number;
+  ts: string;
+  pipeline: string;
+  tool: string;
+  ticker: string | null;
+  iteration: number | null;
+  arguments: Record<string, unknown>;
+  result_summary: string;
+  ok: boolean;
+  took_ms: number | null;
+}
+export interface ToolCallSnapshot {
+  items: ToolCallEvent[];
+  stats: {
+    count: number;
+    errors: number;
+    by_tool: Record<string, number>;
+    by_pipeline: Record<string, number>;
+  };
+}
+export const recentToolCalls = (limit = 60) =>
+  get<ToolCallSnapshot>(`/health/tool-calls?limit=${limit}`);
+
 export const putDailyPlan = (body: string) =>
   fetch('/api/plan/today', {
     method: 'PUT',

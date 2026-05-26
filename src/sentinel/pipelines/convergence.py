@@ -297,6 +297,8 @@ async def _run() -> None:
                 model="heavy",
                 max_tokens=650,
                 max_iterations=3,
+                pipeline="convergence",
+                ticker=ticker,
             )
             synthesis = loop_res.text
             if loop_res.tool_calls:

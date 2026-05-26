@@ -25,11 +25,13 @@ most modern providers speak natively.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
 from loguru import logger
 
+from . import llm_tool_log
 from .llm import LLM_ERROR_SENTINEL, get_llm
 
 
@@ -163,6 +165,8 @@ def tool_loop(
     max_iterations: int = 3,
     grounded: bool = True,
     temperature: float = 0.6,
+    pipeline: str = "unknown",
+    ticker: str | None = None,
 ) -> LoopResult:
     """Run a tool-calling conversation. Stops when the model returns a
     plain content message OR ``max_iterations`` is reached OR the API
@@ -287,10 +291,22 @@ def tool_loop(
                 })
                 continue
             tool = registry._tools.get(name)
+            t0 = time.monotonic()
             result = registry.call(name, args)
+            took_ms = (time.monotonic() - t0) * 1000
             all_calls.append(
                 {"name": name, "arguments": args,
                  "result": result, "iteration": iterations}
+            )
+            # Telemetry — best-effort; never raises.
+            llm_tool_log.record(
+                pipeline=pipeline,
+                tool=name,
+                arguments=args,
+                result=result,
+                ticker=ticker,
+                iteration=iterations,
+                took_ms=took_ms,
             )
             messages.append({
                 "role": "tool",

@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 
 from .. import health as _health_mod
+from .. import llm_tool_log
 from ..dashboard import logbuf, sysinfo
 
 
@@ -19,6 +20,20 @@ def health_report() -> dict:
 @router.get("/health/system")
 def system_metrics() -> dict:
     return sysinfo.snapshot()
+
+
+@router.get("/health/tool-calls")
+def tool_calls(
+    limit: int = Query(60, ge=1, le=500),
+    since_id: int | None = None,
+) -> dict:
+    """Recent LLM tool calls (in-memory ring; bounded to ~500 entries).
+    Each entry: pipeline / tool / ticker / iteration / arguments /
+    result_summary / ok / took_ms. Use ``since_id`` for incremental polls."""
+    return {
+        "items": llm_tool_log.recent(limit=limit, since_id=since_id),
+        "stats": llm_tool_log.stats(),
+    }
 
 
 @router.get("/health/logs")

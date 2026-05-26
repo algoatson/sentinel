@@ -16,6 +16,7 @@
   import HoldingsTape from '$components/HoldingsTape.svelte';
   import StreakCard from '$components/StreakCard.svelte';
   import DailyPlanCard from '$components/DailyPlanCard.svelte';
+  import LiveEvents from '$components/LiveEvents.svelte';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
   import { usd, compact, timeAgo, pct, tone, stripMd } from '$lib/format';
@@ -130,10 +131,11 @@
   </div>
 </div>
 
-<!-- ── TODAY'S PULSE + book tape + daily plan ────────────────────────── -->
+<!-- ── TODAY'S PULSE + book tape + live events + daily plan ─────────── -->
 <div class="mb-4 space-y-2">
   <TodayPulse />
   <HoldingsTape />
+  <LiveEvents />
   <DailyPlanCard />
 </div>
 
