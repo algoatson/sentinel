@@ -1354,12 +1354,31 @@ async def _handle_thread(msg: discord.Message, bot: discord.Client) -> None:
             await msg.channel.send(_p)
 
 
+async def answer_question_with_meta(
+    question: str,
+    *,
+    max_tokens: int = 1600,
+    use_tools: bool = True,
+) -> dict:
+    """Same shape as `answer_question` but returns ``{answer,
+    tool_calls}`` so the caller can surface which tools the model
+    used. Discord callers keep using the string-returning wrapper
+    below."""
+    text = await answer_question(
+        question, max_tokens=max_tokens, use_tools=use_tools, _capture=True,
+    )
+    if isinstance(text, dict):
+        return text
+    return {"answer": text, "tool_calls": []}
+
+
 async def answer_question(
     question: str,
     *,
     max_tokens: int = 1600,
     use_tools: bool = True,
-) -> str:
+    _capture: bool = False,
+) -> str | dict:
     """The single free-form Q&A path: retrieve grounding context, ask the
     LLM, return the raw answer text.
 
@@ -1420,6 +1439,19 @@ async def answer_question(
             ticker=ticker_hint,
         )
         if loop_res.text:
+            if _capture:
+                # Strip everything but the names/args/iterations — the
+                # full result blobs are heavy and already visible on
+                # /system → ToolCallsPanel.
+                meta_calls = [
+                    {
+                        "name": c["name"],
+                        "arguments": c.get("arguments") or {},
+                        "iteration": c.get("iteration"),
+                    }
+                    for c in loop_res.tool_calls
+                ]
+                return {"answer": loop_res.text, "tool_calls": meta_calls}
             return loop_res.text
         # Loop returned empty — fall through to the one-shot path
         # rather than surface "[LLM_ERROR]" prematurely.
@@ -1428,7 +1460,9 @@ async def answer_question(
         get_llm().complete, rendered, model="light", max_tokens=max_tokens
     )
     if not reply or reply.startswith("[LLM_ERROR]"):
-        return "[LLM_ERROR]"
+        return {"answer": "[LLM_ERROR]", "tool_calls": []} if _capture else "[LLM_ERROR]"
+    if _capture:
+        return {"answer": reply, "tool_calls": []}
     return reply
 
 

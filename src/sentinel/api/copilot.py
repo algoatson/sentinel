@@ -28,7 +28,7 @@ class AskRequest(BaseModel):
 async def ask(body: AskRequest) -> dict:
     from .. import chat
 
-    answer = await chat.answer_question(
+    res = await chat.answer_question_with_meta(
         body.question, max_tokens=1600, use_tools=body.deep,
     )
-    return {"answer": answer}
+    return res

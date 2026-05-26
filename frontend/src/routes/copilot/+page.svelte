@@ -1,15 +1,16 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { browser } from '$app/environment';
-  import { askCopilot } from '$api';
+  import { askCopilot, type CopilotToolCall } from '$api';
   import Markdown from '$components/Markdown.svelte';
   import Spinner from '$components/Spinner.svelte';
-  import { Sparkles, Send, User } from 'lucide-svelte';
+  import { Sparkles, Send, User, Wrench } from 'lucide-svelte';
 
   interface Turn {
     role: 'user' | 'bot';
     content: string;
     error?: boolean;
+    tool_calls?: CopilotToolCall[];
   }
 
   const EXAMPLES = [
@@ -71,7 +72,10 @@
     await scrollToBottom();
     try {
       const r = await askCopilot(q, { deep });
-      turns = [...turns, { role: 'bot', content: r.answer }];
+      turns = [
+        ...turns,
+        { role: 'bot', content: r.answer, tool_calls: r.tool_calls }
+      ];
     } catch (e) {
       turns = [
         ...turns,
@@ -160,6 +164,22 @@
                   <div class="text-[12px] text-bad">{t.content}</div>
                 {:else}
                   <Markdown source={t.content} />
+                  {#if t.tool_calls && t.tool_calls.length}
+                    <div class="mt-2 flex flex-wrap items-center gap-1 border-t border-border-soft pt-1.5 text-[10px] text-faint">
+                      <Wrench class="h-2.5 w-2.5" />
+                      <span class="uppercase tracking-wider">tools used</span>
+                      {#each t.tool_calls as c (`${c.iteration}-${c.name}`)}
+                        {@const args = Object.entries(c.arguments ?? {})
+                          .filter(([k]) => k !== 'limit')
+                          .map(([_, v]) => String(v))
+                          .join(', ')}
+                        <span
+                          class="rounded border border-border bg-surface px-1 py-0.5 font-mono text-muted"
+                          title={JSON.stringify(c.arguments)}
+                        >{c.name}{args ? `(${args})` : ''}</span>
+                      {/each}
+                    </div>
+                  {/if}
                 {/if}
               </div>
             </div>

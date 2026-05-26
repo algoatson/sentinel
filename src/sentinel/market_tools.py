@@ -34,6 +34,8 @@ from .models import (
     NewsItem,
     PriceBar,
     PriceContext,
+    Thesis,
+    TradingCall,
     Watchlist,
 )
 
@@ -386,6 +388,168 @@ def get_holdings(ticker: str | None = None) -> dict:
                 "ticker": t.ticker, "side": t.side,
                 "qty": t.qty, "entry": t.entry_price,
                 "stop": t.stop_price, "target": t.target_price,
+            }
+            for t in rows
+        ],
+    }
+
+
+@TOOLS.tool(
+    description=(
+        "Recent bot trading-calls on a ticker (synthesis / convergence "
+        "/ why_moved / research). Shows direction, conviction, source, "
+        "thesis sentence, and the 1d/5d/20d return mark if scored. Use "
+        "to ground 'what has the bot been saying about $X' questions."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string"},
+            "days":   {"type": "integer", "minimum": 1, "maximum": 180, "default": 30},
+            "limit":  {"type": "integer", "minimum": 1, "maximum": 20, "default": 6},
+        },
+        "required": ["ticker"],
+    },
+)
+def recent_calls(ticker: str, days: int = 30, limit: int = 6) -> dict:
+    sym = _norm(ticker)
+    days = max(1, min(int(days), 180))
+    limit = max(1, min(int(limit), 20))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    with session_scope() as s:
+        rows = s.exec(
+            select(TradingCall)
+            .where(TradingCall.ticker == sym)
+            .where(TradingCall.created_at >= cutoff)
+            .order_by(TradingCall.created_at.desc())
+            .limit(limit)
+        ).all()
+    return {
+        "ticker": sym,
+        "calls": [
+            {
+                "id": c.id,
+                "direction": c.direction,
+                "conviction": c.conviction,
+                "source": c.source,
+                "thesis": (c.thesis or "")[:280],
+                "created_at": (
+                    c.created_at.replace(tzinfo=timezone.utc)
+                    if c.created_at.tzinfo is None else c.created_at
+                ).isoformat(),
+                "ret_1d_pct": c.ret_1d_pct,
+                "ret_5d_pct": c.ret_5d_pct,
+                "ret_20d_pct": c.ret_20d_pct,
+                "settled": c.settled,
+            }
+            for c in rows
+        ],
+    }
+
+
+@TOOLS.tool(
+    description=(
+        "Active long-form thesis on a ticker (if any). Theses are the "
+        "bot's persistent narratives across many calls/events; an "
+        "inactive thesis is closed and stays as audit trail."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string"},
+        },
+        "required": ["ticker"],
+    },
+)
+def active_thesis(ticker: str) -> dict:
+    sym = _norm(ticker)
+    with session_scope() as s:
+        rows = s.exec(
+            select(Thesis)
+            .where(Thesis.ticker == sym)
+            .where(Thesis.state == "active")
+            .order_by(Thesis.created_at.desc())
+            .limit(1)
+        ).all()
+    if not rows:
+        return {"ticker": sym, "thesis": None}
+    t = rows[0]
+    return {
+        "ticker": sym,
+        "thesis": {
+            "id": t.id,
+            "title": t.title,
+            "direction": t.direction,
+            "conviction": t.conviction,
+            "body": (t.body or "")[:600],
+            "invalidation": (t.invalidation_criteria or "")[:300],
+            "target_price": t.target_price,
+            "horizon_days": t.horizon_days,
+            "supporting_events": t.supporting_events,
+            "challenging_events": t.challenging_events,
+            "created_at": (
+                t.created_at.replace(tzinfo=timezone.utc)
+                if (t.created_at and t.created_at.tzinfo is None)
+                else t.created_at
+            ).isoformat() if t.created_at else None,
+        },
+    }
+
+
+@TOOLS.tool(
+    description=(
+        "Recent FundTrade history on a ticker — opens + closes by the "
+        "autonomous wallets. Use to know whether the bot has traded "
+        "this name recently and how it went."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string"},
+            "days":   {"type": "integer", "minimum": 1, "maximum": 365, "default": 90},
+            "limit":  {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+        },
+        "required": ["ticker"],
+    },
+)
+def recent_trades(ticker: str, days: int = 90, limit: int = 10) -> dict:
+    sym = _norm(ticker)
+    days = max(1, min(int(days), 365))
+    limit = max(1, min(int(limit), 20))
+    cutoff_naive = (
+        datetime.now(timezone.utc) - timedelta(days=days)
+    ).replace(tzinfo=None)
+    with session_scope() as s:
+        rows = s.exec(
+            select(FundTrade)
+            .where(FundTrade.ticker == sym)
+            .where(FundTrade.entry_at >= cutoff_naive)
+            .order_by(FundTrade.entry_at.desc())
+            .limit(limit)
+        ).all()
+    def _iso(dt):
+        if dt is None:
+            return None
+        return (
+            dt.replace(tzinfo=timezone.utc)
+            if dt.tzinfo is None else dt
+        ).isoformat()
+    return {
+        "ticker": sym,
+        "trades": [
+            {
+                "id": t.id,
+                "fund_id": t.fund_id,
+                "side": t.side,
+                "qty": t.qty,
+                "entry": t.entry_price,
+                "exit": t.exit_price,
+                "status": t.status,
+                "entry_at": _iso(t.entry_at),
+                "exit_at": _iso(t.exit_at),
+                "realized_pnl": t.realized_pnl,
+                "open_reason": t.open_reason,
+                "close_reason": t.close_reason,
             }
             for t in rows
         ],

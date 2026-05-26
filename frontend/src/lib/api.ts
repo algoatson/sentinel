@@ -240,8 +240,17 @@ export const lookup = (kind: string, arg: string = '') => {
 };
 
 /* ─── copilot ─── */
+export interface CopilotToolCall {
+  name: string;
+  arguments: Record<string, unknown>;
+  iteration: number | null;
+}
+export interface CopilotAnswer {
+  answer: string;
+  tool_calls: CopilotToolCall[];
+}
 export const askCopilot = (question: string, opts: { deep?: boolean } = {}) =>
-  post<{ answer: string }>('/copilot/ask', {
+  post<CopilotAnswer>('/copilot/ask', {
     question,
     deep: opts.deep ?? true,
   });
