@@ -20,6 +20,7 @@ import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from string import Template
+from typing import Any
 
 import discord
 from loguru import logger
@@ -29,7 +30,9 @@ from .. import discord_client
 from ..config import settings
 from ..db import session_scope
 from ..llm import LLM_ERROR_SENTINEL, get_llm
-from ..models import Filing, HnMention, NewsItem, PriceContext, RedditMention, Watchlist
+from ..models import (
+    Filing, HnMention, NewsItem, PriceBar, PriceContext, RedditMention, Watchlist,
+)
 from ..portfolio import is_held
 
 
@@ -229,7 +232,99 @@ def _gather_market_context(session, ticker: str, asset_class: str) -> dict:
     return out
 
 
-def _gather_evidence(ticker: str, asset_class: str) -> dict:
+def _vol_context(session, ticker: str, change_1d_pct: float) -> dict:
+    """ATR(14) and recent-bars snapshot for `ticker`.
+
+    `change_1d_pct` is the *percent* (e.g. 8.0 for an 8% move), so we
+    can express today as a multiple of the daily ATR — a 3-ATR move on
+    a normally calm ticker is a much bigger signal than a 1-ATR move
+    on a high-vol crypto.
+
+    Returns:
+      atr_14d, atr_pct, move_vs_atr, bars_7d (one row per day,
+      newest first; up to 7 entries).
+    """
+    out: dict[str, Any] = {}
+    cutoff = datetime.now(timezone.utc) - timedelta(days=20)
+    bars = session.exec(
+        select(PriceBar)
+        .where(PriceBar.ticker == ticker)
+        .where(PriceBar.ts >= cutoff)
+        .order_by(PriceBar.ts)
+    ).all()
+    if len(bars) < 2:
+        return out
+
+    # Collapse intraday → one bar per UTC day. Same shape the ATR
+    # helper uses; replicated here so we keep one db round-trip.
+    by_day: dict[str, dict] = {}
+    for b in bars:
+        d = b.ts.strftime("%Y-%m-%d")
+        cur = by_day.get(d)
+        if cur is None:
+            by_day[d] = {
+                "date": d, "open": b.open, "high": b.high,
+                "low": b.low, "close": b.close,
+                "volume": int(b.volume or 0),
+            }
+        else:
+            cur["high"] = max(cur["high"], b.high)
+            cur["low"] = min(cur["low"], b.low)
+            cur["close"] = b.close
+            cur["volume"] = int(cur["volume"]) + int(b.volume or 0)
+
+    days = sorted(by_day.keys())
+    if len(days) < 2:
+        return out
+
+    # Wilder ATR over the last 14 daily bars.
+    trs: list[float] = []
+    prev_close = by_day[days[0]]["close"]
+    for d in days[1:]:
+        b = by_day[d]
+        trs.append(
+            max(b["high"] - b["low"],
+                abs(b["high"] - prev_close),
+                abs(b["low"] - prev_close))
+        )
+        prev_close = b["close"]
+    trs = trs[-14:] if len(trs) >= 14 else trs
+    if not trs:
+        return out
+    atr = sum(trs) / len(trs)
+    last_close = by_day[days[-1]]["close"]
+    atr_pct = (atr / last_close * 100) if last_close > 0 else None
+    out["atr_14d"] = round(atr, 4)
+    if atr_pct is not None:
+        out["atr_pct"] = round(atr_pct, 2)
+        # Today's move expressed as a multiple of ATR%. Tells the
+        # model "this is a 3.4× ATR move" or "this is barely 0.8×
+        # — within normal range".
+        out["move_vs_atr"] = (
+            round(change_1d_pct / atr_pct, 2)
+            if atr_pct > 0 else None
+        )
+
+    # Mini OHLCV summary — last 7 days, newest first. Lets the LLM see
+    # whether today's move is a breakout, a gap, or noise without
+    # spending a tool call on it.
+    out["bars_7d"] = [
+        {
+            "date": by_day[d]["date"],
+            "o": round(by_day[d]["open"], 4),
+            "h": round(by_day[d]["high"], 4),
+            "l": round(by_day[d]["low"], 4),
+            "c": round(by_day[d]["close"], 4),
+            "v": by_day[d]["volume"],
+        }
+        for d in days[-7:][::-1]
+    ]
+    return out
+
+
+def _gather_evidence(
+    ticker: str, asset_class: str, change_1d_pct: float = 0.0
+) -> dict:
     now = datetime.now(timezone.utc)
     cut_48h = now - timedelta(hours=48)
     cut_24h = now - timedelta(hours=24)
@@ -271,6 +366,12 @@ def _gather_evidence(ticker: str, asset_class: str) -> dict:
         # Market-context block — pulled inside the same session so the
         # whole prompt assembles off one connection.
         mkt = _gather_market_context(s, ticker, asset_class)
+        # Vol-regime context — every dossier gets ATR + move_vs_atr +
+        # a 7-day OHLCV mini-summary now, not just thin-coverage
+        # candidates. The LLM doesn't have to burn a tool call to
+        # know whether today's move is a 3-ATR breakout or a 0.8-ATR
+        # nothing-burger.
+        vol = _vol_context(s, ticker, change_1d_pct)
 
     filings_out = [
         {
@@ -302,6 +403,7 @@ def _gather_evidence(ticker: str, asset_class: str) -> dict:
         "macro_news_24h": macro_out,
         "benchmarks": mkt["benchmarks"],
         "peers": mkt["peers"],
+        **vol,
         "data_coverage": coverage,
     }
 
@@ -341,7 +443,9 @@ async def _run() -> None:
             coalesced += 1
             continue
 
-        evidence = _gather_evidence(ticker, c["asset_class"])
+        evidence = _gather_evidence(
+            ticker, c["asset_class"], c["change_1d_pct"]
+        )
         if c["asset_class"] == "crypto":
             from ..ingesters.crypto_micro import micro_for
 
