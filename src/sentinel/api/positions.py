@@ -58,6 +58,17 @@ def update_journal(trade_id: int, body: JournalRequest) -> dict:
     return res
 
 
+@router.get("/positions/{trade_id}/lifecycle")
+def trade_lifecycle(trade_id: int) -> dict:
+    """News, filings, and trading-calls about the trade's ticker that
+    happened between entry and exit (or now, for open trades). Powers
+    the journal "what happened while I was in" drill-in."""
+    res = _funds.trade_lifecycle(trade_id)
+    if res is None:
+        raise HTTPException(404, f"no trade #{trade_id}")
+    return res
+
+
 @router.post("/positions/{trade_id}/close")
 def close_position(trade_id: int, reason: str | None = None) -> dict:
     res = _funds.close_trade_by_id(trade_id, reason or "manual")

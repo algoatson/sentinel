@@ -609,6 +609,50 @@ export interface HoldingsNews {
 export const holdingsNews = (hours = 24, limit = 30) =>
   get<HoldingsNews>(`/analytics/holdings-news?hours=${hours}&limit=${limit}`);
 
+export interface StreakSnapshot {
+  n: number;
+  current: { kind: 'win' | 'loss' | 'none'; length: number; started_at: string | null };
+  max_win: number;
+  max_loss: number;
+  last_pnls: number[];
+  hit_rate: number | null;
+  wins: number;
+  losses: number;
+  scratches: number;
+  expectancy: number;
+  avg_win: number | null;
+  avg_loss: number | null;
+}
+export const streaks = (limit = 200) =>
+  get<StreakSnapshot>(`/analytics/streaks?limit=${limit}`);
+
+export interface TradeLifecycle {
+  trade: {
+    id: number;
+    ticker: string;
+    side: string;
+    fund: string | null;
+    entry_at: string;
+    exit_at: string | null;
+    status: string;
+  };
+  news: Array<{
+    id: number; title: string; url: string; source: string;
+    ts: string; sentiment: number | null; impact_1d_pct: number | null;
+  }>;
+  filings: Array<{
+    id: number; form_type: string; filed_at: string;
+    url: string | null; materiality_score: number | null;
+  }>;
+  calls: Array<{
+    id: number; source: string; direction: string; conviction: number;
+    thesis: string; created_at: string;
+    ret_1d_pct: number | null; ret_5d_pct: number | null; ret_20d_pct: number | null;
+  }>;
+}
+export const tradeLifecycle = (tradeId: number) =>
+  get<TradeLifecycle>(`/positions/${tradeId}/lifecycle`);
+
 export const updateJournal = (tradeId: number, notes: string | null) =>
   fetch(`/api/positions/${tradeId}/journal`, {
     method: 'PATCH',

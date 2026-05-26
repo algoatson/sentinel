@@ -22,6 +22,7 @@
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
   import TickerLink from '$components/TickerLink.svelte';
+  import TradeLifecycle from '$components/TradeLifecycle.svelte';
   import { toast } from '$lib/toast.svelte';
   import { price, pct, timeAgo } from '$lib/format';
   import {
@@ -402,6 +403,11 @@
                       </div>
                     {/if}
                   </div>
+                </div>
+
+                <!-- What the bot saw during this trade -->
+                <div class="mt-2 pl-5">
+                  <TradeLifecycle tradeId={t.id} />
                 </div>
               {/if}
             </div>

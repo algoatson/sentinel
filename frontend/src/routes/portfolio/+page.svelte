@@ -33,12 +33,23 @@
     if (!values.length) return '';
     const min = Math.min(...values);
     const max = Math.max(...values);
-    const range = max - min || 1;
+    const range = max - min;
+    // Reserve a small inner margin so the line never touches the
+    // top or bottom edge (looks clipped against the card border).
+    const pad = 3;
+    const innerH = height - pad * 2;
     const step = width / Math.max(1, values.length - 1);
+    // Flat series (e.g. a wallet that hasn't traded yet) → centre
+    // the line vertically instead of pinning it to the bottom edge,
+    // which was the old behaviour and rendered as a line glued to
+    // the card's footer.
+    const mid = height / 2;
     return values
       .map((v, i) => {
         const x = i * step;
-        const y = height - ((v - min) / range) * height;
+        const y = range === 0
+          ? mid
+          : pad + innerH - ((v - min) / range) * innerH;
         return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
       })
       .join(' ');
@@ -171,21 +182,41 @@
 
           <!-- ── sparkline (full bleed) ───────────────── -->
           {#if points.length > 1}
+            {@const flat = Math.max(...points) === Math.min(...points)}
             <div class="mt-2 px-2">
-              <svg viewBox="0 0 240 44" class="w-full" preserveAspectRatio="none">
+              <svg
+                viewBox="0 0 240 48"
+                class="block w-full"
+                style:height="48px"
+                preserveAspectRatio="none"
+                role="img"
+                aria-label="{w.name} 30-day equity"
+              >
                 <defs>
                   <linearGradient id="grad-{w.name}" x1="0" x2="0" y1="0" y2="1">
                     <stop offset="0%" stop-color={trendCol} stop-opacity="0.22" />
                     <stop offset="100%" stop-color={trendCol} stop-opacity="0" />
                   </linearGradient>
                 </defs>
+                <!-- Dashed baseline at midline, only when flat — a
+                     "no movement yet" cue that doesn't fight the live
+                     curves on the other cards. -->
+                {#if flat}
+                  <line
+                    x1="0" x2="240" y1="24" y2="24"
+                    stroke="rgba(255,255,255,0.15)"
+                    stroke-width="1"
+                    stroke-dasharray="3 4"
+                  />
+                {:else}
+                  <path
+                    d={sparkPath(points, 240, 48) + ' L 240 48 L 0 48 Z'}
+                    fill="url(#grad-{w.name})"
+                    stroke="none"
+                  />
+                {/if}
                 <path
-                  d={sparkPath(points, 240, 44) + ' L 240 44 L 0 44 Z'}
-                  fill="url(#grad-{w.name})"
-                  stroke="none"
-                />
-                <path
-                  d={sparkPath(points, 240, 44)}
+                  d={sparkPath(points, 240, 48)}
                   fill="none"
                   stroke={trendCol}
                   stroke-width="1.5"
@@ -193,6 +224,11 @@
                   stroke-linecap="round"
                 />
               </svg>
+              {#if flat}
+                <div class="-mt-1 text-center text-[9.5px] uppercase tracking-wider text-faint">
+                  flat — no equity change in 30d
+                </div>
+              {/if}
             </div>
           {:else}
             <div class="px-4 py-2 text-[10.5px] text-faint">

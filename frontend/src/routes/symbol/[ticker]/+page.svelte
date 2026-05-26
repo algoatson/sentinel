@@ -155,6 +155,12 @@
         title="Open short paper position on this ticker"
       >Short ${ticker}</button>
 
+      <a
+        href={`${base}/compare?tickers=${encodeURIComponent(ticker)}`}
+        class="rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[11.5px] font-medium text-muted transition-colors hover:border-primary/40 hover:text-text"
+        title="Open in /compare with this ticker preloaded"
+      >Compare</a>
+
       <span class="mx-1 text-faint">·</span>
       {#each RANGES as r (r.label)}
         <button

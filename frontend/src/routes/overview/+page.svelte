@@ -13,6 +13,8 @@
   import RiskMonitor from '$components/RiskMonitor.svelte';
   import EarningsExposure from '$components/EarningsExposure.svelte';
   import HoldingsNews from '$components/HoldingsNews.svelte';
+  import HoldingsTape from '$components/HoldingsTape.svelte';
+  import StreakCard from '$components/StreakCard.svelte';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
   import { usd, compact, timeAgo, pct, tone, stripMd } from '$lib/format';
@@ -127,9 +129,10 @@
   </div>
 </div>
 
-<!-- ── TODAY'S PULSE strip ──────────────────────────────────────────── -->
-<div class="mb-4">
+<!-- ── TODAY'S PULSE + book tape ─────────────────────────────────────── -->
+<div class="mb-4 space-y-2">
   <TodayPulse />
+  <HoldingsTape />
 </div>
 
 <!-- ── KPI ribbon ────────────────────────────────────────────────────── -->
@@ -225,14 +228,19 @@
   </div>
 </div>
 
-<!-- ── EARNINGS + HOLDINGS NEWS (split row) ─────────── -->
+<!-- ── STREAKS + EARNINGS (split row) ───────────────── -->
 <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
+  <div class="lg:col-span-7">
+    <StreakCard />
+  </div>
   <div class="lg:col-span-5">
     <EarningsExposure />
   </div>
-  <div class="lg:col-span-7">
-    <HoldingsNews />
-  </div>
+</div>
+
+<!-- ── HOLDINGS NEWS (full width) ───────────────────── -->
+<div class="mt-4">
+  <HoldingsNews />
 </div>
 
 <!-- ── HOT NOW ──────────────────────────────────────── -->

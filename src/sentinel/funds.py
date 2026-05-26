@@ -1074,6 +1074,121 @@ def closed_trades_recent(
     return out
 
 
+def trade_lifecycle(trade_id: int) -> dict | None:
+    """Everything the bot saw about a trade's ticker between entry
+    and (exit or now). Powers the journal drill-in: "what news, calls
+    and filings happened while I was in this position?".
+
+    Returns:
+      trade: slim trade summary
+      news: list[{id, title, url, source, ts, sentiment, impact_1d_pct}]
+      filings: list[{id, form_type, filed_at, url, materiality_score}]
+      calls: list[{id, source, direction, conviction, thesis, created_at}]
+    """
+    with session_scope() as s:
+        t = s.get(FundTrade, trade_id)
+        if t is None:
+            return None
+        fund = s.get(Fund, t.fund_id)
+        entry_at = (
+            t.entry_at if t.entry_at.tzinfo
+            else t.entry_at.replace(tzinfo=timezone.utc)
+        )
+        exit_at_aware: datetime | None = None
+        if t.exit_at is not None:
+            exit_at_aware = (
+                t.exit_at if t.exit_at.tzinfo
+                else t.exit_at.replace(tzinfo=timezone.utc)
+            )
+        # SQLite stores naive datetimes; compare in naive UTC.
+        entry_naive = entry_at.replace(tzinfo=None)
+        exit_naive = (exit_at_aware or datetime.now(timezone.utc)).replace(tzinfo=None)
+        ticker = (t.ticker or "").upper()
+
+        # News (singular ticker match OR multi-ticker csv).
+        from .models import NewsItem, Filing, TradingCall  # local import to keep top tidy
+        from sqlalchemy import or_
+        news_q = (
+            select(NewsItem)
+            .where(NewsItem.published_at >= entry_naive)
+            .where(NewsItem.published_at <= exit_naive)
+            .where(or_(
+                NewsItem.ticker == ticker,
+                NewsItem.tickers_csv.contains(f",{ticker},"),
+            ))
+            .order_by(NewsItem.published_at.desc())
+            .limit(80)
+        )
+        filings_q = (
+            select(Filing)
+            .where(Filing.filed_at >= entry_naive)
+            .where(Filing.filed_at <= exit_naive)
+            .where(Filing.ticker == ticker)
+            .order_by(Filing.filed_at.desc())
+            .limit(40)
+        )
+        calls_q = (
+            select(TradingCall)
+            .where(TradingCall.created_at >= entry_naive)
+            .where(TradingCall.created_at <= exit_naive)
+            .where(TradingCall.ticker == ticker)
+            .order_by(TradingCall.created_at.desc())
+            .limit(40)
+        )
+
+        def _aware(dt: datetime | None) -> str | None:
+            if dt is None:
+                return None
+            return (
+                dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+            ).isoformat()
+
+        news = [
+            {
+                "id": n.id, "title": n.title, "url": n.url,
+                "source": n.source, "ts": _aware(n.published_at),
+                "sentiment": n.sentiment,
+                "impact_1d_pct": n.impact_1d_pct,
+            }
+            for n in s.exec(news_q).all()
+        ]
+        filings = [
+            {
+                "id": f.id, "form_type": f.form_type,
+                "filed_at": _aware(f.filed_at),
+                "url": f.primary_doc_url,
+                "materiality_score": f.materiality_score,
+            }
+            for f in s.exec(filings_q).all()
+        ]
+        calls = [
+            {
+                "id": c.id, "source": c.source, "direction": c.direction,
+                "conviction": c.conviction, "thesis": c.thesis,
+                "created_at": _aware(c.created_at),
+                "ret_1d_pct": c.ret_1d_pct,
+                "ret_5d_pct": c.ret_5d_pct,
+                "ret_20d_pct": c.ret_20d_pct,
+            }
+            for c in s.exec(calls_q).all()
+        ]
+
+        return {
+            "trade": {
+                "id": t.id,
+                "ticker": ticker,
+                "side": t.side,
+                "fund": fund.name if fund else None,
+                "entry_at": entry_at.isoformat(),
+                "exit_at": exit_at_aware.isoformat() if exit_at_aware else None,
+                "status": t.status,
+            },
+            "news": news,
+            "filings": filings,
+            "calls": calls,
+        }
+
+
 def update_trade_journal(trade_id: int, notes: str | None) -> dict:
     """Edit a trade's free-form journal note. Unlike `update_trade_risk`,
     this works on CLOSED trades too — the whole point of a post-trade
