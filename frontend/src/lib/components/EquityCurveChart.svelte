@@ -159,6 +159,29 @@
         }
       });
       api.setData(data);
+
+      // Trade markers on this fund's line — one dot per closed trade
+      // within the window, coloured by PnL sign, labelled with the
+      // ticker. The bot's curve doesn't tell you WHICH trade moved
+      // it; these dots do. lightweight-charts wants markers in
+      // strict-monotonic time order so we sort + dedupe defensively.
+      const trades = (s.trades || [])
+        .map((t) => ({
+          time: Math.floor(new Date(t.ts).getTime() / 1000) as unknown as Time,
+          position: ((t.pnl ?? 0) >= 0 ? 'aboveBar' : 'belowBar') as
+            'aboveBar' | 'belowBar',
+          color: (t.pnl ?? 0) >= 0 ? '#3ddc97' : '#ff6b6b',
+          shape: 'circle' as const,
+          text: t.ticker,
+        }))
+        .sort((a, b) => (a.time as number) - (b.time as number))
+        // Collapse same-second markers to the latest (lib refuses
+        // non-monotonic feeds).
+        .filter((m, idx, arr) =>
+          idx === 0 || (m.time as number) !== (arr[idx - 1].time as number)
+        );
+      if (trades.length) api.setMarkers(trades);
+
       lineSeries.push({
         name: s.fund,
         color,

@@ -565,9 +565,20 @@ def _run() -> list[dict]:
         funds = s.exec(select(Fund).where(Fund.active == True)).all()  # noqa: E712
         for fund in funds:
             pol = _POLICIES.get(fund.name)
-            if pol is None:
-                continue
             opens = _open_trades(s, fund.id)
+            if pol is None:
+                # Non-policy wallets (the user-driven `research` wallet)
+                # don't auto-trade, but they DO need an equity tick so
+                # their /portfolio card has a curve to draw. Previously
+                # we skipped them entirely, leaving the FundEquity table
+                # empty for research → the sparkline showed "no equity
+                # history yet" forever.
+                s.add(FundEquity(
+                    fund_id=fund.id,
+                    ts=now,
+                    equity=round(_equity(s, fund, opens), 2),
+                ))
+                continue
             by_ticker = {t.ticker: t for t in opens}
 
             # 1. Risk exits on existing positions.
@@ -922,15 +933,18 @@ def equity_curve(name: str | None = None, days: int = 30) -> list[dict]:
     """Equity-curve points per active fund — the dashboard plots these.
 
     Returns one entry per fund (or just the named one):
-    ``[{"fund": "degen", "mandate": "...", "starting": 100, "points":
-        [{"ts": iso, "equity": float}, ...]}, ...]``.
+    ``[{"fund": "degen", "mandate": "...", "starting": 100,
+        "points":  [{"ts": iso, "equity": float}, ...],
+        "trades":  [{"ts": iso, "ticker", "side", "pnl"}, ...]}]``.
 
     `days` filters out anything older than that to keep the chart sharp on
     the recent shape (the old marks are still in the DB; this is just the
-    default render window). Empty `points` is fine — a freshly-seeded fund
-    has no equity history yet.
+    default render window). The `trades` array is closed FundTrade rows in
+    the same window — the dashboard renders them as time-axis markers on
+    each fund's line so the user can see where realised PnL came from.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff_naive = cutoff.replace(tzinfo=None)
     out: list[dict] = []
     with session_scope() as s:
         funds = s.exec(
@@ -945,6 +959,13 @@ def equity_curve(name: str | None = None, days: int = 30) -> list[dict]:
                 .where(FundEquity.ts >= cutoff)
                 .order_by(FundEquity.ts)
             ).all()
+            trades = s.exec(
+                select(FundTrade)
+                .where(FundTrade.fund_id == f.id)
+                .where(FundTrade.status == "closed")
+                .where(FundTrade.exit_at >= cutoff_naive)
+                .order_by(FundTrade.exit_at)
+            ).all()
             out.append({
                 "fund": f.name,
                 "mandate": f.mandate,
@@ -958,6 +979,22 @@ def equity_curve(name: str | None = None, days: int = 30) -> list[dict]:
                         "equity": round(p.equity, 2),
                     }
                     for p in pts
+                ],
+                "trades": [
+                    {
+                        "ts": (
+                            t.exit_at if t.exit_at.tzinfo
+                            else t.exit_at.replace(tzinfo=timezone.utc)
+                        ).isoformat(),
+                        "ticker": t.ticker,
+                        "side": t.side,
+                        "pnl": (
+                            round(t.realized_pnl, 2)
+                            if t.realized_pnl is not None else None
+                        ),
+                        "close_reason": t.close_reason,
+                    }
+                    for t in trades
                 ],
             })
     return out

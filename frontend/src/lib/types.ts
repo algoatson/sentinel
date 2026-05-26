@@ -26,11 +26,19 @@ export interface EquityCurvePoint {
   ts: string;
   equity: number;
 }
+export interface EquityCurveTrade {
+  ts: string;
+  ticker: string;
+  side: 'long' | 'short' | string;
+  pnl: number | null;
+  close_reason?: string | null;
+}
 export interface EquityCurve {
   fund: string;
   mandate: string;
   starting: number;
   points: EquityCurvePoint[];
+  trades?: EquityCurveTrade[];
 }
 
 export interface RealizedCurvePoint {
