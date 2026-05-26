@@ -24,15 +24,19 @@
   let volumeSeries: ISeriesApi<'Histogram'> | undefined;
   let entryLine: ISeriesApi<'Line'> | undefined;
 
+  // lightweight-charts uses an older colour parser that rejects the
+  // modern space-separated `rgb(R G B / A)` syntax — must be the
+  // classic comma form `rgba(R, G, B, A)`. Crashes with
+  // "Cannot parse color: rgb(255 255 255 / 0.62)" otherwise.
   const PALETTE = {
     bg: 'transparent',
-    text: 'rgb(255 255 255 / 0.62)',
-    grid: 'rgb(255 255 255 / 0.05)',
-    border: 'rgb(255 255 255 / 0.085)',
+    text: 'rgba(255, 255, 255, 0.62)',
+    grid: 'rgba(255, 255, 255, 0.05)',
+    border: 'rgba(255, 255, 255, 0.085)',
     up: '#3ddc97',
     down: '#ff6b6b',
-    upVol: 'rgba(61,220,151,0.45)',
-    downVol: 'rgba(255,107,107,0.45)'
+    upVol: 'rgba(61, 220, 151, 0.45)',
+    downVol: 'rgba(255, 107, 107, 0.45)'
   };
 
   function mount() {
