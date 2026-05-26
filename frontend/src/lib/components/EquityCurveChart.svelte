@@ -260,12 +260,10 @@
 
   <!-- Hover readout overlay: small floating panel in the top-left. -->
   {#if hoverDate && hoverValues.length}
-    <!-- Hover readout pinned top-right, out of the way of the marker
-         dots that sit on each fund's line. The right gutter has no
-         price-axis labels (this chart hides them on the line series)
-         so we can land safely against the border. -->
+    <!-- Hover readout pinned top-left (per user preference — the
+         earlier attempt at top-right was worse). -->
     <div
-      class="pointer-events-none absolute right-2 top-2 rounded-md border border-border bg-surface/95 px-2 py-1.5 text-[10.5px] tabular shadow-lg backdrop-blur"
+      class="pointer-events-none absolute left-2 top-2 rounded-md border border-border bg-surface/95 px-2 py-1.5 text-[10.5px] tabular shadow-lg backdrop-blur"
     >
       <div class="font-mono text-faint">{hoverDate}</div>
       <div class="mt-0.5 space-y-0.5">

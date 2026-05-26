@@ -374,11 +374,10 @@
   <div bind:this={container} style="height: {height}px; width: 100%"></div>
 
   {#if positions.length > 0}
-    <!-- Positioned bottom-left so it doesn't fight the lightweight-charts
-         OHLC crosshair tooltip (top-left) OR the price-axis labels
-         (right edge). Foldable to a single-line chip when the user wants
+    <!-- Top-left (where it was originally — the bottom-corner attempt
+         was worse). Foldable to a single-line chip when the user wants
          the chart visible. -->
-    <div class="absolute bottom-1 left-2 max-w-[20rem] rounded-md border border-border bg-surface/95 text-[10.5px] tabular shadow-lg backdrop-blur">
+    <div class="absolute left-2 top-2 max-w-[20rem] rounded-md border border-border bg-surface/95 text-[10.5px] tabular shadow-lg backdrop-blur">
       <button
         type="button"
         onclick={() => (overlayCollapsed = !overlayCollapsed)}
