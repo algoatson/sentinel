@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createQuery } from '@tanstack/svelte-query';
   import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
-  import { kpi, activity, realizedCurve, equityCurve, calls, news, filings, catalysts, hotTickers, topMovers } from '$api';
+  import { kpi, activity, realizedCurve, equityCurve, calls, news, filings, catalysts, hotTickers, topMovers, todayPulse } from '$api';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import EmptyState from '$components/EmptyState.svelte';
@@ -23,7 +23,8 @@
   import { usd, compact, timeAgo, pct, tone, stripMd } from '$lib/format';
   import {
     Newspaper, FileText, Target as TargetIcon, ArrowUpRight, ArrowDownRight,
-    Wallet, TrendingUp, Activity as ActivityIcon, Brain, Sparkles, Zap, Flame
+    Wallet, TrendingUp, Activity as ActivityIcon, Brain, Sparkles, Zap, Flame,
+    Plus, Search as SearchIcon, GitCompareArrows as ScaleIcon, BookText, FlaskConical as Beaker
   } from 'lucide-svelte';
 
   type Range = { label: string; days: number };
@@ -49,6 +50,14 @@
     queryKey: ['realized-curve'],
     queryFn: realizedCurve,
     refetchInterval: 60_000
+  });
+  // Same query key the <TodayPulse /> component already uses — TanStack
+  // dedupes by key so this isn't a second wire call. We just want the
+  // already-fetched payload up here in the hero too.
+  const pulseQ = createQuery({
+    queryKey: ['today-pulse'],
+    queryFn: todayPulse,
+    refetchInterval: 60_000,
   });
   // 1 week so even a quiet bot has something to show on a fresh open.
   const callsQ = createQuery({
@@ -99,12 +108,18 @@
 
 <svelte:head><title>Overview · Sentinel</title></svelte:head>
 
-<!-- ── HERO: equity number + return + sparkline ───────────────────────── -->
-<div class="mb-6">
-  <div class="text-[11px] font-semibold uppercase tracking-[0.13em] text-faint">
-    Aggregate equity
+<!-- ── HERO: equity number + return + today + quick stats ──────────────── -->
+<div class="mb-4">
+  <div class="flex items-baseline gap-2 text-[11px] font-semibold uppercase tracking-[0.13em] text-faint">
+    <span>Aggregate equity</span>
+    {#if $kpiQ.data?.wallets}
+      <span class="normal-case tracking-normal text-faint">
+        · {$kpiQ.data.wallets} wallets
+      </span>
+    {/if}
   </div>
-  <div class="mt-1 flex flex-wrap items-end gap-x-4 gap-y-1">
+
+  <div class="mt-1 flex flex-wrap items-end gap-x-4 gap-y-1.5">
     <span class="text-[2.6rem] font-semibold leading-none tracking-tight tabular text-text">
       {$kpiQ.data ? usd($kpiQ.data.equity) : '—'}
     </span>
@@ -119,8 +134,9 @@
         {:else if t === 'neg'}<ArrowDownRight class="h-4 w-4 self-center" />{/if}
         {pct(r, 2)}
       </span>
-      <span class="text-[12px] text-faint">since inception</span>
+      <span class="text-[11px] text-faint">since inception</span>
     {/if}
+
     {#if realCum.length > 1}
       <div class="ml-auto w-40 shrink-0">
         <Sparkline values={realCum} width={160} height={36} color={sparkColour} />
@@ -130,6 +146,97 @@
       </div>
     {/if}
   </div>
+
+  <!-- Secondary row: today's realised + unrealised + position counts.
+       Each chip is independently shown — we don't drop the whole row
+       when one source is empty. -->
+  <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] tabular">
+    {#if $pulseQ.data}
+      {@const today = $pulseQ.data.realized_today ?? 0}
+      <span class={[
+        'inline-flex items-baseline gap-1 rounded border px-2 py-0.5',
+        today > 0 ? 'border-good/40 bg-good-soft text-good' :
+        today < 0 ? 'border-bad/40 bg-bad-soft text-bad' :
+        'border-border bg-surface-2 text-muted'
+      ].join(' ')}>
+        <span class="text-[9.5px] uppercase tracking-wider opacity-80">today</span>
+        <span class="font-semibold">
+          {today >= 0 ? '+' : ''}{usd(today, true)} realised
+        </span>
+        {#if $pulseQ.data.trades_closed > 0}
+          <span class="text-[9.5px] opacity-70">· {$pulseQ.data.trades_closed} closed</span>
+        {/if}
+      </span>
+    {/if}
+    {#if $kpiQ.data?.unrealized_pnl !== null && $kpiQ.data?.unrealized_pnl !== undefined}
+      {@const up = $kpiQ.data.unrealized_pnl}
+      <span class={[
+        'inline-flex items-baseline gap-1 rounded border px-2 py-0.5',
+        up > 0 ? 'border-good/40 bg-good-soft text-good' :
+        up < 0 ? 'border-bad/40 bg-bad-soft text-bad' :
+        'border-border bg-surface-2 text-muted'
+      ].join(' ')}>
+        <span class="text-[9.5px] uppercase tracking-wider opacity-80">open</span>
+        <span class="font-semibold">{up >= 0 ? '+' : ''}{usd(up, true)} uPnL</span>
+        {#if $kpiQ.data?.open_positions !== null && $kpiQ.data?.open_positions !== undefined}
+          <span class="text-[9.5px] opacity-70">· {$kpiQ.data.open_positions} pos</span>
+        {/if}
+      </span>
+    {/if}
+    {#if $kpiQ.data?.hit_rate_pct !== null && $kpiQ.data?.hit_rate_pct !== undefined}
+      <span class="inline-flex items-baseline gap-1 rounded border border-border bg-surface-2 px-2 py-0.5 text-muted">
+        <span class="text-[9.5px] uppercase tracking-wider opacity-80">calls</span>
+        <span class={[
+          'font-semibold',
+          $kpiQ.data.hit_rate_pct >= 50 ? 'text-good' : 'text-bad'
+        ].join(' ')}>{$kpiQ.data.hit_rate_pct.toFixed(0)}%</span>
+        <span class="text-[9.5px] opacity-70">
+          {$kpiQ.data.hits ?? 0}/{$kpiQ.data.calls_scored ?? 0}
+        </span>
+      </span>
+    {/if}
+  </div>
+</div>
+
+<!-- ── Quick actions ─────────────────────────────────────────────────── -->
+<div class="mb-4 flex flex-wrap items-center gap-1.5 text-[11px]">
+  <a
+    href={`${base}/book?action=open`}
+    class="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary-soft px-2.5 py-1 font-medium text-primary transition-colors hover:bg-primary/15"
+    title="Open a new paper position"
+  >
+    <Plus class="h-3 w-3" /> Open trade
+  </a>
+  <a
+    href={`${base}/lookup`}
+    class="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2.5 py-1 text-muted transition-colors hover:border-primary/40 hover:text-text"
+  >
+    <SearchIcon class="h-3 w-3" /> Lookup
+  </a>
+  <a
+    href={`${base}/compare`}
+    class="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2.5 py-1 text-muted transition-colors hover:border-primary/40 hover:text-text"
+  >
+    <ScaleIcon class="h-3 w-3" /> Compare
+  </a>
+  <a
+    href={`${base}/copilot`}
+    class="inline-flex items-center gap-1 rounded-md border border-violet/40 bg-violet-soft px-2.5 py-1 font-medium text-violet transition-colors hover:bg-violet/15"
+  >
+    <Sparkles class="h-3 w-3" /> Ask copilot
+  </a>
+  <a
+    href={`${base}/journal`}
+    class="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2.5 py-1 text-muted transition-colors hover:border-primary/40 hover:text-text"
+  >
+    <BookText class="h-3 w-3" /> Journal
+  </a>
+  <a
+    href={`${base}/research`}
+    class="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2.5 py-1 text-muted transition-colors hover:border-primary/40 hover:text-text"
+  >
+    <Beaker class="h-3 w-3" /> Research
+  </a>
 </div>
 
 <!-- ── TODAY'S PULSE + book tape + live events + daily plan ─────────── -->

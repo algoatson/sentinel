@@ -132,6 +132,21 @@
     })
   );
 
+  // Fund → colour so the entry markers match the rest of the dashboard.
+  const FUND_COLOURS: Record<string, string> = {
+    catalyst:   '#6699ff',
+    contrarian: '#a78bfa',
+    crypto:     '#fbbf24',
+    degen:      '#ff6b6b',
+    hype:       '#f2c0ff',
+    macro:      '#3ddc97',
+    research:   '#8ed1fc',
+    sniper:     '#a3e635',
+  };
+  function fundColour(name: string | null | undefined): string {
+    return name && FUND_COLOURS[name] ? FUND_COLOURS[name] : '#a3a3b8';
+  }
+
   let container: HTMLDivElement;
   let chart: IChartApi | undefined;
   let seriesByTicker: Map<string, ISeriesApi<'Line'>> = new Map();
@@ -230,6 +245,84 @@
       });
       series.setData(dedup);
       seriesByTicker.set(tk, series);
+
+      // Overlay any open positions for this ticker on the chart.
+      // The chart is in %-from-refClose space, so we convert each
+      // price (entry / stop / target) to a % distance off refClose
+      // and add it as a price line on this ticker's series.
+      const positions = d.open_positions || [];
+      const seriesColour = PALETTE[i % PALETTE.length];
+      const toPct = (price: number) => ((price - refClose) / refClose) * 100;
+      const markers: Array<{
+        time: Time;
+        position: 'aboveBar' | 'belowBar' | 'inBar';
+        color: string;
+        shape: 'arrowUp' | 'arrowDown' | 'circle';
+        text: string;
+      }> = [];
+      for (const p of positions) {
+        const fund = p.fund ?? null;
+        const colour = fundColour(fund);
+        // Entry as a small dot in the seriesColour, but coloured by
+        // fund so multi-fund holdings stay distinguishable.
+        const entryT = Math.floor(new Date(p.entry_at).getTime() / 1000);
+        if (entryT >= alignStart) {
+          markers.push({
+            time: entryT as unknown as Time,
+            position: p.side === 'long' ? 'belowBar' : 'aboveBar',
+            color: colour,
+            shape: p.side === 'long' ? 'arrowUp' : 'arrowDown',
+            text: fund ? `${fund} ${p.side[0]}` : p.side.toUpperCase(),
+          });
+        }
+        // Entry as a faint horizontal line — same colour as the series
+        // so it's clearly "this ticker's entry" not noise. Dotted.
+        series.createPriceLine({
+          price: toPct(p.entry),
+          color: colour,
+          lineWidth: 1,
+          lineStyle: 3, // dotted
+          axisLabelVisible: true,
+          title: `${fund ?? tk} entry`,
+        });
+        if (p.stop_price && p.stop_price > 0) {
+          series.createPriceLine({
+            price: toPct(p.stop_price),
+            color: 'rgba(255, 107, 107, 0.9)',
+            lineWidth: 1,
+            lineStyle: 2, // dashed
+            axisLabelVisible: true,
+            title: `${fund ?? tk} stop`,
+          });
+        }
+        if (p.target_price && p.target_price > 0) {
+          series.createPriceLine({
+            price: toPct(p.target_price),
+            color: 'rgba(61, 220, 151, 0.9)',
+            lineWidth: 1,
+            lineStyle: 2, // dashed
+            axisLabelVisible: true,
+            title: `${fund ?? tk} target`,
+          });
+        }
+      }
+      if (markers.length) {
+        // Sort+dedupe — lightweight-charts refuses non-monotonic markers.
+        markers.sort((a, b) => (a.time as number) - (b.time as number));
+        const dedupMarkers: typeof markers = [];
+        for (const m of markers) {
+          const prev = dedupMarkers[dedupMarkers.length - 1];
+          if (
+            prev && (prev.time as number) === (m.time as number)
+            && prev.position === m.position
+          ) {
+            dedupMarkers[dedupMarkers.length - 1] = m;
+          } else {
+            dedupMarkers.push(m);
+          }
+        }
+        series.setMarkers(dedupMarkers);
+      }
     });
 
     // 0% baseline as a price line on the first series.
