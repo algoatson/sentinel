@@ -9,6 +9,8 @@
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
   import TickerLink from '$components/TickerLink.svelte';
+  import WalletPolicyDrawer from '$components/WalletPolicyDrawer.svelte';
+  import { Settings } from 'lucide-svelte';
   import { usd, price, timeAgo, tone } from '$lib/format';
 
   const walletsQ = createQuery({
@@ -23,6 +25,9 @@
   });
 
   let selected = $state<string | null>(null);
+  /** Separate state for the "edit policy" drawer so it doesn't fight
+   *  with the existing position-history drawer. */
+  let policyName = $state<string | null>(null);
   const historyQ = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['wallet-history', selected],
     queryFn: () => walletHistory(selected!, 90),
@@ -152,6 +157,15 @@
             >
               {w.ret_pct >= 0 ? '+' : ''}{w.ret_pct.toFixed(2)}%
             </span>
+            <button
+              type="button"
+              onclick={(e) => { e.stopPropagation(); policyName = w.name; }}
+              class="ml-1 rounded p-1 text-faint transition-colors hover:bg-surface-2 hover:text-primary"
+              title="Edit autonomous policy"
+              aria-label="Edit policy"
+            >
+              <Settings class="h-3.5 w-3.5" />
+            </button>
           </div>
 
           <!-- ── mandate caption (clamp to 1 line, full text on hover) ─ -->
@@ -414,3 +428,10 @@
     </div>
   {/if}
 </Drawer>
+
+<!-- ── policy editor drawer (separate from the positions drawer) ─── -->
+<WalletPolicyDrawer
+  open={policyName !== null}
+  name={policyName}
+  onClose={() => (policyName = null)}
+/>

@@ -175,7 +175,14 @@ class PaperTrade(SQLModel, table=True):
 class Fund(SQLModel, table=True):
     """An autonomous paper-trading account. Three of these run different
     deterministic policies over the shared TradingCall stream — same signals,
-    different mandates, so their P&L is a clean comparison."""
+    different mandates, so their P&L is a clean comparison.
+
+    Policy knobs (size_pct, stop_pct, …) live on this row too: the engine
+    reads them from the DB so the user can pause / retune a wallet from
+    the dashboard without a code edit + restart. The `_POLICIES` dict in
+    funds.py is the seed default; once the DB row exists, the row wins.
+    A NULL knob means "fall back to the code default".
+    """
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(unique=True, index=True)  # "degen" | "catalyst" | "macro"
     mandate: str  # human-readable description
@@ -184,6 +191,17 @@ class Fund(SQLModel, table=True):
     last_call_id: int = Field(default=0)  # cursor into TradingCall
     created_at: datetime
     active: bool = Field(default=True)
+    # Editable policy knobs — NULL → use _POLICIES default. Each is the
+    # same shape as the existing dict entries, so a user toggling these
+    # via /portfolio drawer changes engine behaviour on the next cycle
+    # with no restart.
+    size_pct: Optional[float] = Field(default=None)
+    max_positions: Optional[int] = Field(default=None)
+    stop_pct: Optional[float] = Field(default=None)
+    take_pct: Optional[float] = Field(default=None)
+    max_hold_days: Optional[int] = Field(default=None)
+    min_conviction: Optional[int] = Field(default=None)
+    max_opens_per_day: Optional[int] = Field(default=None)
 
 
 class FundTrade(SQLModel, table=True):

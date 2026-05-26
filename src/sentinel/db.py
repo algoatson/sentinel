@@ -178,6 +178,21 @@ def init_db() -> None:
                 ("notes", "VARCHAR"),
             ],
         )
+        # Editable wallet policy knobs — NULL → fall back to the code
+        # default in funds._POLICIES. Lets the user retune / pause a
+        # wallet from the /portfolio drawer without a code edit.
+        _migrate_add_columns(
+            "fund",
+            [
+                ("size_pct", "FLOAT"),
+                ("max_positions", "INTEGER"),
+                ("stop_pct", "FLOAT"),
+                ("take_pct", "FLOAT"),
+                ("max_hold_days", "INTEGER"),
+                ("min_conviction", "INTEGER"),
+                ("max_opens_per_day", "INTEGER"),
+            ],
+        )
 
     from .funds import seed_funds
     from .prompts import seed_prompts

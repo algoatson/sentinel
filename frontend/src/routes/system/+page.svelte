@@ -7,6 +7,7 @@
   import Spinner from '$components/Spinner.svelte';
   import LogPanel from '$components/LogPanel.svelte';
   import ToolCallsPanel from '$components/ToolCallsPanel.svelte';
+  import PromptEditor from '$components/PromptEditor.svelte';
   import { compact } from '$lib/format';
   import { Cog, AlertTriangle, AlertOctagon, CheckCircle2 } from 'lucide-svelte';
 
@@ -235,6 +236,10 @@
 
   <div class="mt-4">
     <ToolCallsPanel />
+  </div>
+
+  <div class="mt-4">
+    <PromptEditor />
   </div>
 
   <div class="mt-4">

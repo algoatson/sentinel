@@ -322,6 +322,43 @@ def _move_close(fund: Fund, t: FundTrade, age_days: int) -> dict:
     }
 
 
+def _effective_policy(fund: Fund) -> dict | None:
+    """Resolved policy for a fund: code defaults from `_POLICIES`
+    overlaid with any non-NULL DB overrides on the Fund row.
+
+    Returns None when the fund has no policy in code AND no DB row
+    overrides — i.e. the research wallet, which deliberately has no
+    autonomous policy. Non-policy wallets still get an equity tick
+    in `_run()`; they just skip the trade-placement branch.
+    """
+    base = _POLICIES.get(fund.name)
+    # A fund that's not in _POLICIES *and* has no DB overrides stays
+    # non-autonomous (research). Once any knob is set in the DB the
+    # wallet starts trading — that's the "create a wallet from the UI"
+    # path. Until then, return None.
+    db_has = any(
+        getattr(fund, k, None) is not None
+        for k in (
+            "size_pct", "max_positions", "stop_pct", "take_pct",
+            "max_hold_days", "min_conviction", "max_opens_per_day",
+        )
+    )
+    if base is None and not db_has:
+        return None
+    pol = dict(base) if base else {}
+    for k in (
+        "size_pct", "max_positions", "stop_pct", "take_pct",
+        "max_hold_days", "min_conviction", "max_opens_per_day",
+    ):
+        v = getattr(fund, k, None)
+        if v is not None:
+            pol[k] = v
+    # Sensible defaults for fields a DB-created wallet might miss.
+    pol.setdefault("sources", set())
+    pol.setdefault("asset_classes", None)
+    return pol
+
+
 # ── Trade-placement helpers ────────────────────────────────────────────
 # These cluster everything the trading engine needs to size + risk a new
 # position properly. Each is a pure function that returns numbers; the
@@ -564,7 +601,7 @@ def _run() -> list[dict]:
     with session_scope() as s:
         funds = s.exec(select(Fund).where(Fund.active == True)).all()  # noqa: E712
         for fund in funds:
-            pol = _POLICIES.get(fund.name)
+            pol = _effective_policy(fund)
             opens = _open_trades(s, fund.id)
             if pol is None:
                 # Non-policy wallets (the user-driven `research` wallet)

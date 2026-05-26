@@ -29,6 +29,7 @@ from . import (
     overview,
     plan,
     positions,
+    prompts as _prompts,
     research,
     social,
     symbol,
@@ -56,6 +57,7 @@ router.include_router(news.router)
 router.include_router(overview.router)
 router.include_router(plan.router)
 router.include_router(positions.router)
+router.include_router(_prompts.router)
 router.include_router(research.router)
 router.include_router(social.router)
 router.include_router(symbol.router)

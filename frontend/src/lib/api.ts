@@ -130,6 +130,112 @@ export const runThesisReview = () =>
 
 /* ─── wallets ─── */
 export const wallets = () => get<Wallet[]>('/wallets');
+
+export interface WalletKnob {
+  value: number | null;
+  default: number | null;
+  overridden: boolean;
+}
+export interface WalletPolicy {
+  name: string;
+  mandate: string;
+  active: boolean;
+  starting_cash: number;
+  cash: number;
+  knobs: {
+    size_pct: WalletKnob;
+    max_positions: WalletKnob;
+    stop_pct: WalletKnob;
+    take_pct: WalletKnob;
+    max_hold_days: WalletKnob;
+    min_conviction: WalletKnob;
+    max_opens_per_day: WalletKnob;
+  };
+  sources: string[];
+  asset_classes: string[] | null;
+}
+export type WalletKnobKey = keyof WalletPolicy['knobs'];
+
+export const walletPolicy = (name: string) =>
+  get<WalletPolicy>(`/wallets/${encodeURIComponent(name)}/policy`);
+
+/* ─── prompt editor ─── */
+export interface PromptListItem {
+  name: string;
+  active_id: number | null;
+  created_at: string | null;
+  overridden: boolean;
+  seed_len: number;
+  active_len: number;
+}
+export interface PromptHistoryItem {
+  id: number;
+  created_at: string;
+  active: boolean;
+  len: number;
+}
+export interface PromptDetail {
+  name: string;
+  seed: string;
+  active: {
+    id: number;
+    content: string;
+    created_at: string;
+  } | null;
+  active_content: string;
+  overridden: boolean;
+  history: PromptHistoryItem[];
+}
+export const listPrompts = () => get<PromptListItem[]>('/prompts');
+export const getPrompt = (name: string) =>
+  get<PromptDetail>(`/prompts/${encodeURIComponent(name)}`);
+export const savePrompt = (name: string, content: string) =>
+  fetch(`/api/prompts/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json();
+  });
+export const resetPrompt = (name: string) =>
+  fetch(`/api/prompts/${encodeURIComponent(name)}/reset`, { method: 'POST' })
+    .then(async (r) => {
+      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      return r.json();
+    });
+export const restorePrompt = (name: string, versionId: number) =>
+  fetch(
+    `/api/prompts/${encodeURIComponent(name)}/restore/${versionId}`,
+    { method: 'POST' },
+  ).then(async (r) => {
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json();
+  });
+
+export const updateWalletPolicy = (
+  name: string,
+  body: Partial<{
+    active: boolean;
+    mandate: string;
+    size_pct: number;
+    max_positions: number;
+    stop_pct: number;
+    take_pct: number;
+    max_hold_days: number;
+    min_conviction: number;
+    max_opens_per_day: number;
+    clear: WalletKnobKey[];
+  }>,
+) =>
+  fetch(`/api/wallets/${encodeURIComponent(name)}/policy`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json() as Promise<WalletPolicy>;
+  });
 export const walletDetail = (name: string) =>
   get<WalletHistory>(`/wallets/${encodeURIComponent(name)}`);
 export const walletHistory = (name: string, days = 90) =>
