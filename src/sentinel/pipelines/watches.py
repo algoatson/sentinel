@@ -124,7 +124,11 @@ async def add_watch(raw_text: str) -> str:
     llm = get_llm()
     rendered = COMPILE_PROMPT.safe_substitute(request=raw_text[:500])
     raw = await asyncio.to_thread(
-        llm.complete, rendered, model="light", json_mode=True, max_tokens=400
+        # Watch compiler: user's free-text request in, structured
+        # trigger JSON out. Pure shape transformation; no need for
+        # date / world-anchor preamble.
+        llm.complete, rendered, model="light", json_mode=True,
+        max_tokens=400, grounded=False,
     )
     if not raw or raw == LLM_ERROR_SENTINEL:
         return "LLM unreachable — couldn't compile that watch, try again."

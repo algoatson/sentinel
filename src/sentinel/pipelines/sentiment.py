@@ -68,7 +68,13 @@ def _tag_batch(rows: list[RedditMention]) -> None:
     # 8-item batches return ~8 small dicts (~40 tokens each). 800 leaves
     # ~2× headroom and was empirically enough; 2000 was wildly over-spec
     # and was the single largest avoidable token bill on busy days.
-    raw = llm.complete(rendered, model="light", json_mode=True, max_tokens=600)
+    # `grounded=False`: this is a pure text classifier — sentiment per
+    # post — so the 250-token "today's date + world anchor" preamble
+    # adds zero accuracy and a lot of input cost when batched hourly.
+    raw = llm.complete(
+        rendered, model="light", json_mode=True, max_tokens=600,
+        grounded=False,
+    )
     parsed = parse_json_response(raw, expect=list)
     if parsed is None:
         logger.warning("sentiment LLM error or parse failure, marking batch defaults")

@@ -88,7 +88,13 @@ def _score_materiality_sync(
         summary=summary[:2000],
         enrichment_json=json.dumps(enrichment.to_dict(), default=str),
     )
-    raw = llm.complete(rendered, model="light", json_mode=True, max_tokens=300)
+    # Materiality scoring is a pure JSON classifier — date and
+    # world-state anchor don't influence the score. Saves the
+    # ~250-token grounding overhead per filing.
+    raw = llm.complete(
+        rendered, model="light", json_mode=True, max_tokens=300,
+        grounded=False,
+    )
     parsed = parse_json_response(raw, expect=dict)
     if parsed is None:
         return None, None

@@ -194,7 +194,12 @@ async def _run() -> None:
             price_context=_price_context_str(item.ticker),
         )
         raw = await asyncio.to_thread(
-            llm.complete, rendered, model="light", json_mode=True, max_tokens=300
+            llm.complete, rendered, model="light", json_mode=True,
+            max_tokens=300,
+            # Structured-output triage: title/summary/source/ticker in,
+            # JSON verdict out. The 250-token grounding preamble adds
+            # no value on this shape and runs every 10 min × ~8 items.
+            grounded=False,
         )
         parsed = parse_json_response(raw, expect=dict)
         if parsed is None:

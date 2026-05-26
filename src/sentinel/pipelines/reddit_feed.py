@@ -271,7 +271,11 @@ async def _run() -> None:
         max_keep=_MAX_KEEP, candidates=_render_candidates(cands)
     )
     raw = await asyncio.to_thread(
-        get_llm().complete, prompt, model="light", json_mode=True, max_tokens=600
+        # Reddit-pick selector is a structured JSON ranker — title +
+        # ticker in, top-N picks out. Grounding preamble doesn't
+        # change the ranking, so we skip the 250-token overhead.
+        get_llm().complete, prompt, model="light", json_mode=True,
+        max_tokens=600, grounded=False,
     )
     picks = parse_json_response(raw, expect=list)
     if picks is None:

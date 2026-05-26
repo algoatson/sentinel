@@ -144,15 +144,28 @@ class LoopResult:
     transcript: list[dict] = field(default_factory=list)
 
 
+# Cap on the rendered length of a tool result fed back to the model.
+# A 14-day OHLCV chart serialises to ~2k chars; with 2-3 tool calls per
+# iteration that's >10k chars of grown context per loop. Truncating to
+# ~1500 chars keeps the loop bounded; the suffix `…[truncated, X more
+# chars]` tells the model to ask for less if it really needs more.
+_TOOL_RESULT_MAX_CHARS = 1500
+
+
 def _stringify(result: Any, *, as_json: bool) -> str:
     if isinstance(result, str):
-        return result
-    if as_json:
+        out = result
+    elif as_json:
         try:
-            return json.dumps(result, default=str)
+            out = json.dumps(result, default=str)
         except (TypeError, ValueError):
-            return str(result)
-    return str(result)
+            out = str(result)
+    else:
+        out = str(result)
+    if len(out) > _TOOL_RESULT_MAX_CHARS:
+        extra = len(out) - _TOOL_RESULT_MAX_CHARS
+        out = out[:_TOOL_RESULT_MAX_CHARS] + f"…[truncated, {extra} more chars]"
+    return out
 
 
 def tool_loop(

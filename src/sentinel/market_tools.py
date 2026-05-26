@@ -58,18 +58,19 @@ def _norm(t: str) -> str:
         "Recent daily OHLCV bars for a ticker. Use when you need to "
         "see actual price action — not just the 1d % move — e.g. to "
         "judge whether a move is a breakout, gap, or just noise. "
-        "Bars are most-recent-first."
+        "Bars are most-recent-first. Default 7d window keeps the "
+        "context bounded; ask for more only when you really need it."
     ),
     parameters={
         "type": "object",
         "properties": {
             "ticker": {"type": "string", "description": "Symbol like NVDA or BTC-USD"},
-            "days":   {"type": "integer", "minimum": 1, "maximum": 90, "default": 14},
+            "days":   {"type": "integer", "minimum": 1, "maximum": 60, "default": 7},
         },
         "required": ["ticker"],
     },
 )
-def get_ticker_chart(ticker: str, days: int = 14) -> dict:
+def get_ticker_chart(ticker: str, days: int = 7) -> dict:
     sym = _norm(ticker)
     days = max(1, min(int(days), 90))
     cutoff = datetime.now(timezone.utc) - timedelta(days=days * 2 + 3)
@@ -83,22 +84,25 @@ def get_ticker_chart(ticker: str, days: int = 14) -> dict:
     if not bars:
         return {"ticker": sym, "bars": [], "note": "no price data"}
     # Collapse intraday → one bar per UTC day so the model sees
-    # actual daily candles.
+    # actual daily candles. Single-letter keys (d/o/h/l/c/v) save
+    # ~30% on the bytes the tool message carries back to the LLM —
+    # the model has no trouble reading the compact form.
     by_day: dict[str, dict] = {}
     for b in bars:
         d = b.ts.strftime("%Y-%m-%d")
         cur = by_day.get(d)
         if cur is None:
             by_day[d] = {
-                "date": d, "open": b.open, "high": b.high,
-                "low": b.low, "close": b.close, "volume": b.volume,
+                "d": d, "o": round(b.open, 4), "h": round(b.high, 4),
+                "l": round(b.low, 4), "c": round(b.close, 4),
+                "v": int(b.volume or 0),
             }
         else:
-            cur["high"] = max(cur["high"], b.high)
-            cur["low"] = min(cur["low"], b.low)
-            cur["close"] = b.close
-            cur["volume"] += b.volume
-    out = sorted(by_day.values(), key=lambda r: r["date"], reverse=True)[:days]
+            cur["h"] = max(cur["h"], round(b.high, 4))
+            cur["l"] = min(cur["l"], round(b.low, 4))
+            cur["c"] = round(b.close, 4)
+            cur["v"] += int(b.volume or 0)
+    out = sorted(by_day.values(), key=lambda r: r["d"], reverse=True)[:days]
     return {"ticker": sym, "bars": out, "count": len(out)}
 
 

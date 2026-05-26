@@ -1407,9 +1407,33 @@ async def answer_question(
         context["company_profiles"] = await asyncio.to_thread(
             research.profiles_for, symbols
         )
+
+    # When tools are on, slim the pre-built context — the model can
+    # pull what it needs on demand (chart, ATR, news, filings,
+    # holdings, peers). Pre-loading all of that AND letting tools
+    # pull more is paying twice. Drop the per-ticker drill-down,
+    # pulses, and most macro headlines; keep just "what filings hit
+    # today" + the ticker list so the model knows what's hot.
+    if use_tools:
+        slim = {
+            "as_of": context.get("as_of"),
+            "tickers_in_question": context.get("tickers_in_question") or [],
+            # Top 5 most-material filings of the last 24h is a useful
+            # "what landed today" hint without bloat.
+            "recent_filings": (context.get("recent_filings") or [])[:5],
+            # 5 macro headlines anchors macro questions without loading
+            # the full 20-item dump.
+            "macro_news": (context.get("macro_news") or [])[:5],
+        }
+        if "company_profiles" in context:
+            slim["company_profiles"] = context["company_profiles"]
+        context_str = json.dumps(slim, default=str)[:4000]
+    else:
+        context_str = json.dumps(context, default=str)[:9000]
+
     rendered = CHAT_PROMPT.safe_substitute(
         question=question[:500],
-        context_json=json.dumps(context, default=str)[:9000],
+        context_json=context_str,
     )
 
     if use_tools:
