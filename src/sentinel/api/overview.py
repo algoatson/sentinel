@@ -44,19 +44,18 @@ def kpi_snapshot() -> dict[str, Any]:
     except Exception:
         out.update(equity=None, return_pct=None, wallets=None)
     try:
-        pos = _portfolio.open_positions()
-        out["open_positions"] = len(pos)
-        out["unrealized_pnl"] = sum(
-            p["pnl"] for p in pos if p.get("pnl") is not None
-        )
+        # Source the open / closed counters from the autonomous funds'
+        # FundTrade book — that's the universe the dashboard actually
+        # cares about. The legacy PaperTrade store powers the v1
+        # cockpit's manual paper section only.
+        bk = _funds.book_summary()
+        out["open_positions"] = bk["open"]
+        out["unrealized_pnl"] = bk["unrealized_pnl"]
+        out["realized_pnl"] = bk["realized_pnl"]
+        out["wins"], out["closed"] = bk["wins"], bk["closed"]
     except Exception:
         out["open_positions"] = None
         out["unrealized_pnl"] = None
-    try:
-        r = _portfolio.realized_summary()
-        out["realized_pnl"] = r["realized_pnl"]
-        out["wins"], out["closed"] = r["wins"], r["closed"]
-    except Exception:
         out["realized_pnl"] = out["wins"] = out["closed"] = None
     try:
         tr = scorecard.track_record_summary()["overall"]
@@ -87,9 +86,12 @@ def equity_curve(days: int = Query(30, ge=1, le=365)) -> list[dict]:
 
 
 @router.get("/overview/realized-curve")
-def realized_curve() -> list[dict]:
-    """Cumulative realised P&L points, one per closed trade."""
-    return _portfolio.realized_curve()
+def realized_curve() -> list[dict]:  # noqa: F811 — name kept for the SPA
+    """Cumulative realised P&L points, one per closed FundTrade. Was
+    previously sourced from PaperTrade (v1 manual store only), which
+    read empty for a user running the autonomous funds — see
+    `funds.realized_curve_funds`."""
+    return _funds.realized_curve_funds()
 
 
 @router.get("/overview/activity")

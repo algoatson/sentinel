@@ -1293,6 +1293,76 @@ def open_positions_all() -> list[dict]:
     return out
 
 
+def book_summary() -> dict:
+    """Cross-wallet KPI rollup for the Overview ribbon — open position
+    count, total unrealised PnL on open positions (live marks; falls
+    back to entry when the mark is missing, so this never reads as a
+    fake −100% on a dead-priced ticker), realised PnL on all closed
+    trades, win count, closed count.
+
+    Used by /api/overview/kpi — was previously sourced from the legacy
+    PaperTrade store, which only the v1 cockpit writes to, so for a
+    user running the autonomous funds the ribbon read empty / stale."""
+    with session_scope() as s:
+        opens = s.exec(
+            select(FundTrade).where(FundTrade.status == "open")
+        ).all()
+        unrealized = 0.0
+        for t in opens:
+            mark = _mark(s, t.ticker)
+            if mark is None or mark <= 0:
+                mark = t.entry_price
+            d = 1 if t.side == "long" else -1
+            unrealized += t.qty * (mark - t.entry_price) * d
+        closed = s.exec(
+            select(FundTrade).where(FundTrade.status == "closed")
+        ).all()
+    wins = sum(1 for t in closed if (t.realized_pnl or 0) > 0)
+    realized = sum(t.realized_pnl or 0.0 for t in closed)
+    return {
+        "open": len(opens),
+        "unrealized_pnl": round(unrealized, 2),
+        "realized_pnl": round(realized, 2),
+        "wins": wins,
+        "closed": len(closed),
+    }
+
+
+def realized_curve_funds() -> list[dict]:
+    """Cumulative realised P&L across every wallet, oldest closed first.
+
+    Same shape as portfolio.realized_curve (the PaperTrade-only one) so
+    the dashboard's overview hero can swap to this without a frontend
+    change: ``[{ts, ticker, side, fund, pnl, cumulative}]``."""
+    with session_scope() as s:
+        funds_by_id = {f.id: f for f in s.exec(select(Fund)).all()}
+        rows = s.exec(
+            select(FundTrade)
+            .where(FundTrade.status == "closed")
+            .order_by(FundTrade.exit_at)
+        ).all()
+    out: list[dict] = []
+    cum = 0.0
+    for t in rows:
+        if t.exit_at is None or t.realized_pnl is None:
+            continue
+        cum += t.realized_pnl
+        fund = funds_by_id.get(t.fund_id)
+        exit_at = (
+            t.exit_at if t.exit_at.tzinfo
+            else t.exit_at.replace(tzinfo=timezone.utc)
+        )
+        out.append({
+            "ts": exit_at.isoformat(),
+            "ticker": t.ticker,
+            "side": t.side,
+            "fund": fund.name if fund else None,
+            "pnl": round(t.realized_pnl, 2),
+            "cumulative": round(cum, 2),
+        })
+    return out
+
+
 def closed_trades_recent(
     limit: int = 100,
     fund_name: str | None = None,
