@@ -228,6 +228,104 @@ def _maybe_no_think(prompt: str, model_name: str, json_mode: bool) -> str:
     return prompt
 
 
+def _api_chat(
+    messages: list[dict],
+    *,
+    base: str,
+    key: str,
+    model_id: str,
+    max_tokens: int,
+    provider: str = "",
+    tools: list[dict] | None = None,
+    tool_choice: str | dict = "auto",
+    temperature: float = 0.6,
+    json_mode: bool = False,
+) -> dict:
+    """OpenAI-compatible chat-completions call returning the raw assistant
+    message dict. Lower-level than ``_api_complete``: lets callers pass
+    full message history, optional tools, and inspect ``tool_calls``.
+
+    Returns a dict shaped like::
+
+        {
+            "ok": True,
+            "content": "...",                   # may be ""
+            "tool_calls": [                      # zero or more
+                {"id": "...", "name": "...",
+                 "arguments": "<json-string>"},
+                ...
+            ],
+            "finish_reason": "stop"|"tool_calls"|"length"|...,
+            "raw": {...}                          # full provider response
+        }
+
+    On transport failure or empty response, returns
+    ``{"ok": False, "error": str, "raw": ...}`` — callers handle either
+    branch. Never raises.
+    """
+    url = base.rstrip("/") + "/chat/completions"
+    payload: dict[str, Any] = {
+        "model": model_id,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = tool_choice
+    prov = _provider_field(provider)
+    if prov is not None:
+        payload["provider"] = prov
+    try:
+        r = httpx.post(
+            url,
+            headers={"Authorization": f"Bearer {key}"},
+            json=payload,
+            timeout=120.0,
+        )
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        logger.error("LLM API chat call failed ({}): {}", model_id, e)
+        return {"ok": False, "error": str(e), "raw": None}
+
+    choice = (data.get("choices") or [{}])[0]
+    msg = choice.get("message") or {}
+    raw_calls = msg.get("tool_calls") or []
+    tcs: list[dict] = []
+    for c in raw_calls:
+        fn = c.get("function") or {}
+        tcs.append(
+            {
+                "id": c.get("id") or "",
+                "name": fn.get("name") or "",
+                "arguments": fn.get("arguments") or "",
+            }
+        )
+    content = (msg.get("content") or "").strip()
+    finish = choice.get("finish_reason")
+    if not content and not tcs:
+        # Empty and no tool calls — surface as failure with diagnostics.
+        logger.warning(
+            "LLM API {} empty chat response (finish={}, has_reasoning={}, "
+            "error={})",
+            model_id,
+            finish,
+            bool(msg.get("reasoning") or msg.get("reasoning_content")),
+            data.get("error"),
+        )
+        return {"ok": False, "error": "empty", "raw": data}
+    return {
+        "ok": True,
+        "content": content,
+        "tool_calls": tcs,
+        "finish_reason": finish,
+        "raw": data,
+    }
+
+
 def _api_complete(
     prompt: str, *, base: str, key: str, model_id: str,
     json_mode: bool, max_tokens: int, provider: str = "",
@@ -447,6 +545,70 @@ class LLM:
             return LLM_ERROR_SENTINEL
 
         return text
+
+
+    def chat(
+        self,
+        messages: list[dict],
+        *,
+        model: Literal["light", "heavy"] = "heavy",
+        max_tokens: int = 800,
+        tools: list[dict] | None = None,
+        tool_choice: str | dict = "auto",
+        temperature: float = 0.6,
+        grounded: bool = True,
+    ) -> dict:
+        """Lower-level chat interface that accepts a full messages array
+        and optional ``tools``. Used by the tool-call loop. Returns the
+        ``_api_chat`` result dict so callers can branch on
+        ``tool_calls``.
+
+        Only the serverless route supports tools today; Ollama path
+        ignores ``tools`` and just returns content. Grounded preamble
+        injected as a system message when requested.
+        """
+        if grounded and messages:
+            preamble = grounding.prepend("").strip()
+            if preamble and (not messages or messages[0].get("role") != "system"):
+                messages = [{"role": "system", "content": preamble}, *messages]
+
+        route = _api_route(model)
+        if route is not None:
+            base, key, model_id = route
+            res = _api_chat(
+                messages,
+                base=base, key=key, model_id=model_id,
+                max_tokens=max_tokens,
+                provider=_api_provider(model),
+                tools=tools,
+                tool_choice=tool_choice,
+                temperature=temperature,
+            )
+            _STATS["calls"] += 1
+            if not res.get("ok"):
+                _STATS["errors"] += 1
+            return res
+
+        # Ollama path — flatten messages into a prompt; ignore tools.
+        # Tool-calling is API-only; the local-Ollama path is the
+        # degraded fallback where the bot keeps reasoning one-shot.
+        flat = "\n\n".join(
+            f"[{m['role']}]\n{m.get('content') or ''}"
+            for m in messages
+            if m.get("content")
+        )
+        out = self._complete_once(
+            flat, model=model, max_tokens=max_tokens, json_mode=False
+        )
+        if out == LLM_ERROR_SENTINEL:
+            _STATS["calls"] += 1
+            _STATS["errors"] += 1
+            return {"ok": False, "error": "ollama_empty", "raw": None}
+        _STATS["calls"] += 1
+        return {
+            "ok": True, "content": out, "tool_calls": [],
+            "finish_reason": "stop", "raw": None,
+        }
 
 
 _singleton: LLM | None = None

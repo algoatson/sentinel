@@ -75,6 +75,46 @@ Evidence (JSON):
 $payload_json
 """)
 
+# Lookup-mode prompt. Slightly more compact than the one-shot version
+# because the tool-calling model burns context fast across iterations.
+WHY_TOOL_SYSTEM = (
+    "You explain sharp asset moves for a private paper-trading copilot.\n"
+    "You have tools to pull extra context. Use them sparingly — only when "
+    "the evidence below doesn't tell you what you need. After at most a "
+    "couple of tool calls, write the final answer.\n\n"
+    "Format the final answer EXACTLY as the user instructions specify "
+    "(3-5 sentences, optional CALL line, mandatory IMPORTANCE line)."
+)
+WHY_TOOL_USER = Template("""\
+$TICKER moved $chg_str (1d) with volume ${vol}× the 20d average.
+Asset class: $asset_class. Data coverage on this name: $coverage.
+
+Explain the likely driver and give a forward read.
+
+- If `data_coverage` is "thin", anchor off BENCHMARKS + PEERS in the
+  evidence below. Use the tools to pull anything else you need
+  (chart window, recent news, peer movers, ATR, filings, correlation).
+- Don't invent a catalyst. If nothing explains it, say so and call
+  it macro/sector/flow.
+- 3-5 sentences. $$TICKER form.
+
+If your forward read is directional, emit one machine line:
+CALL: $$TICKER LONG|SHORT <conviction 1-5>
+
+End with EXACTLY this final line, nothing after:
+IMPORTANCE: <1-5> — <≤10-word reason>
+(5 = act now; 4 = high; 3 = notable; 2 = context; 1 = marginal)
+
+Pre-loaded evidence (JSON):
+$payload_json
+""")
+
+# Per-cycle cap on how many "thin"-coverage explanations get the
+# full tool-loop. Tool loops are 2-4× the wire cost of the one-shot
+# path, so we don't want a noisy day where 20 small-caps each pump
+# 8% to burn through the LLM budget.
+_TOOL_LOOP_BUDGET_PER_CYCLE = 2
+
 
 async def run_why_moved_cycle() -> None:
     try:
@@ -275,8 +315,12 @@ async def _run() -> None:
     llm = get_llm()
     from datetime import timedelta
 
+    from ..llm_tools import tool_loop
+    from ..market_tools import default_registry
     from ..narrative import is_superseded, record_event
 
+    tool_registry = default_registry()
+    tool_budget = _TOOL_LOOP_BUDGET_PER_CYCLE
     posted = 0
     coalesced = 0
     for c in candidates:
@@ -305,18 +349,64 @@ async def _run() -> None:
             if m:
                 evidence["microstructure"] = m
         payload = {**{k: v for k, v in c.items() if not k.startswith("_")}, **evidence}
-        rendered = WHY_PROMPT.safe_substitute(
-            payload_json=json.dumps(payload, default=str)
+
+        # Tool-loop path: thin-coverage names get a small budget to
+        # pull extra context (chart window / peer movers / news /
+        # filings / correlation / micro). Anything else stays on the
+        # one-shot path — it's faster and cheaper, and the pre-loaded
+        # evidence already covers the well-tracked tickers.
+        use_tools = (
+            evidence.get("data_coverage") == "thin"
+            and tool_budget > 0
         )
-        # Heavy = the reasoning model. The light model returns empty on this
-        # evidence-heavy prompt; convergence (same shape) already uses heavy.
-        # 800 tokens: narrative + optional CALL + mandatory IMPORTANCE line.
-        # 500 was hitting mid-sentence cut-offs on thin-coverage tickers
-        # where the model spent budget explaining what it couldn't see.
-        body = await asyncio.to_thread(
-            llm.complete, rendered, model="heavy", max_tokens=800,
-            fallback_light=True,
-        )
+        if use_tools:
+            tool_budget -= 1
+            chg_str = f"{c['change_1d_pct']:+.2f}%"
+            rendered_user = WHY_TOOL_USER.safe_substitute(
+                TICKER=ticker,
+                chg_str=chg_str,
+                vol=c.get("volume_vs_20d_avg", 0),
+                asset_class=c["asset_class"],
+                coverage=evidence.get("data_coverage"),
+                payload_json=json.dumps(payload, default=str),
+            )
+            loop_res = await asyncio.to_thread(
+                tool_loop,
+                user_prompt=rendered_user,
+                system_prompt=WHY_TOOL_SYSTEM,
+                registry=tool_registry,
+                model="heavy",
+                max_tokens=700,
+                max_iterations=3,
+            )
+            body = loop_res.text
+            if loop_res.tool_calls:
+                logger.info(
+                    "why_moved[{}]: tool_loop iterations={}, tools={}",
+                    ticker, loop_res.iterations,
+                    [t["name"] for t in loop_res.tool_calls],
+                )
+            if not body:
+                logger.warning(
+                    "why_moved[{}]: tool_loop empty ({}), falling back to one-shot",
+                    ticker, loop_res.error,
+                )
+        else:
+            body = ""
+
+        if not body:
+            rendered = WHY_PROMPT.safe_substitute(
+                payload_json=json.dumps(payload, default=str)
+            )
+            # Heavy = the reasoning model. The light model returns empty on
+            # this evidence-heavy prompt; convergence (same shape) already
+            # uses heavy. 800 tokens leaves headroom for narrative + CALL +
+            # IMPORTANCE on thin-coverage hits where the model wants to
+            # explain what it couldn't find.
+            body = await asyncio.to_thread(
+                llm.complete, rendered, model="heavy", max_tokens=800,
+                fallback_light=True,
+            )
         if not body or body == LLM_ERROR_SENTINEL:
             logger.error("why_moved: LLM error on {}", ticker)
             continue
