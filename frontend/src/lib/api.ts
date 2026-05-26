@@ -449,3 +449,37 @@ export const drawdownCurves = (days = 90) =>
   get<{ window_days: number; wallets: DrawdownWallet[] }>(
     `/analytics/drawdown?days=${days}`
   );
+
+export interface CorrelationMatrix {
+  tickers: string[];
+  matrix: Array<Array<number | null>>;
+  days: number;
+  n: number;
+  bars_used?: Record<string, number>;
+}
+export const correlationMatrix = (tickers?: string[], days = 30) => {
+  const p = new URLSearchParams({ days: String(days) });
+  if (tickers && tickers.length) p.set('tickers', tickers.join(','));
+  return get<CorrelationMatrix>(`/analytics/correlation?${p}`);
+};
+
+export interface TodayPulse {
+  as_of: string;
+  window_hours: number;
+  news_count: number;
+  calls_count: number;
+  filings_count: number;
+  reddit_count: number;
+  trades_opened: number;
+  trades_closed: number;
+  realized_today: number;
+  best_close: { ticker: string; side: string; pnl: number } | null;
+  worst_close: { ticker: string; side: string; pnl: number } | null;
+  highest_conviction_call: {
+    ticker: string; direction: string; conviction: number; source: string;
+  } | null;
+  top_material_filing: {
+    ticker: string | null; form_type: string; materiality_score: number | null;
+  } | null;
+}
+export const todayPulse = () => get<TodayPulse>('/analytics/today');

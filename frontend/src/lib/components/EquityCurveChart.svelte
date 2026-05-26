@@ -141,13 +141,22 @@
       const data = makeData(s);
       if (!data.length) return;
       const color = PALETTE[i % PALETTE.length];
+      // No `title` and `lastValueVisible: false` — the in-chart
+      // series labels covered the right gutter (which also hides
+      // the right-edge of the lines). The HTML legend below the
+      // chart already shows fund · last % per line, and the
+      // floating hover overlay shows the per-fund value at the
+      // crosshair, so the inline label was redundant + intrusive.
       const api = chart!.addLineSeries({
         color,
         lineWidth: 2,
         priceLineVisible: false,
-        lastValueVisible: true,
-        priceFormat: { type: 'custom', minMove: 0.01, formatter: (v: number) => `${v.toFixed(2)}%` },
-        title: s.fund
+        lastValueVisible: false,
+        priceFormat: {
+          type: 'custom',
+          minMove: 0.01,
+          formatter: (v: number) => `${v.toFixed(2)}%`
+        }
       });
       api.setData(data);
       lineSeries.push({

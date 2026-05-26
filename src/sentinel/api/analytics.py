@@ -10,8 +10,10 @@ from fastapi import APIRouter, Query
 from ..analytics import attribution as _attr
 from ..analytics import calibration as _cal
 from ..analytics import concentration as _conc
+from ..analytics import correlation as _corr
 from ..analytics import daily as _daily
 from ..analytics import dedupe as _dedupe
+from ..analytics import digest as _digest
 from ..analytics import hot as _hot
 from ..analytics import monthly as _monthly
 from ..analytics import sentiment_quality as _sq
@@ -74,3 +76,31 @@ def daily_pnl(days: int = Query(180, ge=14, le=730)) -> dict:
 def drawdown(days: int = Query(90, ge=14, le=730)) -> dict:
     """Per-wallet peak-to-current drawdown series."""
     return _daily.drawdown_curves(days=days)
+
+
+@router.get("/analytics/correlation")
+def correlation(
+    tickers: str | None = Query(
+        None,
+        description="Comma-separated tickers; default = every open-position ticker",
+    ),
+    days: int = Query(30, ge=7, le=180),
+) -> dict:
+    """Pairwise daily-return correlation matrix. Defaults to the
+    current open-position universe so the Analytics panel surfaces
+    concentration risk without asking what to plot."""
+    syms = None
+    if tickers:
+        syms = [
+            t.strip().upper().lstrip("$") for t in tickers.split(",")
+            if t.strip()
+        ]
+    return _corr.correlation_matrix(tickers=syms, days=days)
+
+
+@router.get("/analytics/today")
+def today() -> dict:
+    """Pulse of the rolling last 24h — news/calls/filings/reddit
+    counts, opened/closed trades, realised PnL today, best+worst
+    closes, top conviction call, top material filing."""
+    return _digest.today_pulse()

@@ -9,6 +9,7 @@
   import TickerLink from '$components/TickerLink.svelte';
   import EquityCurveChart from '$components/EquityCurveChart.svelte';
   import Sparkline from '$components/Sparkline.svelte';
+  import TodayPulse from '$components/TodayPulse.svelte';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
   import { usd, compact, timeAgo, pct, tone, stripMd } from '$lib/format';
@@ -121,6 +122,11 @@
       </div>
     {/if}
   </div>
+</div>
+
+<!-- ── TODAY'S PULSE strip ──────────────────────────────────────────── -->
+<div class="mb-4">
+  <TodayPulse />
 </div>
 
 <!-- ── KPI ribbon ────────────────────────────────────────────────────── -->

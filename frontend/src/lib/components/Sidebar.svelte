@@ -15,7 +15,8 @@
     Cog,
     SlidersHorizontal,
     Activity as ActivityIcon,
-    BarChart3
+    BarChart3,
+    GitCompareArrows
   } from 'lucide-svelte';
 
   interface Props {
@@ -51,6 +52,7 @@
       items: [
         { href: '/watches', label: 'Watches', icon: Bell },
         { href: '/lookup', label: 'Lookup', icon: Search },
+        { href: '/compare', label: 'Compare', icon: GitCompareArrows },
         { href: '/copilot', label: 'Copilot', icon: Sparkles }
       ]
     },

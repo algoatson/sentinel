@@ -12,8 +12,9 @@
    */
   import { createQuery } from '@tanstack/svelte-query';
   import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
-  import { hotTickers, calibration, attribution, sentimentQuality, monthlyPnl, concentration, dailyPnl, drawdownCurves } from '$api';
+  import { hotTickers, calibration, attribution, sentimentQuality, monthlyPnl, concentration, dailyPnl, drawdownCurves, correlationMatrix } from '$api';
   import PnlCalendar from '$components/PnlCalendar.svelte';
+  import CorrelationMatrix from '$components/CorrelationMatrix.svelte';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import Spinner from '$components/Spinner.svelte';
@@ -62,6 +63,11 @@
   const ddQ = createQuery({
     queryKey: ['drawdown-curves', 90],
     queryFn: () => drawdownCurves(90),
+    refetchInterval: 5 * 60_000
+  });
+  const corrQ = createQuery({
+    queryKey: ['correlation', 30],
+    queryFn: () => correlationMatrix(undefined, 30),
     refetchInterval: 5 * 60_000
   });
 
@@ -756,4 +762,20 @@
       {/each}
     </div>
   {/if}
+</Card>
+
+<!-- ── POSITION CORRELATION ─────────────────────────── -->
+<Card class="mt-4 px-4 py-3">
+  <div class="mb-2 flex items-baseline gap-3">
+    <div class="flex items-center gap-1.5">
+      <BarChart3 class="h-3.5 w-3.5 text-bad" />
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+        Position correlation (30d log returns)
+      </div>
+    </div>
+    <span class="text-[10.5px] text-faint">
+      red = positive · blue = negative · diagonal hidden from intensity
+    </span>
+  </div>
+  <CorrelationMatrix data={$corrQ.data} />
 </Card>
