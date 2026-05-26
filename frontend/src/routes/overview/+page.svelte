@@ -17,6 +17,7 @@
   import StreakCard from '$components/StreakCard.svelte';
   import DailyPlanCard from '$components/DailyPlanCard.svelte';
   import LiveEvents from '$components/LiveEvents.svelte';
+  import WalletAllocation from '$components/WalletAllocation.svelte';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
   import { usd, compact, timeAgo, pct, tone, stripMd } from '$lib/format';
@@ -230,6 +231,11 @@
   <div class="lg:col-span-5">
     <RiskMonitor />
   </div>
+</div>
+
+<!-- ── ALLOCATION (full width) ──────────────────────── -->
+<div class="mt-4">
+  <WalletAllocation />
 </div>
 
 <!-- ── STREAKS + EARNINGS (split row) ───────────────── -->

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { browser } from '$app/environment';
+  import { page } from '$app/state';
   import { askCopilot, type CopilotToolCall } from '$api';
   import Markdown from '$components/Markdown.svelte';
   import Spinner from '$components/Spinner.svelte';
@@ -41,6 +42,15 @@
       if (raw) turns = JSON.parse(raw) as Turn[];
     } catch (_) {
       /* corrupted storage → start fresh */
+    }
+    // ?q=… prefill from deep-links (Symbol page "Ask copilot", etc).
+    // Drop the param after consuming so a reload doesn't re-ask.
+    const q = page.url.searchParams.get('q');
+    if (q) {
+      input = q;
+      const url = new URL(window.location.href);
+      url.searchParams.delete('q');
+      history.replaceState({}, '', url.toString());
     }
     scrollToBottom();
   });

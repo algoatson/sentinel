@@ -162,6 +162,12 @@
         title="Open in /compare with this ticker preloaded"
       >Compare</a>
 
+      <a
+        href={`${base}/copilot?q=${encodeURIComponent('What\'s the read on $' + ticker + ' right now?')}`}
+        class="rounded-md border border-violet/40 bg-violet-soft px-2.5 py-1.5 text-[11.5px] font-medium text-violet transition-colors hover:bg-violet/15"
+        title="Open the copilot with a prefilled question about this ticker"
+      >Ask copilot</a>
+
       <span class="mx-1 text-faint">·</span>
       {#each RANGES as r (r.label)}
         <button
