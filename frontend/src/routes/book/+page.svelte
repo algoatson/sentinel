@@ -24,6 +24,7 @@
   import type { OpenPositionRow } from '$api';
   import OpenPositionDrawer from '$components/OpenPositionDrawer.svelte';
   import PositionHeatmap from '$components/PositionHeatmap.svelte';
+  import TradeLifecycle from '$components/TradeLifecycle.svelte';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import TickerLink from '$components/TickerLink.svelte';
@@ -982,6 +983,9 @@
           <span class="font-semibold text-faint">Opened:</span> {drawerRow.open_reason}
         </div>
       {/if}
+
+      <!-- News / filings / bot calls about this ticker since entry -->
+      <TradeLifecycle tradeId={drawerRow.id} />
     </div>
   {/if}
 </Drawer>

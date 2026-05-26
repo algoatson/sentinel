@@ -12,8 +12,9 @@
    */
   import { createQuery } from '@tanstack/svelte-query';
   import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
-  import { hotTickers, calibration, attribution, sentimentQuality, monthlyPnl, concentration, dailyPnl, drawdownCurves, correlationMatrix, perfBySource } from '$api';
+  import { hotTickers, calibration, attribution, sentimentQuality, monthlyPnl, concentration, dailyPnl, drawdownCurves, correlationMatrix, perfBySource, pnlDistribution } from '$api';
   import PnlCalendar from '$components/PnlCalendar.svelte';
+  import PnlHistogram from '$components/PnlHistogram.svelte';
   import CorrelationMatrix from '$components/CorrelationMatrix.svelte';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
@@ -73,6 +74,11 @@
   const pbsQ = createQuery({
     queryKey: ['perf-by-source'],
     queryFn: () => perfBySource(500),
+    refetchInterval: 5 * 60_000
+  });
+  const pnldQ = createQuery({
+    queryKey: ['pnl-distribution'],
+    queryFn: () => pnlDistribution(500),
     refetchInterval: 5 * 60_000
   });
 
@@ -887,4 +893,20 @@
       </table>
     </div>
   {/if}
+</Card>
+
+<!-- ── PNL DISTRIBUTION ───────────────────────────── -->
+<Card class="mt-4 px-4 py-3">
+  <div class="mb-2 flex items-baseline gap-3">
+    <div class="flex items-center gap-1.5">
+      <BarChart3 class="h-3.5 w-3.5 text-primary" />
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+        PnL distribution · the shape of the edge
+      </div>
+    </div>
+    {#if $pnldQ.data && $pnldQ.data.bin_width_pct}
+      <span class="text-[10.5px] text-faint">{$pnldQ.data.bin_width_pct}% bins</span>
+    {/if}
+  </div>
+  <PnlHistogram data={$pnldQ.data} />
 </Card>

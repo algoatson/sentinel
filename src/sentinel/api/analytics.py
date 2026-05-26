@@ -19,6 +19,7 @@ from ..analytics import earnings_exposure as _earn
 from ..analytics import holdings_news as _hnews
 from ..analytics import streaks as _streaks
 from ..analytics import perf_by_source as _pbs
+from ..analytics import pnl_distribution as _pnld
 from ..analytics import hot as _hot
 from ..analytics import monthly as _monthly
 from ..analytics import sentiment_quality as _sq
@@ -153,3 +154,11 @@ def perf_by_source(limit: int = 500) -> dict:
     expectancy, avg win / avg loss, avg R-multiple, avg hold time,
     and the most-recent 5 PnLs."""
     return _pbs.perf_by_source(limit=limit)
+
+
+@router.get("/analytics/pnl-distribution")
+def pnl_distribution(limit: int = 500) -> dict:
+    """Histogram of realized return % per closed trade — symmetric
+    bins around 0% with auto-picked bin width, plus moment stats
+    (mean / median / stdev / skew) and decile cuts (p10, p90)."""
+    return _pnld.pnl_distribution(limit=limit)

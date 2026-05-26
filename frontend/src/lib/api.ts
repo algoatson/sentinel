@@ -647,6 +647,45 @@ export interface PerfBySource {
 export const perfBySource = (limit = 500) =>
   get<PerfBySource>(`/analytics/perf-by-source?limit=${limit}`);
 
+export interface PnlBin {
+  lo: number;
+  hi: number;
+  count: number;
+}
+export interface PnlDistribution {
+  n: number;
+  bin_width_pct: number;
+  range_max?: number;
+  bins: PnlBin[];
+  mean_pct: number | null;
+  median_pct: number | null;
+  stdev_pct: number | null;
+  skew: number | null;
+  p10: number | null;
+  p90: number | null;
+  best?: number;
+  worst?: number;
+}
+export const pnlDistribution = (limit = 500) =>
+  get<PnlDistribution>(`/analytics/pnl-distribution?limit=${limit}`);
+
+export interface SymbolNote {
+  ticker: string;
+  body: string;
+  updated_at: string | null;
+}
+export const getSymbolNote = (ticker: string) =>
+  get<SymbolNote>(`/symbol/${encodeURIComponent(ticker)}/note`);
+export const putSymbolNote = (ticker: string, body: string) =>
+  fetch(`/api/symbol/${encodeURIComponent(ticker)}/note`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body })
+  }).then(async (r) => {
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json() as Promise<SymbolNote>;
+  });
+
 export interface TradeLifecycle {
   trade: {
     id: number;

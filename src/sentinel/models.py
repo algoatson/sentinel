@@ -480,3 +480,13 @@ class PendingTuning(SQLModel, table=True):
     message_id: str = Field(primary_key=True)
     delta: str
     created_at: datetime
+
+
+class SymbolNote(SQLModel, table=True):
+    """Free-form per-ticker notebook. Distinct from FundTrade.notes, which
+    is per-trade — a SymbolNote persists across trades so observations
+    like "tends to gap up after upgrades" stay attached to the ticker
+    forever. One row per ticker, body upserted, updated_at bumps on save."""
+    ticker: str = Field(primary_key=True)
+    body: str = Field(default="", max_length=4000)
+    updated_at: datetime

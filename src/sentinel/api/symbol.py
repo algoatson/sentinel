@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from .. import portfolio as _portfolio
@@ -20,6 +21,7 @@ from ..models import (
     NewsItem,
     PriceContext,
     RedditMention,
+    SymbolNote,
     Thesis,
     TradingCall,
     Watchlist,
@@ -214,3 +216,51 @@ def profile(
                 "sentiment_avg": reddit_sent,
             },
         }
+
+
+# ── Per-ticker symbol notes ──────────────────────────────────────────────
+
+class SymbolNoteRequest(BaseModel):
+    body: str = Field(default="", max_length=4000)
+
+
+def _note_row(t: str, n: SymbolNote | None) -> dict:
+    return {
+        "ticker": t,
+        "body": n.body if n else "",
+        "updated_at": _aware_iso(n.updated_at) if n else None,
+    }
+
+
+@router.get("/symbol/{ticker}/note")
+def get_note(ticker: str) -> dict:
+    """Persistent per-ticker journal note. Empty body if no note yet."""
+    sym = ticker.upper().replace("$", "")
+    with session_scope() as s:
+        n = s.get(SymbolNote, sym)
+    return _note_row(sym, n)
+
+
+@router.put("/symbol/{ticker}/note")
+def put_note(ticker: str, body: SymbolNoteRequest) -> dict:
+    """Upsert the note. Empty/whitespace body deletes the row so the
+    "has-note" tag goes away naturally."""
+    sym = ticker.upper().replace("$", "")
+    if not sym:
+        raise HTTPException(400, "ticker required")
+    text = (body.body or "").strip()
+    with session_scope() as s:
+        n = s.get(SymbolNote, sym)
+        if not text:
+            if n is not None:
+                s.delete(n)
+            return {"ticker": sym, "body": "", "updated_at": None}
+        if n is None:
+            n = SymbolNote(ticker=sym, body=text, updated_at=datetime.now(timezone.utc))
+        else:
+            n.body = text
+            n.updated_at = datetime.now(timezone.utc)
+        s.add(n)
+        # Re-read for serialisation safety.
+        updated_at_iso = _aware_iso(n.updated_at)
+    return {"ticker": sym, "body": text, "updated_at": updated_at_iso}

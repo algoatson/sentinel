@@ -11,8 +11,8 @@
    * Polls /api/analytics/risk-monitor every 60s, same cadence as the
    * other Overview panels.
    */
-  import { createQuery } from '@tanstack/svelte-query';
-  import { riskMonitor, type RiskRowSlim } from '$api';
+  import { createQuery, useQueryClient } from '@tanstack/svelte-query';
+  import { riskMonitor, tickerAtr, updateRisk, type RiskRowSlim } from '$api';
   import { base } from '$app/paths';
   import {
     ShieldAlert,
@@ -20,10 +20,49 @@
     AlertTriangle,
     TrendingUp,
     TrendingDown,
-    Activity
+    Activity,
+    Wand2
   } from 'lucide-svelte';
   import Card from './Card.svelte';
   import { pct, price } from '$lib/format';
+  import { toast } from '$lib/toast.svelte';
+
+  const qc = useQueryClient();
+  /** Trade ids currently mid-ATR-fetch — used to disable the button
+   * and show a tiny inline spinner glyph. */
+  let pending = $state(new Set<number>());
+
+  /**
+   * One-click: pull the 14-period ATR for this ticker, derive a
+   * 2×ATR stop on the correct side of entry (long → below, short →
+   * above) and PATCH /positions/{id}/risk. Refresh the snapshot.
+   */
+  async function setAtrStop(row: RiskRowSlim) {
+    pending.add(row.id);
+    pending = new Set(pending);
+    try {
+      const atr = await tickerAtr(row.ticker, 14);
+      const stop =
+        row.side === 'long'
+          ? atr.suggested_long_stop
+          : atr.suggested_short_stop;
+      if (stop === null || !Number.isFinite(stop) || stop <= 0) {
+        toast.error(`No usable ATR for $${row.ticker}`);
+        return;
+      }
+      await updateRisk(row.id, { stop_price: stop });
+      toast.success(
+        `Stop set on $${row.ticker} @ ${stop.toFixed(2)} (2×ATR)`
+      );
+      qc.invalidateQueries({ queryKey: ['risk-monitor'] });
+      qc.invalidateQueries({ queryKey: ['positions-open'] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      pending.delete(row.id);
+      pending = new Set(pending);
+    }
+  }
 
   const q = createQuery({
     queryKey: ['risk-monitor'],
@@ -187,6 +226,7 @@
           </div>
           <ul class="mt-1 space-y-0.5">
             {#each data.naked.slice(0, 4) as r (r.id)}
+              {@const isPending = pending.has(r.id)}
               <li class="flex items-center gap-2 rounded border border-border-soft bg-surface-2/40 px-2 py-1 text-[11.5px] tabular">
                 <a
                   href={`${base}/symbol/${encodeURIComponent(r.ticker)}`}
@@ -194,9 +234,19 @@
                 >${r.ticker}</a>
                 <span class="text-[10px] uppercase text-faint">{r.side}</span>
                 <span class="text-[10.5px] capitalize text-faint">{r.fund}</span>
-                <span class="ml-auto {(r.upnl ?? 0) >= 0 ? 'text-good' : 'text-bad'}">
+                <span class={(r.upnl ?? 0) >= 0 ? 'text-good' : 'text-bad'}>
                   {pct(r.upnl_pct ?? 0, 2)}
                 </span>
+                <button
+                  type="button"
+                  onclick={() => setAtrStop(r)}
+                  disabled={isPending}
+                  class="ml-auto inline-flex items-center gap-1 rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn transition-colors hover:bg-warn/15 disabled:opacity-50"
+                  title="Set a 2×ATR(14) stop on the correct side of entry"
+                >
+                  <Wand2 class="h-2.5 w-2.5" />
+                  {isPending ? '…' : '2×ATR'}
+                </button>
               </li>
             {/each}
           </ul>

@@ -12,6 +12,7 @@
   import EmptyState from '$components/EmptyState.svelte';
   import CandleChart from '$components/CandleChart.svelte';
   import Markdown from '$components/Markdown.svelte';
+  import SymbolNoteCard from '$components/SymbolNoteCard.svelte';
   import {
     ArrowLeft, ExternalLink, Newspaper, FileText, Target as TargetIcon,
     Brain, MessageCircle, Activity as ActivityIcon, LineChart
@@ -193,6 +194,11 @@
       </div>
     {/if}
   </Card>
+
+  <!-- ── per-ticker notebook ──────────────────────────────── -->
+  <div class="mt-4">
+    <SymbolNoteCard {ticker} />
+  </div>
 
   <!-- ── quick stats grid ─────────────────────────────────── -->
   <div class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
