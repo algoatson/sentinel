@@ -160,26 +160,47 @@
       });
       api.setData(data);
 
-      // Trade markers on this fund's line — one dot per closed trade
-      // within the window, coloured by PnL sign, labelled with the
-      // ticker. The bot's curve doesn't tell you WHICH trade moved
-      // it; these dots do. lightweight-charts wants markers in
-      // strict-monotonic time order so we sort + dedupe defensively.
-      const trades = (s.trades || [])
-        .map((t) => ({
-          time: Math.floor(new Date(t.ts).getTime() / 1000) as unknown as Time,
-          position: ((t.pnl ?? 0) >= 0 ? 'aboveBar' : 'belowBar') as
-            'aboveBar' | 'belowBar',
-          color: (t.pnl ?? 0) >= 0 ? '#3ddc97' : '#ff6b6b',
-          shape: 'circle' as const,
-          text: t.ticker,
-        }))
-        .sort((a, b) => (a.time as number) - (b.time as number))
-        // Collapse same-second markers to the latest (lib refuses
-        // non-monotonic feeds).
-        .filter((m, idx, arr) =>
-          idx === 0 || (m.time as number) !== (arr[idx - 1].time as number)
-        );
+      // Cluster trade markers per UTC day so a busy session doesn't
+      // paint a wall of overlapping dots on one line. Each daily
+      // cluster is one marker: net-PnL-coloured, labelled with the
+      // tickers (truncated). lightweight-charts requires monotonic
+      // time order so we anchor each cluster at noon UTC of its day
+      // (one unique time per day).
+      type DayBucket = {
+        pnl: number;
+        tickers: string[];
+        count: number;
+      };
+      const byDay = new Map<string, DayBucket>();
+      for (const t of s.trades || []) {
+        const day = new Date(t.ts).toISOString().slice(0, 10);
+        const bucket = byDay.get(day) ?? { pnl: 0, tickers: [], count: 0 };
+        bucket.pnl += t.pnl ?? 0;
+        if (!bucket.tickers.includes(t.ticker)) bucket.tickers.push(t.ticker);
+        bucket.count += 1;
+        byDay.set(day, bucket);
+      }
+      const trades = Array.from(byDay.entries())
+        .map(([day, b]) => {
+          // Anchor at 12:00 UTC of the day so the marker sits cleanly
+          // on the daily equity tick around the same time.
+          const ts = Math.floor(new Date(day + 'T12:00:00Z').getTime() / 1000);
+          const label =
+            b.tickers.length === 1
+              ? b.tickers[0]
+              : b.count > 1
+                ? `${b.tickers.slice(0, 2).join(',')}${b.count > 2 ? '+' + (b.count - 2) : ''}`
+                : b.tickers[0];
+          return {
+            time: ts as unknown as Time,
+            position: (b.pnl >= 0 ? 'aboveBar' : 'belowBar') as
+              'aboveBar' | 'belowBar',
+            color: b.pnl >= 0 ? '#3ddc97' : '#ff6b6b',
+            shape: 'circle' as const,
+            text: label,
+          };
+        })
+        .sort((a, b) => (a.time as number) - (b.time as number));
       if (trades.length) api.setMarkers(trades);
 
       lineSeries.push({
@@ -239,8 +260,12 @@
 
   <!-- Hover readout overlay: small floating panel in the top-left. -->
   {#if hoverDate && hoverValues.length}
+    <!-- Hover readout pinned top-right, out of the way of the marker
+         dots that sit on each fund's line. The right gutter has no
+         price-axis labels (this chart hides them on the line series)
+         so we can land safely against the border. -->
     <div
-      class="pointer-events-none absolute left-2 top-2 rounded-md border border-border bg-surface/95 px-2 py-1.5 text-[10.5px] tabular shadow-lg backdrop-blur"
+      class="pointer-events-none absolute right-2 top-2 rounded-md border border-border bg-surface/95 px-2 py-1.5 text-[10.5px] tabular shadow-lg backdrop-blur"
     >
       <div class="font-mono text-faint">{hoverDate}</div>
       <div class="mt-0.5 space-y-0.5">

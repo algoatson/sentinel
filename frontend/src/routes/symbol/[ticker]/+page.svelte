@@ -25,8 +25,11 @@
   const RANGES: Range[] = [
     { label: '1m', days: 30 },
     { label: '3m', days: 90 },
+    { label: '6m', days: 180 },
     { label: '1y', days: 365 },
-    { label: 'All', days: null }
+    { label: '2y', days: 730 },
+    { label: '5y', days: 1825 },
+    { label: 'All', days: null },
   ];
   let chartRange: Range = $state(RANGES[1]);
 

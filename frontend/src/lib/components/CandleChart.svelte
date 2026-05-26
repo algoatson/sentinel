@@ -74,6 +74,12 @@
    *  but not "remove all", so we keep the handles ourselves. */
   let priceLines: IPriceLine[] = [];
 
+  /** Overlay legend collapsed state. The lightweight-charts crosshair
+   *  tooltip lives in the top-left corner; we keep the legend in the
+   *  top-right and let the user fold it to a single-line chip when
+   *  it's in the way of the price-axis labels. */
+  let overlayCollapsed = $state(false);
+
   const PALETTE = {
     bg: 'transparent',
     text: 'rgba(255, 255, 255, 0.62)',
@@ -194,18 +200,26 @@
 
   function addPositionLines() {
     if (!candleSeries) return;
+    // Axis-label visibility — at ≥3 positions the right gutter gets
+    // crowded with stacked "fund · entry / stop / target" tags. We
+    // drop the entry label first (the time-axis arrow already shows
+    // where entry is), then collapse stop/target to short symbols
+    // (↓ / ↑) when we still have too many lines. The overlay legend
+    // top-right carries the readable list.
+    const dense = positions.length >= 3;
+    const veryDense = positions.length >= 5;
     for (const p of positions) {
       const colour = fundColour(p.fund);
       const label = p.fund ? p.fund : p.side;
-      // Entry — solid, axis-labelled with the fund.
+      // Entry — solid, axis label only when very few positions.
       priceLines.push(
         candleSeries.createPriceLine({
           price: p.entry,
           color: colour,
           lineWidth: 1,
           lineStyle: 0, // solid
-          axisLabelVisible: true,
-          title: `${label} · entry`
+          axisLabelVisible: !dense,
+          title: dense ? '' : `${label} · entry`,
         })
       );
       if (p.stop_price && p.stop_price > 0) {
@@ -216,7 +230,7 @@
             lineWidth: 1,
             lineStyle: 2, // dashed
             axisLabelVisible: true,
-            title: `${label} · stop`
+            title: veryDense ? '↓' : `${label} · stop`,
           })
         );
       }
@@ -228,7 +242,7 @@
             lineWidth: 1,
             lineStyle: 2, // dashed
             axisLabelVisible: true,
-            title: `${label} · target`
+            title: veryDense ? '↑' : `${label} · target`,
           })
         );
       }
@@ -242,8 +256,8 @@
             color: PALETTE.watermark,
             lineWidth: 1,
             lineStyle: 3, // dotted
-            axisLabelVisible: true,
-            title: `${label} · trail`
+            axisLabelVisible: !dense,
+            title: dense ? '' : `${label} · trail`,
           })
         );
       }
@@ -360,43 +374,65 @@
   <div bind:this={container} style="height: {height}px; width: 100%"></div>
 
   {#if positions.length > 0}
-    <div class="pointer-events-none absolute left-2 top-2 max-w-[18rem] rounded-md border border-border bg-surface/95 px-2 py-1.5 text-[10.5px] tabular shadow-lg backdrop-blur">
-      <div class="mb-0.5 text-[9.5px] uppercase tracking-wider text-faint">
-        Open positions · {positions.length}
-      </div>
-      <ul class="space-y-0.5">
-        {#each positions as p (p.id ?? p.entry_at)}
-          <li class="pointer-events-auto">
-            <button
-              type="button"
-              onclick={() => jumpToEntry(p)}
-              class="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-surface-2/60"
-              title="Jump chart to entry"
-            >
+    <!-- Positioned bottom-left so it doesn't fight the lightweight-charts
+         OHLC crosshair tooltip (top-left) OR the price-axis labels
+         (right edge). Foldable to a single-line chip when the user wants
+         the chart visible. -->
+    <div class="absolute bottom-1 left-2 max-w-[20rem] rounded-md border border-border bg-surface/95 text-[10.5px] tabular shadow-lg backdrop-blur">
+      <button
+        type="button"
+        onclick={() => (overlayCollapsed = !overlayCollapsed)}
+        class="flex w-full items-center gap-1.5 px-2 py-1 text-[9.5px] uppercase tracking-wider text-faint hover:text-text"
+        title="Toggle position list"
+      >
+        <span>{overlayCollapsed ? '▸' : '▾'}</span>
+        <span>Open · {positions.length}</span>
+        {#if overlayCollapsed}
+          <span class="flex items-center gap-0.5">
+            {#each positions as p (p.id ?? p.entry_at)}
               <span
                 class="inline-block h-1.5 w-1.5 rounded-full"
                 style:background-color={fundColour(p.fund)}
               ></span>
-              <span class="capitalize text-muted">{p.fund ?? '—'}</span>
-              <span class={[
-                'rounded px-1 text-[9px] uppercase',
-                p.side === 'long' ? 'bg-good-soft text-good' : 'bg-bad-soft text-bad'
-              ].join(' ')}>{p.side[0]}</span>
-              <span class="text-faint">{p.qty}</span>
-              <span class="text-faint">@</span>
-              <span class="text-text">{p.entry.toFixed(2)}</span>
-              {#if p.pnl_pct !== null && p.pnl_pct !== undefined}
+            {/each}
+          </span>
+        {/if}
+      </button>
+      {#if !overlayCollapsed}
+        <ul class="space-y-0.5 px-2 pb-1.5">
+          {#each positions as p (p.id ?? p.entry_at)}
+            <li>
+              <button
+                type="button"
+                onclick={() => jumpToEntry(p)}
+                class="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-surface-2/60"
+                title="Jump chart to entry"
+              >
+                <span
+                  class="inline-block h-1.5 w-1.5 rounded-full"
+                  style:background-color={fundColour(p.fund)}
+                ></span>
+                <span class="capitalize text-muted">{p.fund ?? '—'}</span>
                 <span class={[
-                  'ml-auto',
-                  (p.pnl_pct ?? 0) >= 0 ? 'text-good' : 'text-bad'
-                ].join(' ')}>
-                  {(p.pnl_pct ?? 0) >= 0 ? '+' : ''}{(p.pnl_pct ?? 0).toFixed(2)}%
-                </span>
-              {/if}
-            </button>
-          </li>
-        {/each}
-      </ul>
+                  'rounded px-1 text-[9px] uppercase',
+                  p.side === 'long' ? 'bg-good-soft text-good' : 'bg-bad-soft text-bad'
+                ].join(' ')}>{p.side[0]}</span>
+                <span class="text-faint">{p.qty}</span>
+                <span class="text-faint">@</span>
+                <span class="text-text">{p.entry.toFixed(2)}</span>
+                {#if p.pnl_pct !== null && p.pnl_pct !== undefined}
+                  <span class={[
+                    'ml-auto',
+                    (p.pnl_pct ?? 0) >= 0 ? 'text-good' : 'text-bad'
+                  ].join(' ')}>
+                    {(p.pnl_pct ?? 0) >= 0 ? '+' : ''}{(p.pnl_pct ?? 0).toFixed(2)}%
+                  </span>
+                {/if}
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </div>
   {/if}
 </div>

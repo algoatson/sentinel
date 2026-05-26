@@ -154,6 +154,17 @@ def _watchlist_assets() -> dict[str, str]:
 
 
 _BACKFILL_MIN_BARS = 25  # below this a ticker can't compute 20d aggregates
+# Daily-bar period yfinance is asked for on a fresh backfill. Was "60d"
+# — enough for the 5d/20d aggregates but nothing more. Bumped to "5y"
+# so the Symbol page chart can render a multi-year history (yfinance
+# returns up to ~5y of free daily bars for most names). One-time cost
+# per ticker; subsequent polls top up with intraday + recent daily.
+_BACKFILL_DAILY_PERIOD = "5y"
+# We also re-backfill tickers that have *some* bars but not enough for
+# the long-history chart (e.g. legacy rows seeded with the old 60d
+# default). 500 bars ≈ 2y of trading days, a sensible "deep history is
+# present" threshold.
+_BACKFILL_DEEP_BARS = 500
 
 
 async def backfill_history() -> None:
@@ -227,16 +238,32 @@ def _backfill_sync() -> None:
                 )
             ).all()
         )
-    need = {t: c for t, c in assets.items() if counts.get(t, 0) < _BACKFILL_MIN_BARS}
+    # Tickers needing first-touch backfill (no bars at all / below the
+    # aggregates threshold) get the full deep-history pull. Tickers
+    # that already have *some* bars but less than the deep threshold
+    # also get a deep pull — but only once. This bridges the gap for
+    # rows seeded under the older 60d default so the long-history
+    # chart works without manual re-seed.
+    fresh = {t: c for t, c in assets.items() if counts.get(t, 0) < _BACKFILL_MIN_BARS}
+    deep = {
+        t: c for t, c in assets.items()
+        if _BACKFILL_MIN_BARS <= counts.get(t, 0) < _BACKFILL_DEEP_BARS
+    }
+    need = {**fresh, **deep}
     if not need:
         logger.info("prices backfill: nothing to backfill")
         return
 
-    logger.info("prices backfill: {} tickers need history", len(need))
-    # 60d of daily bars seeds the 5d/20d aggregates; 5d of hourly adds
-    # recency so change_1d is sane before the 1m poller catches up.
-    daily = _download_into_bars(need, period="60d", interval="1d")
-    hourly = _download_into_bars(need, period="5d", interval="60m")
+    logger.info(
+        "prices backfill: {} fresh + {} deep-history",
+        len(fresh), len(deep),
+    )
+    # 5y of daily bars covers the long-history chart on the Symbol
+    # page. 5d of hourly adds recency so change_1d is sane before
+    # the 1m poller catches up. yfinance dedupes by (ticker, ts) on
+    # insert so re-pulling deep history is idempotent.
+    daily = _download_into_bars(need, period=_BACKFILL_DAILY_PERIOD, interval="1d")
+    hourly = _download_into_bars(fresh, period="5d", interval="60m")
     _recompute_contexts(list(need))
     logger.info(
         "prices backfill: inserted {} daily + {} hourly bars across {} tickers",
