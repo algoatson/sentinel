@@ -28,6 +28,7 @@
   const STORAGE_LIMIT = 60; // cap stored turns so storage never balloons
 
   let input = $state('');
+  let deep = $state(true);
   let turns = $state<Turn[]>([]);
   let pending = $state(false);
   let feed: HTMLDivElement;
@@ -69,7 +70,7 @@
     turns = [...turns, { role: 'user', content: q }];
     await scrollToBottom();
     try {
-      const r = await askCopilot(q);
+      const r = await askCopilot(q, { deep });
       turns = [...turns, { role: 'bot', content: r.answer }];
     } catch (e) {
       turns = [
@@ -187,6 +188,17 @@
     class="border-t border-border bg-surface-2/30 p-3"
   >
     <div class="mx-auto flex max-w-3xl items-end gap-2">
+      <label
+        class="flex flex-none cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] transition-colors hover:border-violet/40"
+        title="Deep mode lets the LLM call market tools (chart, ATR, peer movers, news, filings, correlation). Off = fast one-shot answer."
+      >
+        <input
+          type="checkbox"
+          bind:checked={deep}
+          class="h-3 w-3 cursor-pointer accent-violet"
+        />
+        <span class={deep ? 'text-violet' : 'text-muted'}>Deep</span>
+      </label>
       <textarea
         bind:value={input}
         rows="2"

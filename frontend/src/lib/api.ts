@@ -240,8 +240,11 @@ export const lookup = (kind: string, arg: string = '') => {
 };
 
 /* ─── copilot ─── */
-export const askCopilot = (question: string) =>
-  post<{ answer: string }>('/copilot/ask', { question });
+export const askCopilot = (question: string, opts: { deep?: boolean } = {}) =>
+  post<{ answer: string }>('/copilot/ask', {
+    question,
+    deep: opts.deep ?? true,
+  });
 
 /* ─── symbol detail ─── */
 export const symbolProfile = (ticker: string, days = 90) =>

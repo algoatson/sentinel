@@ -12,11 +12,23 @@ router = APIRouter()
 
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
+    deep: bool = Field(
+        default=True,
+        description=(
+            "When true (default), the model is given access to the "
+            "market-tool registry — it can pull a chart, ATR, peer "
+            "movers, news, filings, correlation, microstructure, or "
+            "the book on demand mid-reasoning. False uses the cheap "
+            "one-shot light-model path."
+        ),
+    )
 
 
 @router.post("/copilot/ask")
 async def ask(body: AskRequest) -> dict:
     from .. import chat
 
-    answer = await chat.answer_question(body.question, max_tokens=1600)
+    answer = await chat.answer_question(
+        body.question, max_tokens=1600, use_tools=body.deep,
+    )
     return {"answer": answer}

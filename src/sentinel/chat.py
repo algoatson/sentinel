@@ -1354,7 +1354,12 @@ async def _handle_thread(msg: discord.Message, bot: discord.Client) -> None:
             await msg.channel.send(_p)
 
 
-async def answer_question(question: str, *, max_tokens: int = 1600) -> str:
+async def answer_question(
+    question: str,
+    *,
+    max_tokens: int = 1600,
+    use_tools: bool = True,
+) -> str:
     """The single free-form Q&A path: retrieve grounding context, ask the
     LLM, return the raw answer text.
 
@@ -1365,6 +1370,14 @@ async def answer_question(question: str, *, max_tokens: int = 1600) -> str:
     presentation (Discord chunks for its 2000-char cap; the web renders
     markdown directly). Returns the sentinel `"[LLM_ERROR]"` on failure so
     callers decide how to surface it.
+
+    ``use_tools=True`` (default) drives the model through the tool loop
+    so it can fetch a chart / ATR / peer movers / news / filings on
+    demand when the question needs them. The pre-built context still
+    pre-loads the obvious bits (so a question that doesn't need a tool
+    just answers off the context with zero extra calls). Falls back to
+    one-shot when the registry is empty or the route doesn't support
+    tools.
     """
     question = (question or "").strip()
     if not question:
@@ -1379,6 +1392,38 @@ async def answer_question(question: str, *, max_tokens: int = 1600) -> str:
         question=question[:500],
         context_json=json.dumps(context, default=str)[:9000],
     )
+
+    if use_tools:
+        # Tool-call path. Heavy model because the light model often
+        # refuses tool-calls or hallucinates the schema; we accept the
+        # latency hit for a smarter answer.
+        from .llm_tools import tool_loop
+        from .market_tools import default_registry
+        ticker_hint = symbols[0] if symbols else None
+        loop_res = await asyncio.to_thread(
+            tool_loop,
+            user_prompt=rendered,
+            system_prompt=(
+                "You're the user's private trading copilot. The user's "
+                "question + pre-built context are below. You have tools "
+                "to pull chart bars, ATR, peer movers, news, filings, "
+                "correlation, microstructure, and the current book — "
+                "use them when the context doesn't already answer the "
+                "question. After at most a couple of calls, write the "
+                "answer in markdown. Don't repeat the question."
+            ),
+            registry=default_registry(),
+            model="heavy",
+            max_tokens=max_tokens,
+            max_iterations=3,
+            pipeline="copilot",
+            ticker=ticker_hint,
+        )
+        if loop_res.text:
+            return loop_res.text
+        # Loop returned empty — fall through to the one-shot path
+        # rather than surface "[LLM_ERROR]" prematurely.
+
     reply = await asyncio.to_thread(
         get_llm().complete, rendered, model="light", max_tokens=max_tokens
     )
