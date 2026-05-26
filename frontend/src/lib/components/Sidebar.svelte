@@ -16,7 +16,8 @@
     SlidersHorizontal,
     Activity as ActivityIcon,
     BarChart3,
-    GitCompareArrows
+    GitCompareArrows,
+    BookText
   } from 'lucide-svelte';
 
   interface Props {
@@ -38,6 +39,7 @@
         { href: '/overview', label: 'Overview', icon: LayoutDashboard },
         { href: '/portfolio', label: 'Portfolio', icon: Briefcase },
         { href: '/book', label: 'Book', icon: Briefcase },
+        { href: '/journal', label: 'Journal', icon: BookText },
         { href: '/markets', label: 'Markets', icon: LineChart },
         { href: '/research', label: 'Research', icon: FlaskConical },
         { href: '/theses', label: 'Theses', icon: Brain },

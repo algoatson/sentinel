@@ -15,6 +15,8 @@ from ..analytics import daily as _daily
 from ..analytics import dedupe as _dedupe
 from ..analytics import digest as _digest
 from ..analytics import risk_monitor as _risk
+from ..analytics import earnings_exposure as _earn
+from ..analytics import holdings_news as _hnews
 from ..analytics import hot as _hot
 from ..analytics import monthly as _monthly
 from ..analytics import sentiment_quality as _sq
@@ -115,3 +117,20 @@ def risk_monitor() -> dict:
     behind each summary so the UI can drop straight into the
     relevant positions."""
     return _risk.risk_snapshot()
+
+
+@router.get("/analytics/earnings-exposure")
+def earnings_exposure(window_days: int = 30) -> dict:
+    """Upcoming earnings reports for currently-held tickers. Binary
+    risk in the next `window_days` days — surfaces "you have these
+    positions reporting this week" alongside notional, uPnL and the
+    wallet(s) holding them. Tickers without a known print date are
+    returned under `unknown` so the trader can research them."""
+    return _earn.earnings_exposure(window_days=window_days)
+
+
+@router.get("/analytics/holdings-news")
+def holdings_news_endpoint(hours: int = 24, limit: int = 30) -> dict:
+    """Position-aware news + filings — only stories that touch a
+    currently-held ticker, with the holding wallet badged on each row."""
+    return _hnews.holdings_news(hours=hours, limit=limit)

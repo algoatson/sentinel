@@ -23,6 +23,7 @@
   import { openPositions, closePosition, updateRisk, bulkClose, csvExportUrl, wallets as walletsApi } from '$api';
   import type { OpenPositionRow } from '$api';
   import OpenPositionDrawer from '$components/OpenPositionDrawer.svelte';
+  import PositionHeatmap from '$components/PositionHeatmap.svelte';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import TickerLink from '$components/TickerLink.svelte';
@@ -33,7 +34,8 @@
   import { usd, price, timeAgo } from '$lib/format';
   import {
     Briefcase, AlertCircle, X, Download, Shield, Target as TargetIcon,
-    Edit3, TrendingUp, TrendingDown, Save, Layers, MoreVertical, Plus
+    Edit3, TrendingUp, TrendingDown, Save, Layers, MoreVertical, Plus,
+    LayoutGrid, List, AlertTriangle
   } from 'lucide-svelte';
 
   type SortKey =
@@ -46,6 +48,11 @@
   let sideFilter: 'all' | 'long' | 'short' = $state('all');
   let tickerFilter = $state('');
   let onlyHasRisk = $state(false);
+  type QuickFilter = 'all' | 'winners' | 'losers' | 'near_stop' | 'naked';
+  let quick: QuickFilter = $state('all');
+  let viewMode: 'table' | 'heatmap' = $state('table');
+  /** "Near stop" threshold matches the Risk Monitor card. */
+  const NEAR_STOP_PCT = 1.5;
 
   let confirmId = $state<number | null>(null);
   let bulkConfirm = $state(false);
@@ -198,6 +205,24 @@
         if (onlyHasRisk && p.stop_price == null && p.target_price == null && p.trailing_stop_pct == null) return false;
         const t = tickerFilter.trim().toUpperCase().replace(/^\$/, '');
         if (t && p.ticker !== t) return false;
+        switch (quick) {
+          case 'winners':
+            if ((p.upnl ?? 0) <= 0) return false;
+            break;
+          case 'losers':
+            if ((p.upnl ?? 0) >= 0) return false;
+            break;
+          case 'near_stop':
+            if (
+              p.dist_to_stop_pct == null ||
+              p.dist_to_stop_pct < 0 ||
+              p.dist_to_stop_pct > NEAR_STOP_PCT
+            ) return false;
+            break;
+          case 'naked':
+            if (p.stop_price != null) return false;
+            break;
+        }
         return true;
       })
       .sort((a, b) => {
@@ -378,6 +403,66 @@
   </div>
 </div>
 
+<!-- ── quick-filter strip ──────────────────────── -->
+<Card class="mt-3 flex flex-wrap items-center gap-2 px-4 py-2">
+  <span class="text-[10px] font-semibold uppercase tracking-wider text-faint">Quick</span>
+  {#each [
+    ['all',       'All',       null],
+    ['winners',   'Winners',   TrendingUp],
+    ['losers',    'Losers',    TrendingDown],
+    ['near_stop', 'Near stop', AlertTriangle],
+    ['naked',     'No stop',   Shield]
+  ] as [k, label, Icon] (k)}
+    <button
+      type="button"
+      onclick={() => (quick = k as QuickFilter)}
+      class={[
+        'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors',
+        quick === k
+          ? k === 'winners'
+            ? 'border-good/40 bg-good-soft text-good'
+            : k === 'losers'
+              ? 'border-bad/40 bg-bad-soft text-bad'
+              : k === 'near_stop'
+                ? 'border-bad/40 bg-bad-soft text-bad'
+                : k === 'naked'
+                  ? 'border-warn/40 bg-warn-soft text-warn'
+                  : 'border-primary/50 bg-primary-soft text-primary'
+          : 'border-border bg-surface-2 text-muted hover:text-text'
+      ].join(' ')}
+    >
+      {#if Icon}
+        <Icon class="h-3 w-3" />
+      {/if}
+      {label}
+    </button>
+  {/each}
+  <div class="ml-auto inline-flex overflow-hidden rounded-md border border-border">
+    <button
+      type="button"
+      onclick={() => (viewMode = 'table')}
+      class={[
+        'inline-flex items-center gap-1 px-2 py-1 text-[11px] transition-colors',
+        viewMode === 'table'
+          ? 'bg-primary-soft text-primary'
+          : 'bg-surface-2 text-muted hover:text-text'
+      ].join(' ')}
+      title="Table view"
+    ><List class="h-3 w-3" /> Table</button>
+    <button
+      type="button"
+      onclick={() => (viewMode = 'heatmap')}
+      class={[
+        'inline-flex items-center gap-1 border-l border-border px-2 py-1 text-[11px] transition-colors',
+        viewMode === 'heatmap'
+          ? 'bg-primary-soft text-primary'
+          : 'bg-surface-2 text-muted hover:text-text'
+      ].join(' ')}
+      title="Heatmap view"
+    ><LayoutGrid class="h-3 w-3" /> Heatmap</button>
+  </div>
+</Card>
+
 <!-- ── filter ribbon ───────────────────────────── -->
 <Card class="mt-3 px-4 py-2.5">
   <div class="flex flex-wrap items-center gap-2">
@@ -483,8 +568,26 @@
   </div>
 </Card>
 
+{#if viewMode === 'heatmap'}
+  <Card class="mt-3 px-3 py-3">
+    {#if $positionsQ.isLoading}
+      <div class="flex items-center justify-center py-12"><Spinner /></div>
+    {:else}
+      <div class="mb-2 flex items-baseline gap-3">
+        <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+          Heatmap · area = notional, colour = uPnL %
+        </div>
+        <span class="text-[10.5px] text-faint">
+          {sorted.length} position{sorted.length === 1 ? '' : 's'} shown
+        </span>
+      </div>
+      <PositionHeatmap positions={sorted} height={420} />
+    {/if}
+  </Card>
+{/if}
+
 <!-- ── table ───────────────────────────────── -->
-<Card class="mt-3 overflow-hidden">
+<Card class={['mt-3 overflow-hidden', viewMode === 'heatmap' ? 'hidden' : ''].join(' ')}>
   {#if $positionsQ.isLoading}
     <div class="flex items-center justify-center py-12"><Spinner /></div>
   {:else if !$positionsQ.data?.length}

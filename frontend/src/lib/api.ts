@@ -518,3 +518,103 @@ export interface RiskSnapshot {
   near_pct: number;
 }
 export const riskMonitor = () => get<RiskSnapshot>('/analytics/risk-monitor');
+
+export interface ClosedTradeRow {
+  id: number;
+  fund: string;
+  ticker: string;
+  side: 'long' | 'short' | string;
+  qty: number;
+  entry: number;
+  entry_at: string;
+  exit: number | null;
+  exit_at: string | null;
+  hold_h: number | null;
+  realized_pnl: number | null;
+  realized_pct: number;
+  open_reason: string | null;
+  close_reason: string | null;
+  call_id: number | null;
+  stop_price: number | null;
+  target_price: number | null;
+  r_multiple: number | null;
+  notes: string | null;
+  notional: number;
+}
+export const closedPositions = (opts: { limit?: number; fund?: string } = {}) => {
+  const p = new URLSearchParams();
+  if (opts.limit) p.set('limit', String(opts.limit));
+  if (opts.fund) p.set('fund', opts.fund);
+  const q = p.toString();
+  return get<ClosedTradeRow[]>(`/positions/closed${q ? `?${q}` : ''}`);
+};
+export interface EarningsExposureRow {
+  ticker: string;
+  report_date: string;
+  days_until: number;
+  funds: string;
+  notional: number;
+  upnl: number;
+  n_positions: number;
+  fetched_at: string | null;
+}
+export interface EarningsExposureUnknown {
+  ticker: string;
+  funds: string;
+  notional: number;
+  upnl: number;
+  n_positions: number;
+}
+export interface EarningsExposure {
+  window_days: number;
+  as_of: string;
+  upcoming: EarningsExposureRow[];
+  this_week: number;
+  this_month: number;
+  unknown: EarningsExposureUnknown[];
+}
+export const earningsExposure = (windowDays = 30) =>
+  get<EarningsExposure>(`/analytics/earnings-exposure?window_days=${windowDays}`);
+
+export interface HoldingsNewsItem {
+  id: number;
+  ticker: string | null;
+  title: string;
+  url: string;
+  source: string;
+  ts: string;
+  sentiment: number | null;
+  impact_1d_pct: number | null;
+  tickers: string[];
+  held_tickers: string[];
+  funds: string[];
+}
+export interface HoldingsNewsFiling {
+  id: number;
+  ticker: string;
+  form_type: string;
+  filed_at: string;
+  url: string | null;
+  materiality_score: number | null;
+  funds: string[];
+}
+export interface HoldingsNews {
+  as_of: string;
+  window_hours: number;
+  tickers: string[];
+  holdings_by_ticker: Record<string, string[]>;
+  news: HoldingsNewsItem[];
+  filings: HoldingsNewsFiling[];
+}
+export const holdingsNews = (hours = 24, limit = 30) =>
+  get<HoldingsNews>(`/analytics/holdings-news?hours=${hours}&limit=${limit}`);
+
+export const updateJournal = (tradeId: number, notes: string | null) =>
+  fetch(`/api/positions/${tradeId}/journal`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notes })
+  }).then(async (r) => {
+    if (!r.ok) throw new Error(await r.text());
+    return r.json() as Promise<{ ok: boolean; trade_id: number; message: string }>;
+  });

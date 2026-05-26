@@ -978,6 +978,119 @@ def open_positions_all() -> list[dict]:
     return out
 
 
+def closed_trades_recent(
+    limit: int = 100,
+    fund_name: str | None = None,
+) -> list[dict]:
+    """Closed trades across every wallet (or just `fund_name`), newest
+    first. Returns the full lifecycle payload: entry/exit prices and
+    timestamps, hold duration, R-multiple if a stop was set, realized
+    pnl + pnl%, open/close reasons, and the user's notes — everything
+    the /journal page needs to surface a post-trade reflection.
+
+    This is the read side of the trade journal. The notes field is
+    user-editable via `update_trade_journal` (no status restriction)
+    so the trader can reflect on a position long after it's closed.
+    """
+    fname = (fund_name or "").strip().lower() or None
+    out: list[dict] = []
+    with session_scope() as s:
+        funds_by_id = {f.id: f for f in s.exec(select(Fund)).all()}
+        q = (
+            select(FundTrade)
+            .where(FundTrade.status == "closed")
+        )
+        if fname:
+            fid = next(
+                (fid for fid, f in funds_by_id.items() if f.name == fname),
+                None,
+            )
+            if fid is None:
+                return []
+            q = q.where(FundTrade.fund_id == fid)
+        q = q.order_by(FundTrade.exit_at.desc()).limit(max(1, min(limit, 500)))
+        rows = s.exec(q).all()
+
+        for t in rows:
+            fund = funds_by_id.get(t.fund_id)
+            if fund is None:
+                continue
+            cost = t.entry_price * t.qty
+            entry_at = (
+                t.entry_at if t.entry_at.tzinfo
+                else t.entry_at.replace(tzinfo=timezone.utc)
+            )
+            exit_at = None
+            hold_h: float | None = None
+            if t.exit_at is not None:
+                exit_at = (
+                    t.exit_at if t.exit_at.tzinfo
+                    else t.exit_at.replace(tzinfo=timezone.utc)
+                )
+                hold_h = round(
+                    (exit_at - entry_at).total_seconds() / 3600, 1
+                )
+            r_multiple: float | None = None
+            if t.stop_price is not None and t.stop_price > 0 and t.exit_price:
+                initial_risk = (
+                    (t.entry_price - t.stop_price) if t.side == "long"
+                    else (t.stop_price - t.entry_price)
+                )
+                if initial_risk > 0:
+                    realized_per_share = (
+                        (t.exit_price - t.entry_price) if t.side == "long"
+                        else (t.entry_price - t.exit_price)
+                    )
+                    r_multiple = round(realized_per_share / initial_risk, 2)
+            realized_pct = (
+                round((t.realized_pnl or 0) / cost * 100, 2)
+                if cost else 0.0
+            )
+            out.append({
+                "id": t.id,
+                "fund": fund.name,
+                "ticker": t.ticker,
+                "side": t.side,
+                "qty": t.qty,
+                "entry": t.entry_price,
+                "entry_at": entry_at.isoformat(),
+                "exit": t.exit_price,
+                "exit_at": exit_at.isoformat() if exit_at else None,
+                "hold_h": hold_h,
+                "realized_pnl": (
+                    round(t.realized_pnl, 2)
+                    if t.realized_pnl is not None else None
+                ),
+                "realized_pct": realized_pct,
+                "open_reason": t.open_reason,
+                "close_reason": t.close_reason,
+                "call_id": t.call_id,
+                "stop_price": t.stop_price,
+                "target_price": t.target_price,
+                "r_multiple": r_multiple,
+                "notes": t.notes,
+                "notional": round(cost, 2),
+            })
+    return out
+
+
+def update_trade_journal(trade_id: int, notes: str | None) -> dict:
+    """Edit a trade's free-form journal note. Unlike `update_trade_risk`,
+    this works on CLOSED trades too — the whole point of a post-trade
+    reflection is to come back to it after the position is gone.
+    `notes=None` (or empty after strip) clears the field."""
+    with session_scope() as s:
+        t = s.get(FundTrade, trade_id)
+        if t is None:
+            return {"ok": False, "message": f"no trade #{trade_id}"}
+        if notes is None or not notes.strip():
+            t.notes = None
+        else:
+            t.notes = notes.strip()[:2000]
+        s.add(t)
+    return {"ok": True, "trade_id": trade_id, "message": "journal saved"}
+
+
 def update_trade_risk(
     trade_id: int,
     *,

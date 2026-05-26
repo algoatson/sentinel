@@ -11,6 +11,8 @@
   import Sparkline from '$components/Sparkline.svelte';
   import TodayPulse from '$components/TodayPulse.svelte';
   import RiskMonitor from '$components/RiskMonitor.svelte';
+  import EarningsExposure from '$components/EarningsExposure.svelte';
+  import HoldingsNews from '$components/HoldingsNews.svelte';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
   import { usd, compact, timeAgo, pct, tone, stripMd } from '$lib/format';
@@ -220,6 +222,16 @@
   </Card>
   <div class="lg:col-span-5">
     <RiskMonitor />
+  </div>
+</div>
+
+<!-- ── EARNINGS + HOLDINGS NEWS (split row) ─────────── -->
+<div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
+  <div class="lg:col-span-5">
+    <EarningsExposure />
+  </div>
+  <div class="lg:col-span-7">
+    <HoldingsNews />
   </div>
 </div>
 

@@ -34,6 +34,30 @@ def open_positions() -> list[dict]:
     return _funds.open_positions_all()
 
 
+@router.get("/positions/closed")
+def closed_positions(
+    limit: int = 100,
+    fund: str | None = None,
+) -> list[dict]:
+    """Closed trades across every wallet (or filtered by `fund`),
+    newest first. Used by /journal — see funds.closed_trades_recent."""
+    return _funds.closed_trades_recent(limit=limit, fund_name=fund)
+
+
+class JournalRequest(BaseModel):
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+@router.patch("/positions/{trade_id}/journal")
+def update_journal(trade_id: int, body: JournalRequest) -> dict:
+    """Edit the notes/journal on any trade (open OR closed). Returns
+    `{"ok": bool, ...}`."""
+    res = _funds.update_trade_journal(trade_id, body.notes)
+    if not res["ok"]:
+        raise HTTPException(400, res["message"])
+    return res
+
+
 @router.post("/positions/{trade_id}/close")
 def close_position(trade_id: int, reason: str | None = None) -> dict:
     res = _funds.close_trade_by_id(trade_id, reason or "manual")
