@@ -64,6 +64,40 @@ Data:
 $payload_json
 """)
 
+# Lookup-mode prompts — used when convergence fires on a ticker whose
+# evidence payload is shallow (few signals, or a non-equity asset class
+# we don't have rich data on). Mirrors the why_moved tool-loop wiring.
+CONV_TOOL_SYSTEM = (
+    "You convert multi-signal alerts into a directional read for a "
+    "private paper-trading copilot.\n"
+    "Tools are available to pull extra context (chart window, ATR, peer "
+    "movers, news/filings search, correlation, microstructure). Use them "
+    "sparingly — only when the data block below leaves you guessing. "
+    "After at most a couple of tool calls, write the final read.\n\n"
+    "Format the final answer EXACTLY as the user's instructions specify "
+    "(3-5 sentences, optional CALL line, mandatory IMPORTANCE line)."
+)
+CONV_TOOL_USER = Template("""\
+Convergence on $TICKER — aligned signals: $signals_str.
+
+Pre-loaded data (JSON):
+$payload_json
+
+Give the directional read. Format:
+- 3-5 tight sentences (thesis / lean / what to watch).
+- Be terse. Reasoned conviction; state risk as a clause, no disclaimers.
+
+If directional:
+CALL: $$TICKER LONG|SHORT <conviction 1-5>
+
+End with EXACTLY:
+IMPORTANCE: <1-5> — <≤10-word reason>
+""")
+
+# Per-cycle cap matches why_moved — convergence fires less often
+# than why_moved so 2 lookups per cycle is plenty.
+_TOOL_LOOP_BUDGET_PER_CYCLE = 2
+
 
 async def run_convergence_cycle() -> None:
     try:
@@ -215,8 +249,12 @@ async def _run() -> None:
         total,
         len(findings),
     )
+    from ..llm_tools import tool_loop
+    from ..market_tools import default_registry
     from ..narrative import is_superseded, record_event
 
+    tool_registry = default_registry()
+    tool_budget = _TOOL_LOOP_BUDGET_PER_CYCLE
     llm = get_llm()
     for evidence in findings:
         ticker = evidence["ticker"]
@@ -234,13 +272,55 @@ async def _run() -> None:
             _RECENT_POSTS[ticker] = datetime.now(timezone.utc)
             continue
 
-        rendered = CONVERGENCE_PROMPT.safe_substitute(payload_json=json.dumps(evidence, default=str))
-        # 650: narrative + CALL + IMPORTANCE — mirrors the why_moved bump
-        # (was 400, sometimes cut off the trailing IMPORTANCE line).
-        synthesis = await asyncio.to_thread(
-            llm.complete, rendered, model="heavy", max_tokens=650
+        # Tool-loop path: shallow evidence (≤2 distinct signal types
+        # OR a non-equity asset class — those have fewer pre-loaded
+        # streams) gets the small budget to pull extra context. The
+        # rest stay on the cheaper one-shot path.
+        signals = evidence.get("signals") or []
+        asset_class = evidence.get("asset_class") or "equity"
+        shallow = (
+            len(set(signals)) <= 2 or asset_class != "equity"
         )
-        if synthesis == LLM_ERROR_SENTINEL:
+        synthesis = ""
+        if shallow and tool_budget > 0:
+            tool_budget -= 1
+            rendered_user = CONV_TOOL_USER.safe_substitute(
+                TICKER=ticker,
+                signals_str=", ".join(signals) or "n/a",
+                payload_json=json.dumps(evidence, default=str),
+            )
+            loop_res = await asyncio.to_thread(
+                tool_loop,
+                user_prompt=rendered_user,
+                system_prompt=CONV_TOOL_SYSTEM,
+                registry=tool_registry,
+                model="heavy",
+                max_tokens=650,
+                max_iterations=3,
+            )
+            synthesis = loop_res.text
+            if loop_res.tool_calls:
+                logger.info(
+                    "convergence[{}]: tool_loop iterations={}, tools={}",
+                    ticker, loop_res.iterations,
+                    [t["name"] for t in loop_res.tool_calls],
+                )
+            if not synthesis:
+                logger.warning(
+                    "convergence[{}]: tool_loop empty ({}), falling back",
+                    ticker, loop_res.error,
+                )
+
+        if not synthesis:
+            rendered = CONVERGENCE_PROMPT.safe_substitute(
+                payload_json=json.dumps(evidence, default=str)
+            )
+            # 650: narrative + CALL + IMPORTANCE — mirrors the why_moved bump
+            # (was 400, sometimes cut off the trailing IMPORTANCE line).
+            synthesis = await asyncio.to_thread(
+                llm.complete, rendered, model="heavy", max_tokens=650
+            )
+        if not synthesis or synthesis == LLM_ERROR_SENTINEL:
             logger.error("convergence LLM error on {}", ticker)
             continue
 
