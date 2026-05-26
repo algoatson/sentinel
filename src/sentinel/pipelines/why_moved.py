@@ -55,6 +55,9 @@ explain the likely cause AND give a forward read.
 - Lead with the most probable driver (use the evidence; extend with market
   knowledge where it's thin). If there's no clear catalyst, say so and call
   it macro/sector/flow — don't invent a story.
+- If `data_coverage` is "thin" (no per-ticker news/filings/social), state
+  that plainly. Anchor your read off the BENCHMARKS and PEER MOVES blocks —
+  they tell you whether this is idiosyncratic or part of a cohort move.
 - Then your read: is this the start of something or noise/exhaustion? A
   lean (continuation / fade / wait), the level or event that confirms or
   kills it. Conviction with the risk stated in a clause — no disclaimers.
@@ -124,7 +127,69 @@ def _triggered() -> list[dict]:
     return out[:_MAX_PER_CYCLE]
 
 
-def _gather_evidence(ticker: str) -> dict:
+# Benchmark tickers per asset class — anchor reads for the LLM so a
+# move like "ZEST-USD +8% on a day BTC was -1%" is contextualised as
+# idiosyncratic, not just "crypto pumped". Tickers must match what
+# the price ingester actually stores in PriceContext.
+_BENCHMARKS = {
+    "crypto": ("BTC-USD", "ETH-USD"),
+    "equity": ("SPY", "QQQ"),
+    "future": ("ES=F", "NQ=F"),
+    "rate": ("^TNX", "^IRX"),
+}
+# Peer-move snippet: top N same-class movers (by abs(1d %)) the
+# bot already has fresh context on. Tells the LLM whether the
+# subject is alone or part of a cohort.
+_PEER_LIMIT = 5
+
+
+def _gather_market_context(session, ticker: str, asset_class: str) -> dict:
+    """Benchmarks + peer-move snippet pulled from PriceContext.
+
+    Returns:
+      benchmarks: [{ticker, change_1d_pct, change_5d_pct}]
+      peers: [{ticker, change_1d_pct, volume_vs_20d_avg}] — same
+        asset_class, sorted by abs(1d %), subject excluded.
+    """
+    out: dict[str, list[dict]] = {"benchmarks": [], "peers": []}
+    bench = _BENCHMARKS.get(asset_class, ())
+    if bench:
+        for b in bench:
+            pc = session.get(PriceContext, b)
+            if pc is None:
+                continue
+            out["benchmarks"].append({
+                "ticker": b,
+                "change_1d_pct": round((pc.change_1d_pct or 0) * 100, 2),
+                "change_5d_pct": round((pc.change_5d_pct or 0) * 100, 2),
+            })
+
+    rows = session.exec(
+        select(PriceContext, Watchlist.asset_class).join(
+            Watchlist, Watchlist.ticker == PriceContext.ticker
+        )
+    ).all()
+    peers = []
+    for pc, cls in rows:
+        if (cls or "equity") != asset_class:
+            continue
+        if pc.ticker == ticker:
+            continue
+        chg = pc.change_1d_pct or 0.0
+        # Drop noise — at least 1% move to count as a "peer move".
+        if abs(chg) < 0.01:
+            continue
+        peers.append({
+            "ticker": pc.ticker,
+            "change_1d_pct": round(chg * 100, 2),
+            "volume_vs_20d_avg": round(pc.volume_vs_20d_avg or 0, 2),
+        })
+    peers.sort(key=lambda d: abs(d["change_1d_pct"]), reverse=True)
+    out["peers"] = peers[:_PEER_LIMIT]
+    return out
+
+
+def _gather_evidence(ticker: str, asset_class: str) -> dict:
     now = datetime.now(timezone.utc)
     cut_48h = now - timedelta(hours=48)
     cut_24h = now - timedelta(hours=24)
@@ -163,20 +228,41 @@ def _gather_evidence(ticker: str) -> dict:
             .order_by(NewsItem.published_at.desc())
             .limit(4)
         ).all()
+        # Market-context block — pulled inside the same session so the
+        # whole prompt assembles off one connection.
+        mkt = _gather_market_context(s, ticker, asset_class)
+
+    filings_out = [
+        {
+            "form_type": f.form_type,
+            "score": f.materiality_score,
+            "reason": f.materiality_reason,
+            "summary": (f.summary or "")[:160],
+        }
+        for f in filings
+    ]
+    news_out = [{"src": n.source.split(":")[-1], "title": n.title} for n in news]
+    reddit_out = list(reddit)
+    macro_out = [n.title for n in macro]
+
+    # Coverage hint — when nothing per-ticker came back the LLM should
+    # explicitly anchor off benchmarks/peers and refuse to invent a
+    # catalyst. The prompt has matching guidance for this flag.
+    coverage = (
+        "thin"
+        if not filings_out and not news_out and not reddit_out and hn_n == 0
+        else "ok"
+    )
+
     return {
-        "filings_48h": [
-            {
-                "form_type": f.form_type,
-                "score": f.materiality_score,
-                "reason": f.materiality_reason,
-                "summary": (f.summary or "")[:160],
-            }
-            for f in filings
-        ],
-        "news_48h": [{"src": n.source.split(":")[-1], "title": n.title} for n in news],
-        "reddit_titles_48h": list(reddit),
+        "filings_48h": filings_out,
+        "news_48h": news_out,
+        "reddit_titles_48h": reddit_out,
         "hn_count_48h": hn_n,
-        "macro_news_24h": [n.title for n in macro],
+        "macro_news_24h": macro_out,
+        "benchmarks": mkt["benchmarks"],
+        "peers": mkt["peers"],
+        "data_coverage": coverage,
     }
 
 
@@ -211,7 +297,7 @@ async def _run() -> None:
             coalesced += 1
             continue
 
-        evidence = _gather_evidence(ticker)
+        evidence = _gather_evidence(ticker, c["asset_class"])
         if c["asset_class"] == "crypto":
             from ..ingesters.crypto_micro import micro_for
 
@@ -224,8 +310,11 @@ async def _run() -> None:
         )
         # Heavy = the reasoning model. The light model returns empty on this
         # evidence-heavy prompt; convergence (same shape) already uses heavy.
+        # 800 tokens: narrative + optional CALL + mandatory IMPORTANCE line.
+        # 500 was hitting mid-sentence cut-offs on thin-coverage tickers
+        # where the model spent budget explaining what it couldn't see.
         body = await asyncio.to_thread(
-            llm.complete, rendered, model="heavy", max_tokens=500,
+            llm.complete, rendered, model="heavy", max_tokens=800,
             fallback_light=True,
         )
         if not body or body == LLM_ERROR_SENTINEL:

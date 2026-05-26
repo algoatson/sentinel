@@ -235,8 +235,10 @@ async def _run() -> None:
             continue
 
         rendered = CONVERGENCE_PROMPT.safe_substitute(payload_json=json.dumps(evidence, default=str))
+        # 650: narrative + CALL + IMPORTANCE — mirrors the why_moved bump
+        # (was 400, sometimes cut off the trailing IMPORTANCE line).
         synthesis = await asyncio.to_thread(
-            llm.complete, rendered, model="heavy", max_tokens=400
+            llm.complete, rendered, model="heavy", max_tokens=650
         )
         if synthesis == LLM_ERROR_SENTINEL:
             logger.error("convergence LLM error on {}", ticker)
