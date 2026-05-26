@@ -1031,6 +1031,143 @@ def update_trade_risk(
             "trade_id": trade_id}
 
 
+def open_trade_manual(
+    *,
+    fund_name: str,
+    ticker: str,
+    side: str,
+    qty: float | None = None,
+    notional: float | None = None,
+    risk_pct: float | None = None,
+    stop_price: float | None = None,
+    note: str | None = None,
+) -> dict:
+    """User-initiated paper trade open. Three sizing modes (use one):
+
+    - ``qty``: pass an absolute share count
+    - ``notional``: pass a dollar amount; qty = notional / mark
+    - ``risk_pct`` + ``stop_price``: classic "fixed-risk" sizing —
+      qty = (equity × risk_pct) / |entry − stop|. Lets the user
+      decide what % of equity they're willing to lose if the stop
+      hits (e.g. 1% risk per trade across positions of varying
+      volatility).
+
+    Validates side, ticker, mark availability, cash budget. Records
+    `open_reason="manual"` and an optional `note` (stored in the
+    new `notes` slot for journal continuity). Publishes a `trade`
+    SSE event so the bell + feed pick up immediately.
+
+    Returns ``{"ok": bool, "message": str, "trade_id": int | None,
+    "fill_price": float | None, "qty": float | None}``.
+    """
+    side = (side or "").lower().strip()
+    if side not in ("long", "short"):
+        return {"ok": False, "message": "side must be 'long' or 'short'",
+                "trade_id": None, "fill_price": None, "qty": None}
+    ticker = (ticker or "").upper().lstrip("$").strip()
+    if not ticker:
+        return {"ok": False, "message": "ticker required",
+                "trade_id": None, "fill_price": None, "qty": None}
+    name = (fund_name or "").strip().lower()
+    sized_by = (
+        "qty" if qty is not None
+        else "notional" if notional is not None
+        else "risk" if (risk_pct is not None and stop_price is not None)
+        else None
+    )
+    if sized_by is None:
+        return {"ok": False,
+                "message": "specify qty OR notional OR (risk_pct + stop_price)",
+                "trade_id": None, "fill_price": None, "qty": None}
+
+    with session_scope() as s:
+        fund = s.exec(select(Fund).where(Fund.name == name)).first()
+        if fund is None:
+            return {"ok": False, "message": f"unknown wallet '{name}'",
+                    "trade_id": None, "fill_price": None, "qty": None}
+        mark = _mark(s, ticker)
+        if mark is None or mark <= 0:
+            return {"ok": False,
+                    "message": f"no live mark for {ticker} — try later",
+                    "trade_id": None, "fill_price": None, "qty": None}
+
+        opens = _open_trades(s, fund.id)
+        equity = _equity(s, fund, opens)
+
+        if sized_by == "qty":
+            final_qty = float(qty)
+        elif sized_by == "notional":
+            final_qty = float(notional) / mark
+        else:
+            # Risk sizing: stop distance per share × qty = $ risk
+            risk_per_share = abs(mark - float(stop_price))
+            if risk_per_share <= 0:
+                return {"ok": False,
+                        "message": "stop_price too close to mark — zero risk",
+                        "trade_id": None, "fill_price": None, "qty": None}
+            risk_dollars = equity * float(risk_pct)
+            final_qty = risk_dollars / risk_per_share
+
+        if final_qty <= 0:
+            return {"ok": False, "message": "computed qty is non-positive",
+                    "trade_id": None, "fill_price": None, "qty": None}
+
+        cost = final_qty * mark
+        if not _within_budget(opens, equity, cost):
+            return {"ok": False,
+                    "message": (
+                        "exceeds wallet budget — no leverage allowed; "
+                        "size down or close another position first"
+                    ),
+                    "trade_id": None, "fill_price": None, "qty": None}
+
+        now = datetime.now(timezone.utc)
+        t = FundTrade(
+            fund_id=fund.id,
+            ticker=ticker,
+            side=side,
+            qty=final_qty,
+            entry_price=mark,
+            entry_at=now,
+            open_reason=f"manual ({sized_by})",
+            notes=(note or "")[:2000] or None,
+            stop_price=float(stop_price) if (
+                sized_by == "risk" and stop_price is not None
+            ) else None,
+        )
+        if side == "long":
+            fund.cash -= cost
+        else:
+            fund.cash += cost
+        s.add(t)
+        s.flush()
+        trade_id = t.id
+        s.add(fund)
+
+    try:
+        from . import events
+        events.publish("trade", {
+            "trade_id": trade_id,
+            "ticker": ticker,
+            "side": side,
+            "fund": name,
+            "summary": (
+                f"opened {side} {ticker} ×{final_qty:.4f} @ {mark:.4f} "
+                f"({sized_by} sizing)"
+            ),
+        })
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "message": f"opened #{trade_id} ({side} {ticker})",
+        "trade_id": trade_id,
+        "fill_price": round(mark, 4),
+        "qty": round(final_qty, 6),
+    }
+
+
 def close_trade_by_id(trade_id: int, reason: str = "manual") -> dict:
     """Close one open position at the current mark. Used by the
     dashboard book view. Returns ``{"ok": bool, "message": str,

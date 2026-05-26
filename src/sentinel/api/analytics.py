@@ -10,6 +10,7 @@ from fastapi import APIRouter, Query
 from ..analytics import attribution as _attr
 from ..analytics import calibration as _cal
 from ..analytics import concentration as _conc
+from ..analytics import daily as _daily
 from ..analytics import dedupe as _dedupe
 from ..analytics import hot as _hot
 from ..analytics import monthly as _monthly
@@ -60,3 +61,16 @@ def sentiment_quality(days: int = Query(60, ge=7, le=365)) -> dict:
 def monthly_pnl(months: int = Query(12, ge=1, le=24)) -> dict:
     """Month-over-month realised PnL per wallet."""
     return _monthly.monthly_pnl(months=months)
+
+
+@router.get("/analytics/daily")
+def daily_pnl(days: int = Query(180, ge=14, le=730)) -> dict:
+    """Day-by-day realised PnL summed across every wallet. Returns
+    a dense cell grid (one entry per day) for a GitHub-style heatmap."""
+    return _daily.daily_pnl(days=days)
+
+
+@router.get("/analytics/drawdown")
+def drawdown(days: int = Query(90, ge=14, le=730)) -> dict:
+    """Per-wallet peak-to-current drawdown series."""
+    return _daily.drawdown_curves(days=days)

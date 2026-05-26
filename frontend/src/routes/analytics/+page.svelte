@@ -12,7 +12,8 @@
    */
   import { createQuery } from '@tanstack/svelte-query';
   import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
-  import { hotTickers, calibration, attribution, sentimentQuality, monthlyPnl, concentration } from '$api';
+  import { hotTickers, calibration, attribution, sentimentQuality, monthlyPnl, concentration, dailyPnl, drawdownCurves } from '$api';
+  import PnlCalendar from '$components/PnlCalendar.svelte';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import Spinner from '$components/Spinner.svelte';
@@ -52,6 +53,16 @@
     queryKey: ['concentration'],
     queryFn: concentration,
     refetchInterval: 60_000
+  });
+  const dailyQ = createQuery({
+    queryKey: ['daily-pnl', 180],
+    queryFn: () => dailyPnl(180),
+    refetchInterval: 5 * 60_000
+  });
+  const ddQ = createQuery({
+    queryKey: ['drawdown-curves', 90],
+    queryFn: () => drawdownCurves(90),
+    refetchInterval: 5 * 60_000
   });
 
   /** Colour-code by hit-rate vs predicted prob: green when realised ≥
@@ -660,6 +671,87 @@
               </div>
             {/each}
           </div>
+        </div>
+      {/each}
+    </div>
+  {/if}
+</Card>
+
+<!-- ── PNL CALENDAR HEATMAP ─────────────────────────── -->
+<Card class="mt-4 px-4 py-3">
+  <div class="mb-2 flex items-baseline gap-3">
+    <div class="flex items-center gap-1.5">
+      <BarChart3 class="h-3.5 w-3.5 text-good" />
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+        P&amp;L calendar (180d)
+      </div>
+    </div>
+    <span class="text-[10.5px] text-faint">
+      one cell per day · green = winning day · red = losing day · intensity ∝ |pnl|
+    </span>
+  </div>
+  <PnlCalendar data={$dailyQ.data} />
+</Card>
+
+<!-- ── PER-WALLET DRAWDOWN ─────────────────────────── -->
+<Card class="mt-4 px-4 py-3">
+  <div class="mb-2 flex items-baseline gap-3">
+    <div class="flex items-center gap-1.5">
+      <TrendingUp class="h-3.5 w-3.5 text-warn" />
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+        Drawdown by wallet (90d)
+      </div>
+    </div>
+    <span class="text-[10.5px] text-faint">
+      peak-to-current % · risk_circuit pauses a wallet at -15%
+    </span>
+  </div>
+
+  {#if !$ddQ.data || !$ddQ.data.wallets.length}
+    <EmptyState title="No equity history yet" />
+  {:else}
+    <div class="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+      {#each $ddQ.data.wallets as w (w.fund)}
+        <div class="rounded-lg border border-border bg-surface-2/40 px-3 py-2.5">
+          <div class="flex items-baseline justify-between">
+            <span class="text-[12.5px] font-semibold capitalize text-text">{w.fund}</span>
+            <span class={[
+              'tabular text-[12px] font-semibold',
+              w.current_dd_pct >= -2 ? 'text-good' :
+              w.current_dd_pct >= -7 ? 'text-warn' : 'text-bad'
+            ].join(' ')}>
+              {w.current_dd_pct.toFixed(2)}%
+            </span>
+          </div>
+          <div class="mt-1 flex items-baseline justify-between text-[10.5px] tabular text-faint">
+            <span>worst {w.max_dd_pct.toFixed(2)}%</span>
+            <span>{w.points.length} marks</span>
+          </div>
+
+          <!-- drawdown sparkline (0% at top, deeper down = more red) -->
+          {#if w.points.length > 1}
+            {@const minDd = Math.min(...w.points.map((p) => p.drawdown_pct), 0)}
+            {@const ddRange = Math.max(1, -minDd)}
+            {@const ptStr = w.points.map((p, i) => {
+              const x = (i / (w.points.length - 1)) * 100;
+              const y = (-p.drawdown_pct / ddRange) * 36;
+              return `${x.toFixed(2)},${y.toFixed(2)}`;
+            }).join(' ')}
+            <svg viewBox="0 0 100 36" preserveAspectRatio="none" class="mt-2 h-9 w-full">
+              <line x1="0" x2="100" y1="0" y2="0" stroke="var(--color-border)" stroke-dasharray="1 2" />
+              <polyline
+                points={ptStr}
+                fill="none"
+                stroke={w.max_dd_pct <= -10 ? 'var(--color-bad)' : 'var(--color-warn)'}
+                stroke-width="1.4"
+                vector-effect="non-scaling-stroke"
+              />
+            </svg>
+            <div class="mt-0.5 flex justify-between text-[9px] tabular text-faint">
+              <span>0%</span>
+              <span>{minDd.toFixed(1)}%</span>
+            </div>
+          {/if}
         </div>
       {/each}
     </div>

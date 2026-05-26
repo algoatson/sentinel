@@ -20,8 +20,9 @@
    */
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
-  import { openPositions, closePosition, updateRisk, bulkClose, csvExportUrl } from '$api';
+  import { openPositions, closePosition, updateRisk, bulkClose, csvExportUrl, wallets as walletsApi } from '$api';
   import type { OpenPositionRow } from '$api';
+  import OpenPositionDrawer from '$components/OpenPositionDrawer.svelte';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import TickerLink from '$components/TickerLink.svelte';
@@ -32,7 +33,7 @@
   import { usd, price, timeAgo } from '$lib/format';
   import {
     Briefcase, AlertCircle, X, Download, Shield, Target as TargetIcon,
-    Edit3, TrendingUp, TrendingDown, Save, Layers, MoreVertical
+    Edit3, TrendingUp, TrendingDown, Save, Layers, MoreVertical, Plus
   } from 'lucide-svelte';
 
   type SortKey =
@@ -51,6 +52,13 @@
   const selected = $state(new Set<number>());
 
   let drawerId = $state<number | null>(null);
+  let openTradeOpen = $state(false);
+
+  const walletsQ = createQuery({
+    queryKey: ['wallets'],
+    queryFn: walletsApi,
+    refetchInterval: 60_000
+  });
   // Risk-form draft (controlled inputs).
   let dStop = $state<string>('');
   let dTarget = $state<string>('');
@@ -248,6 +256,42 @@
   </div>
 
   <div class="flex items-center gap-1.5">
+    <button
+      type="button"
+      onclick={() => {
+        const losers = ($positionsQ.data ?? []).filter((p) => p.upnl < 0).map((p) => p.id);
+        if (!losers.length) {
+          toast.info('No losing positions to close');
+          return;
+        }
+        selected.clear();
+        losers.forEach((id) => selected.add(id));
+        bulkConfirm = true;
+      }}
+      class="flex items-center gap-1.5 rounded-md border border-bad/30 bg-bad-soft px-2.5 py-1.5 text-[11px] text-bad transition-colors hover:bg-bad/15"
+      title="Select every currently-underwater position; one click to bulk-close"
+    >
+      <TrendingDown class="h-3 w-3" />
+      Cut losers
+    </button>
+    <button
+      type="button"
+      onclick={() => {
+        const winners = ($positionsQ.data ?? []).filter((p) => p.upnl > 0).map((p) => p.id);
+        if (!winners.length) {
+          toast.info('No winning positions to lock in');
+          return;
+        }
+        selected.clear();
+        winners.forEach((id) => selected.add(id));
+        bulkConfirm = true;
+      }}
+      class="flex items-center gap-1.5 rounded-md border border-good/30 bg-good-soft px-2.5 py-1.5 text-[11px] text-good transition-colors hover:bg-good/15"
+      title="Select every position in profit; one click to lock in wins"
+    >
+      <TrendingUp class="h-3 w-3" />
+      Lock winners
+    </button>
     <a
       href={csvExportUrl}
       download
@@ -257,6 +301,14 @@
       <Download class="h-3 w-3" />
       Export
     </a>
+    <button
+      type="button"
+      onclick={() => (openTradeOpen = true)}
+      class="flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary-soft px-2.5 py-1.5 text-[11.5px] font-medium text-primary transition-colors hover:bg-primary/15"
+    >
+      <Plus class="h-3 w-3" />
+      Open trade
+    </button>
   </div>
 </div>
 
@@ -777,3 +829,12 @@
     </div>
   {/if}
 </Drawer>
+
+<!-- ── manual paper-trade open drawer ───────────────────── -->
+<OpenPositionDrawer
+  open={openTradeOpen}
+  onClose={() => (openTradeOpen = false)}
+  funds={($walletsQ.data ?? []).map((w) => ({
+    name: w.name, mandate: w.mandate, equity: w.equity
+  }))}
+/>

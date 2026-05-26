@@ -364,3 +364,61 @@ export const bulkClose = (ids: number[], reason?: string) =>
   }>('/positions/bulk-close', { trade_ids: ids, reason });
 
 export const csvExportUrl = '/api/positions/export.csv';
+
+export interface OpenRequest {
+  fund_name: string;
+  ticker: string;
+  side: 'long' | 'short';
+  /** Sizing — provide exactly one of qty / notional / (risk_pct + stop_price). */
+  qty?: number;
+  notional?: number;
+  risk_pct?: number;
+  stop_price?: number;
+  note?: string;
+}
+export const openPosition = (body: OpenRequest) =>
+  post<{
+    ok: boolean; message: string;
+    trade_id: number | null; fill_price: number | null; qty: number | null;
+  }>('/positions/open', body);
+
+/* ─── analytics: daily + drawdown ─── */
+export interface DailyCell {
+  date: string;          // YYYY-MM-DD
+  weekday: number;       // 1=Mon … 7=Sun
+  realized_pnl: number;
+  closed: number;
+  wins: number;
+  losses: number;
+}
+export interface DailyPnlPayload {
+  days: number;
+  from: string;
+  to: string;
+  cells: DailyCell[];
+  max_abs: number;
+  active_days: number;
+  total_realized: number;
+  best_day: DailyCell | null;
+  worst_day: DailyCell | null;
+}
+export const dailyPnl = (days = 180) =>
+  get<DailyPnlPayload>(`/analytics/daily?days=${days}`);
+
+export interface DrawdownPoint {
+  ts: string;
+  equity: number;
+  peak: number;
+  drawdown_pct: number;
+}
+export interface DrawdownWallet {
+  fund: string;
+  starting: number;
+  points: DrawdownPoint[];
+  current_dd_pct: number;
+  max_dd_pct: number;
+}
+export const drawdownCurves = (days = 90) =>
+  get<{ window_days: number; wallets: DrawdownWallet[] }>(
+    `/analytics/drawdown?days=${days}`
+  );

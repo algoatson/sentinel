@@ -42,6 +42,36 @@ def close_position(trade_id: int, reason: str | None = None) -> dict:
     return res
 
 
+class OpenRequest(BaseModel):
+    """Manual paper-trade open. Pass ONE of qty / notional /
+    (risk_pct + stop_price) for sizing."""
+    fund_name: str = Field(..., min_length=1, max_length=64)
+    ticker: str = Field(..., min_length=1, max_length=16)
+    side: str = Field(..., pattern="^(long|short)$")
+    qty: float | None = Field(default=None, gt=0)
+    notional: float | None = Field(default=None, gt=0)
+    risk_pct: float | None = Field(default=None, gt=0, lt=0.5)
+    stop_price: float | None = Field(default=None, gt=0)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/positions/open")
+def open_position(body: OpenRequest) -> dict:
+    res = _funds.open_trade_manual(
+        fund_name=body.fund_name,
+        ticker=body.ticker,
+        side=body.side,
+        qty=body.qty,
+        notional=body.notional,
+        risk_pct=body.risk_pct,
+        stop_price=body.stop_price,
+        note=body.note,
+    )
+    if not res["ok"]:
+        raise HTTPException(400, res["message"])
+    return res
+
+
 class RiskRequest(BaseModel):
     """Partial-update payload. Missing field → leave alone. To
     explicitly clear a value, send its name in `clear`."""
