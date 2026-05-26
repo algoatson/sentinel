@@ -10,6 +10,7 @@
   import EquityCurveChart from '$components/EquityCurveChart.svelte';
   import Sparkline from '$components/Sparkline.svelte';
   import TodayPulse from '$components/TodayPulse.svelte';
+  import RiskMonitor from '$components/RiskMonitor.svelte';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
   import { usd, compact, timeAgo, pct, tone, stripMd } from '$lib/format';
@@ -190,32 +191,37 @@
   {/if}
 </div>
 
-<!-- ── EQUITY CURVE chart ────────────────────────────────────────── -->
-<Card class="mt-4 px-4 py-3">
-  <div class="mb-2 flex items-baseline gap-3">
-    <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
-      Equity vs inception
+<!-- ── EQUITY CURVE + RISK MONITOR (side-by-side, 7/5 split) ────── -->
+<div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
+  <Card class="px-4 py-3 lg:col-span-7">
+    <div class="mb-2 flex items-baseline gap-3">
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+        Equity vs inception
+      </div>
+      <div class="ml-auto flex items-center gap-1">
+        {#each RANGES as r (r.label)}
+          <button
+            onclick={() => (equityRange = r)}
+            class={[
+              'rounded-md border px-2 py-0.5 text-[10.5px] transition-colors',
+              equityRange.label === r.label
+                ? 'border-primary/50 bg-primary-soft text-primary'
+                : 'border-border bg-surface-2 text-muted hover:text-text'
+            ].join(' ')}
+          >{r.label}</button>
+        {/each}
+      </div>
     </div>
-    <div class="ml-auto flex items-center gap-1">
-      {#each RANGES as r (r.label)}
-        <button
-          onclick={() => (equityRange = r)}
-          class={[
-            'rounded-md border px-2 py-0.5 text-[10.5px] transition-colors',
-            equityRange.label === r.label
-              ? 'border-primary/50 bg-primary-soft text-primary'
-              : 'border-border bg-surface-2 text-muted hover:text-text'
-          ].join(' ')}
-        >{r.label}</button>
-      {/each}
-    </div>
+    {#if $equityQ.isLoading}
+      <div class="flex h-[340px] items-center justify-center"><Spinner /></div>
+    {:else}
+      <EquityCurveChart series={$equityQ.data ?? []} height={340} />
+    {/if}
+  </Card>
+  <div class="lg:col-span-5">
+    <RiskMonitor />
   </div>
-  {#if $equityQ.isLoading}
-    <div class="flex h-[200px] items-center justify-center"><Spinner /></div>
-  {:else}
-    <EquityCurveChart series={$equityQ.data ?? []} />
-  {/if}
-</Card>
+</div>
 
 <!-- ── HOT NOW ──────────────────────────────────────── -->
 {#if $hotQ.data && $hotQ.data.length > 0}

@@ -14,6 +14,7 @@ from ..analytics import correlation as _corr
 from ..analytics import daily as _daily
 from ..analytics import dedupe as _dedupe
 from ..analytics import digest as _digest
+from ..analytics import risk_monitor as _risk
 from ..analytics import hot as _hot
 from ..analytics import monthly as _monthly
 from ..analytics import sentiment_quality as _sq
@@ -104,3 +105,13 @@ def today() -> dict:
     counts, opened/closed trades, realised PnL today, best+worst
     closes, top conviction call, top material filing."""
     return _digest.today_pulse()
+
+
+@router.get("/analytics/risk-monitor")
+def risk_monitor() -> dict:
+    """Book-level risk distillation. Counts of positions near stop /
+    near target / underwater, total $ at risk if every stop fires,
+    average R-multiple, biggest open winner/loser, and the lists
+    behind each summary so the UI can drop straight into the
+    relevant positions."""
+    return _risk.risk_snapshot()

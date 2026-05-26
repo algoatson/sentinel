@@ -483,3 +483,38 @@ export interface TodayPulse {
   } | null;
 }
 export const todayPulse = () => get<TodayPulse>('/analytics/today');
+
+export interface RiskRowSlim {
+  id: number;
+  fund: string;
+  ticker: string;
+  side: string;
+  upnl: number | null;
+  upnl_pct: number | null;
+  mark: number | null;
+  stop_price: number | null;
+  target_price: number | null;
+  dist_to_stop_pct: number | null;
+  dist_to_target_pct: number | null;
+  r_multiple: number | null;
+}
+export interface RiskSnapshot {
+  n_open: number;
+  n_with_stop: number;
+  n_with_target: number;
+  n_near_stop: number;
+  n_near_target: number;
+  n_underwater: number;
+  n_in_profit: number;
+  dollar_at_risk: number;
+  pct_book_at_risk: number;
+  avg_r_multiple: number | null;
+  median_dist_to_stop_pct: number | null;
+  biggest_winner: RiskRowSlim | null;
+  biggest_loser: RiskRowSlim | null;
+  near_stop: RiskRowSlim[];
+  near_target: RiskRowSlim[];
+  naked: RiskRowSlim[];
+  near_pct: number;
+}
+export const riskMonitor = () => get<RiskSnapshot>('/analytics/risk-monitor');
