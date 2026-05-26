@@ -27,6 +27,7 @@ from .models import (
     Fund,
     FundEquity,
     FundTrade,
+    PriceBar,
     PriceContext,
     RedditMention,
     TradingCall,
@@ -321,11 +322,242 @@ def _move_close(fund: Fund, t: FundTrade, age_days: int) -> dict:
     }
 
 
+# ── Trade-placement helpers ────────────────────────────────────────────
+# These cluster everything the trading engine needs to size + risk a new
+# position properly. Each is a pure function that returns numbers; the
+# `_run()` loop below threads them together. The goals (against the
+# previous behaviour, which size_pct'd the equity into every position
+# regardless of vol):
+#   1. Bound dollar risk per trade by stopping at 2×ATR, then sizing
+#      backwards from that stop (`_fixed_risk_qty`).
+#   2. Store the computed stop + target on the FundTrade row so the
+#      already-running auto_exits pipeline and the Risk Monitor see them.
+#   3. Soft-taper size as a fund draws down, well before the −15%
+#      circuit-breaker (`_drawdown_scale`).
+#   4. Don't burst-open on a noisy news day (`_opens_today`).
+#   5. Avoid the day-after-earnings gap (`_post_earnings_blackout`).
+
+# Target risk per trade as a fraction of equity, BEFORE the conviction
+# and drawdown scalars are applied. Picked so the median trade ends up
+# risking ~0.8% (small enough that a 20-trade losing streak only costs
+# ~15% of the bankroll). Multiplied by (conviction/5) and the drawdown
+# scale; never exceeds 2% × (size_pct / 0.20) on top conviction.
+_BASE_RISK_PCT = 0.008
+
+# Stop = mark ± _ATR_STOP_MULT × ATR(14). The same multiplier the
+# manual /book ATR-suggest button uses, so the bot and the user share
+# the same definition of "noise" room.
+_ATR_STOP_MULT = 2.0
+
+# No fund opens more than this many positions in one UTC day. Stops
+# news-cascade churn (a CPI print can generate a dozen calls in an
+# hour). Can be overridden per-policy via `max_opens_per_day`.
+_DEFAULT_MAX_OPENS_PER_DAY = 4
+
+# Skip entries when the ticker reported earnings in the last N days.
+# The pre-earnings blackout already protects the future side; this
+# protects the post-report drift / gap volatility.
+_POST_EARNINGS_BLACKOUT_DAYS = 1
+
+
+def _atr_in_session(session, ticker: str, period: int = 14) -> float | None:
+    """Wilder ATR over `period` daily bars, computed inside the caller's
+    open session — duplicates analytics.volatility.atr_for() so we don't
+    nest session_scopes (SQLite WAL tolerates it, but explicit is safer
+    and lets the loop stay batchable later)."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=period * 4 + 14)
+    bars = session.exec(
+        select(PriceBar)
+        .where(PriceBar.ticker == ticker)
+        .where(PriceBar.ts >= cutoff)
+        .order_by(PriceBar.ts)
+    ).all()
+    if len(bars) < 2:
+        return None
+    # Collapse intraday bars to one bar per UTC day so ATR stays a
+    # daily concept.
+    by_day: dict[str, dict] = {}
+    for b in bars:
+        d = b.ts.strftime("%Y-%m-%d")
+        cur = by_day.get(d)
+        if cur is None:
+            by_day[d] = {"high": b.high, "low": b.low, "close": b.close}
+        else:
+            cur["high"] = max(cur["high"], b.high)
+            cur["low"] = min(cur["low"], b.low)
+            cur["close"] = b.close
+    days = sorted(by_day.keys())
+    if len(days) < 2:
+        return None
+    trs: list[float] = []
+    prev_close = by_day[days[0]]["close"]
+    for d in days[1:]:
+        b = by_day[d]
+        trs.append(
+            max(
+                b["high"] - b["low"],
+                abs(b["high"] - prev_close),
+                abs(b["low"] - prev_close),
+            )
+        )
+        prev_close = b["close"]
+    trs = trs[-period:] if len(trs) >= period else trs
+    if not trs:
+        return None
+    return sum(trs) / len(trs)
+
+
+def _compute_stop_target(
+    *, side: str, mark: float, atr: float | None, pol: dict
+) -> tuple[float | None, float | None]:
+    """(stop_price, target_price) for a new position.
+
+    Strategy:
+      - If ATR is available → stop is `2 × ATR` off the mark on the
+        loss side. Target preserves the policy's risk-reward ratio
+        (`take_pct / |stop_pct|`) so the long-run R-multiple intent
+        of the wallet stays intact while the *distance* scales with
+        actual volatility.
+      - Else fall back to the legacy fixed-percent rule from policy
+        (stop_pct / take_pct), so funds keep trading on tickers
+        without enough bar history yet (fresh crypto, new IPOs).
+    Returns (None, None) when neither side has a sensible value
+    (mark ≤ 0, or some pathological config) — the caller is
+    expected to skip the trade in that case."""
+    if mark <= 0:
+        return None, None
+    stop_pct = abs(pol.get("stop_pct", 0.0))
+    take_pct = abs(pol.get("take_pct", 0.0))
+    rr = (take_pct / stop_pct) if stop_pct > 0 else 0.0
+
+    if atr is not None and atr > 0:
+        stop_dist = _ATR_STOP_MULT * atr
+        target_dist = stop_dist * rr if rr > 0 else stop_dist * 2.0
+    else:
+        # Legacy: distance is mark × policy pct. Guarantees the
+        # downstream realised return == the policy pct on hit.
+        stop_dist = mark * stop_pct if stop_pct > 0 else 0.0
+        target_dist = mark * take_pct if take_pct > 0 else 0.0
+
+    if stop_dist <= 0:
+        return None, None
+
+    if side == "long":
+        stop = mark - stop_dist
+        target = mark + target_dist if target_dist > 0 else None
+    else:
+        stop = mark + stop_dist
+        target = mark - target_dist if target_dist > 0 else None
+    if stop is None or stop <= 0:
+        return None, None
+    return round(stop, 4), round(target, 4) if target is not None else None
+
+
+def _fixed_risk_qty(
+    *,
+    equity: float,
+    risk_pct: float,
+    entry: float,
+    stop: float | None,
+) -> float:
+    """Position size that risks `risk_pct × equity` between entry and
+    stop. Falls back to 0 (caller skips) when stop is missing or on
+    the wrong side. This is the textbook "fixed-fractional" rule —
+    same dollar risk on a tight-stop high-vol name as on a wide-stop
+    blue chip, the only sane way to compare edges across the book."""
+    if entry <= 0:
+        return 0.0
+    if stop is None or stop <= 0:
+        return 0.0
+    per_share_risk = abs(entry - stop)
+    if per_share_risk <= 0:
+        return 0.0
+    dollars_at_risk = max(0.0, equity) * max(0.0, risk_pct)
+    return dollars_at_risk / per_share_risk
+
+
+def _drawdown_scale(session, fund_id: int, now: datetime) -> float:
+    """Return a 0..1 multiplier that shrinks new-position size as the
+    fund's drawdown deepens. Continuous, not stepped, so behaviour at
+    the edges is smooth.
+
+      0%   …  −5%  → 1.0   (full size)
+      −5%  …  −10% → linear 1.0 → 0.6
+      −10% … −15%  → linear 0.6 → 0.3
+      ≤ −15%       → 0.3 (the circuit-breaker takes over below this)
+    """
+    cutoff = now - timedelta(days=90)
+    pts = session.exec(
+        select(FundEquity.equity)
+        .where(FundEquity.fund_id == fund_id)
+        .where(FundEquity.ts >= cutoff)
+        .order_by(FundEquity.ts)
+    ).all()
+    if not pts:
+        return 1.0
+    peak = pts[0]
+    for v in pts:
+        if v > peak:
+            peak = v
+    cur = pts[-1]
+    if peak <= 0:
+        return 1.0
+    dd = (cur - peak) / peak  # negative or zero
+    if dd >= -0.05:
+        return 1.0
+    if dd >= -0.10:
+        # 1.0 at -5%, 0.6 at -10%
+        return 1.0 - ((-dd - 0.05) / 0.05) * 0.4
+    if dd >= -0.15:
+        # 0.6 at -10%, 0.3 at -15%
+        return 0.6 - ((-dd - 0.10) / 0.05) * 0.3
+    return 0.3
+
+
+def _opens_today(session, fund_id: int, now: datetime) -> int:
+    """Count of positions this fund has *opened* since UTC midnight.
+    Used for the per-day cap so a news-cascade can't snowball into
+    six fresh entries in one cycle."""
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    midnight_naive = midnight.replace(tzinfo=None)
+    rows = session.exec(
+        select(FundTrade.id)
+        .where(FundTrade.fund_id == fund_id)
+        .where(FundTrade.entry_at >= midnight_naive)
+    ).all()
+    return len(rows)
+
+
+def _post_earnings_blackout(ticker: str, now: datetime) -> bool:
+    """True iff `ticker` reported earnings in the last N days. The
+    print + the day after carry abnormal gap/drift vol that swamps
+    most thesis edges. earnings.days_until_earnings returns
+    negative for past prints."""
+    d = earnings.days_until_earnings(ticker, now.date())
+    if d is None:
+        return False
+    return -_POST_EARNINGS_BLACKOUT_DAYS <= d < 0
+
+
 def _run() -> list[dict]:
     """Run one trading cycle for every active fund. Returns the move events
     (opens with their triggering thesis, closes with reason/realized) so the
     caller can narrate *why* — the reasoning already exists on the call, this
-    just surfaces it. Pure DB; no LLM."""
+    just surfaces it. Pure DB; no LLM.
+
+    Trade placement (see helpers above for the math):
+      1. Risk exits: use the stored stop_price / target_price on the
+         FundTrade row when present (set at open time), otherwise fall
+         back to the policy's fixed stop_pct / take_pct for legacy rows.
+      2. Entries: ATR(14)-based stop on the loss side at 2×ATR, target
+         at the policy's risk-reward distance. Size by fixed-risk —
+         qty = (equity × risk_pct × conv-bias × dd-scale) / |entry−stop|.
+         Falls back to the legacy notional sizing only when ATR is
+         unavailable AND there's no usable stop.
+      3. Soft drawdown taper before the −15% circuit-breaker fires
+         (see _drawdown_scale); plus a per-day opens cap so a news
+         cascade can't snowball.
+    """
     seed_funds()
     now = datetime.now(timezone.utc)
     moves: list[dict] = []
@@ -363,19 +595,47 @@ def _run() -> list[dict]:
                         by_ticker.pop(t.ticker, None)
                     continue
 
+                # Prefer the stop/target stored on the trade row when set
+                # (post-refactor opens always set them; legacy opens may
+                # not). When stored values exist they win — they're the
+                # vol-adjusted distances and the policy pct is a coarser
+                # ratchet over them.
+                reason: str | None = None
                 d = 1 if t.side == "long" else -1
-                ret = (mark - t.entry_price) / t.entry_price * d
-                reason = (
-                    "stop" if ret <= pol["stop_pct"]
-                    else "take" if ret >= pol["take_pct"]
-                    else "max_hold" if age >= pol["max_hold_days"]
-                    else None
-                )
+                if t.stop_price is not None:
+                    hit = (
+                        mark <= t.stop_price if t.side == "long"
+                        else mark >= t.stop_price
+                    )
+                    if hit:
+                        reason = "stop"
+                if reason is None and t.target_price is not None:
+                    hit = (
+                        mark >= t.target_price if t.side == "long"
+                        else mark <= t.target_price
+                    )
+                    if hit:
+                        reason = "take"
+                if reason is None:
+                    ret = (mark - t.entry_price) / t.entry_price * d
+                    # Policy-pct fallback only when no stored band fired
+                    # (legacy rows that pre-date the refactor).
+                    if t.stop_price is None and ret <= pol["stop_pct"]:
+                        reason = "stop"
+                    elif t.target_price is None and ret >= pol["take_pct"]:
+                        reason = "take"
+                if reason is None and age >= pol["max_hold_days"]:
+                    reason = "max_hold"
                 if reason:
                     _close(s, fund, t, mark, reason)
                     moves.append(_move_close(fund, t, age))
                     opens.remove(t)
                     by_ticker.pop(t.ticker, None)
+
+            # Per-fund cycle context — computed once, not per call.
+            dd_scale = _drawdown_scale(s, fund.id, now)
+            opens_today = _opens_today(s, fund.id, now)
+            max_per_day = pol.get("max_opens_per_day", _DEFAULT_MAX_OPENS_PER_DAY)
 
             # 2. New calls → flips + entries.
             new_calls = s.exec(
@@ -401,10 +661,19 @@ def _run() -> list[dict]:
                 # binary print (also blocks a flip into one: don't churn
                 # into uncontrolled risk).
                 edays = earnings.days_until_earnings(call.ticker, now.date())
-                if edays is not None and edays <= _EARNINGS_BLACKOUT_DAYS:
+                if edays is not None and 0 <= edays <= _EARNINGS_BLACKOUT_DAYS:
                     logger.debug(
-                        "funds[{}]: skip ${} — earnings in {}d (blackout)",
+                        "funds[{}]: skip ${} — earnings in {}d (pre-blackout)",
                         fund.name, call.ticker, edays,
+                    )
+                    continue
+                # Post-earnings cooldown — same blackout window in
+                # reverse so we don't trade the drift/gap chop right
+                # after a print.
+                if _post_earnings_blackout(call.ticker, now):
+                    logger.debug(
+                        "funds[{}]: skip ${} — earnings in last {}d (post-blackout)",
+                        fund.name, call.ticker, _POST_EARNINGS_BLACKOUT_DAYS,
                     )
                     continue
 
@@ -435,13 +704,52 @@ def _run() -> list[dict]:
 
                 if len(opens) >= pol["max_positions"]:
                     continue
+                if opens_today >= max_per_day:
+                    logger.debug(
+                        "funds[{}]: skip ${} — daily open cap {} reached",
+                        fund.name, call.ticker, max_per_day,
+                    )
+                    continue
+
+                # ── sizing & risk bands ─────────────────────────────────
                 equity = _equity(s, fund, opens)
-                size_cash = equity * pol["size_pct"] * (call.conviction / 5)
-                qty = size_cash / mark
+                atr = _atr_in_session(s, call.ticker)
+                stop, target = _compute_stop_target(
+                    side=want, mark=mark, atr=atr, pol=pol,
+                )
+                # Conviction- and drawdown-scaled risk budget. Capped by
+                # the original size_pct on top conviction so a c5 sniper
+                # trade can still scale into a meaningful position.
+                conv_bias = call.conviction / 5
+                risk_pct = (
+                    _BASE_RISK_PCT * conv_bias * dd_scale
+                    * max(1.0, pol["size_pct"] / 0.20)
+                )
+                qty = _fixed_risk_qty(
+                    equity=equity, risk_pct=risk_pct,
+                    entry=mark, stop=stop,
+                )
+                # Fall back to legacy notional sizing only when we don't
+                # have a usable stop. Saves freshly-listed tickers (no
+                # bar history yet → no ATR) from being silently dropped.
+                if qty <= 0:
+                    size_cash = equity * pol["size_pct"] * conv_bias * dd_scale
+                    qty = size_cash / mark
+                    if qty <= 0:
+                        continue
+                # Notional ceiling — never let fixed-risk sizing balloon
+                # past the policy's original notional limit on a very
+                # tight stop. (e.g. a stop 0.5% away on a degen would
+                # otherwise demand 20× the wallet to risk 1%.)
+                cap_cash = equity * pol["size_pct"] * conv_bias * dd_scale
+                if qty * mark > cap_cash:
+                    qty = cap_cash / mark
                 if qty <= 0:
                     continue
+                size_cash = qty * mark
                 if not _within_budget(opens, equity, size_cash):
                     continue  # no leverage — symmetric long/short
+
                 open_reason = (
                     f"{'fade ' if invert else ''}{call.source} "
                     f"c{call.conviction}"
@@ -455,6 +763,8 @@ def _run() -> list[dict]:
                     entry_at=now,
                     call_id=call.id,
                     open_reason=open_reason,
+                    stop_price=stop,
+                    target_price=target,
                 )
                 if want == "long":
                     fund.cash -= qty * mark
@@ -463,6 +773,7 @@ def _run() -> list[dict]:
                 s.add(t)
                 opens.append(t)
                 by_ticker[call.ticker] = t
+                opens_today += 1
                 moves.append(
                     {
                         "fund": fund.name,
@@ -475,6 +786,10 @@ def _run() -> list[dict]:
                         "conviction": call.conviction,
                         "thesis": (call.thesis or "").strip(),
                         "invert": invert,
+                        "stop": stop,
+                        "target": target,
+                        "atr": atr,
+                        "dd_scale": dd_scale,
                     }
                 )
 
