@@ -686,6 +686,22 @@ export const putSymbolNote = (ticker: string, body: string) =>
     return r.json() as Promise<SymbolNote>;
   });
 
+export interface DailyPlan {
+  plan_date: string;
+  body: string;
+  updated_at: string | null;
+}
+export const getDailyPlan = () => get<DailyPlan>('/plan/today');
+export const putDailyPlan = (body: string) =>
+  fetch('/api/plan/today', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body })
+  }).then(async (r) => {
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json() as Promise<DailyPlan>;
+  });
+
 export interface TradeLifecycle {
   trade: {
     id: number;

@@ -490,3 +490,13 @@ class SymbolNote(SQLModel, table=True):
     ticker: str = Field(primary_key=True)
     body: str = Field(default="", max_length=4000)
     updated_at: datetime
+
+
+class DailyPlan(SQLModel, table=True):
+    """One free-form plan row per UTC date — the trader's morning
+    intent ("watching $NVDA into earnings, no new shorts this week").
+    A new day silently starts a fresh plan; yesterday's stays in the
+    table for retrospectives."""
+    plan_date: date = Field(primary_key=True)
+    body: str = Field(default="", max_length=4000)
+    updated_at: datetime

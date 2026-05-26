@@ -98,6 +98,23 @@
     return out;
   });
 
+  // Best / worst trades over the loaded window. Computed on the
+  // raw rows (not the active filter) so the leaderboard answers
+  // "all-time" not "what filter is active right now".
+  const leaderboard = $derived.by(() => {
+    if (!rows.length) return null;
+    const sortedByPnl = [...rows].sort(
+      (a, b) => (b.realized_pnl ?? 0) - (a.realized_pnl ?? 0)
+    );
+    const winners = sortedByPnl.filter(
+      (t) => (t.realized_pnl ?? 0) > 0
+    ).slice(0, 3);
+    const losers = sortedByPnl.filter(
+      (t) => (t.realized_pnl ?? 0) < 0
+    ).slice(-3).reverse();
+    return { winners, losers };
+  });
+
   // Aggregate stats for the active filter set.
   const stats = $derived.by(() => {
     const ts = filtered;
@@ -184,6 +201,83 @@
     </div>
   {/if}
 </div>
+
+{#if leaderboard && (leaderboard.winners.length || leaderboard.losers.length)}
+  <Card class="mb-3 px-4 py-3">
+    <div class="mb-2 flex items-center gap-2">
+      <Award class="h-3.5 w-3.5 text-primary" />
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+        Leaderboard · last {rows.length} closed trades
+      </div>
+    </div>
+    <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <div>
+        <div class="mb-1 flex items-center gap-1 text-[9.5px] uppercase tracking-wider text-good">
+          <TrendingUp class="h-2.5 w-2.5" /> Top winners
+        </div>
+        <ul class="space-y-0.5">
+          {#each leaderboard.winners as t (t.id)}
+            <li class="flex items-center gap-2 rounded border border-border-soft bg-surface-2/40 px-2 py-1 text-[11.5px] tabular">
+              <TickerLink ticker={t.ticker} class="font-mono font-semibold text-text" />
+              <span class="text-[10px] capitalize text-faint">{t.fund}</span>
+              {#if t.hold_h !== null}
+                <span class="text-[10px] text-faint">
+                  {t.hold_h < 24 ? `${t.hold_h.toFixed(1)}h` : `${(t.hold_h / 24).toFixed(1)}d`}
+                </span>
+              {/if}
+              {#if t.r_multiple !== null}
+                <span class={[
+                  'rounded px-1 text-[10px]',
+                  t.r_multiple >= 0 ? 'bg-good-soft text-good' : 'bg-bad-soft text-bad'
+                ].join(' ')}>
+                  {t.r_multiple >= 0 ? '+' : ''}{t.r_multiple.toFixed(2)}R
+                </span>
+              {/if}
+              <span class="ml-auto text-[12px] font-semibold text-good">
+                +{t.realized_pnl?.toFixed(2)}
+              </span>
+              <span class="text-[10.5px] text-good">{pct(t.realized_pct, 2)}</span>
+            </li>
+          {:else}
+            <li class="text-[11px] italic text-faint">No winning trades yet.</li>
+          {/each}
+        </ul>
+      </div>
+      <div>
+        <div class="mb-1 flex items-center gap-1 text-[9.5px] uppercase tracking-wider text-bad">
+          <TrendingDown class="h-2.5 w-2.5" /> Worst losers
+        </div>
+        <ul class="space-y-0.5">
+          {#each leaderboard.losers as t (t.id)}
+            <li class="flex items-center gap-2 rounded border border-border-soft bg-surface-2/40 px-2 py-1 text-[11.5px] tabular">
+              <TickerLink ticker={t.ticker} class="font-mono font-semibold text-text" />
+              <span class="text-[10px] capitalize text-faint">{t.fund}</span>
+              {#if t.hold_h !== null}
+                <span class="text-[10px] text-faint">
+                  {t.hold_h < 24 ? `${t.hold_h.toFixed(1)}h` : `${(t.hold_h / 24).toFixed(1)}d`}
+                </span>
+              {/if}
+              {#if t.r_multiple !== null}
+                <span class={[
+                  'rounded px-1 text-[10px]',
+                  t.r_multiple >= 0 ? 'bg-good-soft text-good' : 'bg-bad-soft text-bad'
+                ].join(' ')}>
+                  {t.r_multiple >= 0 ? '+' : ''}{t.r_multiple.toFixed(2)}R
+                </span>
+              {/if}
+              <span class="ml-auto text-[12px] font-semibold text-bad">
+                {t.realized_pnl?.toFixed(2)}
+              </span>
+              <span class="text-[10.5px] text-bad">{pct(t.realized_pct, 2)}</span>
+            </li>
+          {:else}
+            <li class="text-[11px] italic text-faint">No losing trades yet.</li>
+          {/each}
+        </ul>
+      </div>
+    </div>
+  </Card>
+{/if}
 
 <!-- Filter strip -->
 <Card class="flex flex-wrap items-center gap-2 px-4 py-2">

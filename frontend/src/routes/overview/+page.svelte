@@ -15,6 +15,7 @@
   import HoldingsNews from '$components/HoldingsNews.svelte';
   import HoldingsTape from '$components/HoldingsTape.svelte';
   import StreakCard from '$components/StreakCard.svelte';
+  import DailyPlanCard from '$components/DailyPlanCard.svelte';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
   import { usd, compact, timeAgo, pct, tone, stripMd } from '$lib/format';
@@ -129,10 +130,11 @@
   </div>
 </div>
 
-<!-- ── TODAY'S PULSE + book tape ─────────────────────────────────────── -->
+<!-- ── TODAY'S PULSE + book tape + daily plan ────────────────────────── -->
 <div class="mb-4 space-y-2">
   <TodayPulse />
   <HoldingsTape />
+  <DailyPlanCard />
 </div>
 
 <!-- ── KPI ribbon ────────────────────────────────────────────────────── -->

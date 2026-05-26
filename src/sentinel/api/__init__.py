@@ -27,6 +27,7 @@ from . import (
     markets,
     news,
     overview,
+    plan,
     positions,
     research,
     social,
@@ -53,6 +54,7 @@ router.include_router(_market_status.router)
 router.include_router(markets.router)
 router.include_router(news.router)
 router.include_router(overview.router)
+router.include_router(plan.router)
 router.include_router(positions.router)
 router.include_router(research.router)
 router.include_router(social.router)

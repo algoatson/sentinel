@@ -20,7 +20,7 @@
    */
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
-  import { openPositions, closePosition, updateRisk, bulkClose, csvExportUrl, wallets as walletsApi } from '$api';
+  import { openPositions, closePosition, updateRisk, bulkClose, csvExportUrl, wallets as walletsApi, tickerAtr } from '$api';
   import type { OpenPositionRow } from '$api';
   import OpenPositionDrawer from '$components/OpenPositionDrawer.svelte';
   import PositionHeatmap from '$components/PositionHeatmap.svelte';
@@ -36,7 +36,7 @@
   import {
     Briefcase, AlertCircle, X, Download, Shield, Target as TargetIcon,
     Edit3, TrendingUp, TrendingDown, Save, Layers, MoreVertical, Plus,
-    LayoutGrid, List, AlertTriangle
+    LayoutGrid, List, AlertTriangle, Wand2
   } from 'lucide-svelte';
 
   type SortKey =
@@ -131,6 +131,37 @@
     onError: (err) =>
       toast.error(err instanceof Error ? err.message : String(err))
   });
+
+  // Inline "2×ATR" quick stop on naked rows — fetch ATR for the
+  // ticker, pick the stop on the correct side of entry, PATCH.
+  // Tracks per-row pending state so the button shows a spinner
+  // without freezing other rows.
+  let atrPending = $state(new Set<number>());
+  async function setAtrStop(p: OpenPositionRow) {
+    atrPending.add(p.id);
+    atrPending = new Set(atrPending);
+    try {
+      const atr = await tickerAtr(p.ticker, 14);
+      const stop = p.side === 'long'
+        ? atr.suggested_long_stop
+        : atr.suggested_short_stop;
+      if (stop === null || !Number.isFinite(stop) || stop <= 0) {
+        toast.error(`No usable ATR for $${p.ticker}`);
+        return;
+      }
+      await updateRisk(p.id, { stop_price: stop });
+      toast.success(
+        `Stop set on $${p.ticker} @ ${stop.toFixed(2)} (2×ATR)`
+      );
+      qc.invalidateQueries({ queryKey: ['positions-open'] });
+      qc.invalidateQueries({ queryKey: ['risk-monitor'] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      atrPending.delete(p.id);
+      atrPending = new Set(atrPending);
+    }
+  }
 
   const drawerRow = $derived(
     drawerId !== null
@@ -744,6 +775,23 @@
                   {/if}
                   {#if !hasRisk && !p.notes}
                     <span class="text-faint italic">no rules</span>
+                  {/if}
+                  {#if p.stop_price === null}
+                    {@const isPending = atrPending.has(p.id)}
+                    <button
+                      type="button"
+                      onclick={(e) => { e.stopPropagation(); setAtrStop(p); }}
+                      disabled={isPending}
+                      class="ml-1 inline-flex items-center gap-1 rounded border border-warn/40 bg-warn-soft px-1.5 py-0 text-[10px] text-warn transition-colors hover:bg-warn/15 disabled:opacity-50"
+                      title="Set 2×ATR(14) stop on the correct side of entry"
+                    >
+                      {#if isPending}
+                        <Spinner size={9} />
+                      {:else}
+                        <Wand2 class="h-2.5 w-2.5" />
+                      {/if}
+                      2×ATR
+                    </button>
                   {/if}
                 </span>
               </td>
