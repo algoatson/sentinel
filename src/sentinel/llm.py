@@ -317,6 +317,16 @@ def _api_chat(
             data.get("error"),
         )
         return {"ok": False, "error": "empty", "raw": data}
+    # Truncation watchdog — same intent as in _api_complete. A
+    # non-empty content with finish=length means the model was cut
+    # off mid-output. We don't auto-retry here because the caller
+    # (tool loop) tracks iterations on its own; we just surface it.
+    if content and finish == "length":
+        logger.warning(
+            "LLM chat {} truncated at max_tokens={} (visible_chars={}) — "
+            "answer was mid-output. Bump the cap or shorten the prompt.",
+            model_id, max_tokens, len(content),
+        )
     return {
         "ok": True,
         "content": content,
@@ -356,14 +366,26 @@ def _api_complete(
         choice = (data.get("choices") or [{}])[0]
         msg = choice.get("message") or {}
         content = (msg.get("content") or "").strip()
+        finish = choice.get("finish_reason")
         if content:
+            # Watchdog: a non-empty response with finish_reason=length
+            # means the model was mid-sentence when the cap fired —
+            # the caller gets a truncated body. Bump the cap or
+            # tighten the prompt. We surface this loud at INFO so
+            # operators can spot regressions in /system logs without
+            # spelunking through provider responses.
+            if finish == "length":
+                logger.warning(
+                    "LLM {} truncated at max_tokens={} (visible_chars={}) — "
+                    "answer was mid-output. Bump the cap or shorten the prompt.",
+                    model_id, max_tokens, len(content),
+                )
             return content
         # 200 OK but no content. The useless "None/None/None" empty log on the
         # generic path can't see why on the API transport — surface the real
         # cause here: finish_reason=length ⇒ a reasoning model spent the whole
         # budget thinking (bump max_tokens or suppress reasoning); a present
         # `reasoning`/`error` field tells the same story.
-        finish = choice.get("finish_reason")
         reasoning = bool(msg.get("reasoning") or msg.get("reasoning_content"))
         err = data.get("error")
         logger.warning(

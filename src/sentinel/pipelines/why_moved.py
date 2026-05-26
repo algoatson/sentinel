@@ -480,10 +480,11 @@ async def _run() -> None:
                 system_prompt=WHY_TOOL_SYSTEM,
                 registry=tool_registry,
                 model="heavy",
-                # 500/2: one tool call + a final answer is enough for
-                # most thin-coverage hits; was 700/3 which was burning
-                # ~50% more tokens for marginal additional accuracy.
-                max_tokens=500,
+                # 700/2: heavy reasoning model needs ~200-300 tokens
+                # for thinking; the 500 we tried earlier was truncating
+                # the visible answer mid-sentence. 700 covers reasoning
+                # + the 3-5 sentence answer + CALL + IMPORTANCE.
+                max_tokens=700,
                 max_iterations=2,
                 pipeline="why_moved",
                 ticker=ticker,
@@ -512,12 +513,13 @@ async def _run() -> None:
             # uses heavy. 800 tokens leaves headroom for narrative + CALL +
             # IMPORTANCE on thin-coverage hits where the model wants to
             # explain what it couldn't find.
-            # Pre-emptive enrichment (ATR / move-vs-ATR / bars_7d /
-            # benchmarks / peers) now covers what 800 tokens used to
-            # need slack for. 600 fits the 3-5 sentence narrative +
-            # optional CALL + IMPORTANCE line comfortably.
+            # 750 = ~200-300 reasoning tokens (heavy model thinks
+            # before answering on rich prompts) + 400-450 visible
+            # tokens for the 3-5 sentence read + CALL + IMPORTANCE.
+            # Smaller caps were truncating the trailing IMPORTANCE
+            # line or even the last sentence.
             body = await asyncio.to_thread(
-                llm.complete, rendered, model="heavy", max_tokens=600,
+                llm.complete, rendered, model="heavy", max_tokens=750,
                 fallback_light=True,
             )
         if not body or body == LLM_ERROR_SENTINEL:

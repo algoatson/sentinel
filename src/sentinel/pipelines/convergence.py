@@ -44,26 +44,22 @@ _MAX_PER_CYCLE = 4
 
 
 CONVERGENCE_PROMPT = Template("""\
-This ticker has multiple aligned signals (filing / price / social / news)
-firing in the same window. You're the user's private paper-trading copilot —
-give a real read, not a neutral note.
+Multi-signal convergence on this ticker. You're a paper-trading copilot.
 
-In 3-5 tight sentences:
-1. What's happening — combine the signals into one thesis, don't list them.
-2. Your read: is this actionable, and which way (long / short / fade / wait)?
-   Name the trigger/level and what would invalidate it. Conviction stated.
-3. The single most important thing to watch next.
+Write 3-4 short sentences (≤ ~280 visible tokens total):
+1. Thesis — fuse the signals into one read, don't enumerate them.
+2. Direction (long / short / fade / wait) + the invalidator and the
+   level/event that confirms or kills it.
+3. The single thing to watch next.
 
-Be terse and direct. Reasoned conviction over hedging; state risk in a clause,
-don't refuse. No disclaimers.
+Terse. State risk in a clause, no disclaimers, no hedging adverbs.
 
-If you have a directional lean, emit one machine line (logged & scored —
-only if you'd stand behind it; omit otherwise):
-CALL: $$TICKER LONG|SHORT <conviction 1-5>
+If directional, emit ONE machine line (logged + scored — omit if you
+wouldn't actually take it):
+CALL: $$TICKER LONG|SHORT <1-5>
 
 Then end with EXACTLY this final line, nothing after:
 IMPORTANCE: <1-5> — <≤10-word reason>
-(5 = act now; 4 = high; 3 = notable; 2 = context; 1 = marginal)
 
 Data:
 $payload_json
@@ -75,12 +71,13 @@ $payload_json
 CONV_TOOL_SYSTEM = (
     "You convert multi-signal alerts into a directional read for a "
     "private paper-trading copilot.\n"
-    "Tools are available to pull extra context (chart window, ATR, peer "
-    "movers, news/filings search, correlation, microstructure). Use them "
-    "sparingly — only when the data block below leaves you guessing. "
-    "After at most a couple of tool calls, write the final read.\n\n"
-    "Format the final answer EXACTLY as the user's instructions specify "
-    "(3-5 sentences, optional CALL line, mandatory IMPORTANCE line)."
+    "Tools fetch chart / ATR / peers / news / filings / micro / "
+    "correlation. Use AT MOST ONE if the data block is thin — most "
+    "alerts answer off the data block alone. Then write the final "
+    "read.\n\n"
+    "FINAL ANSWER FORMAT (3-4 sentences, ≤ 280 visible tokens, optional "
+    "CALL, mandatory IMPORTANCE). The exact format is in the user "
+    "message."
 )
 CONV_TOOL_USER = Template("""\
 Convergence on $TICKER — aligned signals: $signals_str.
@@ -88,12 +85,12 @@ Convergence on $TICKER — aligned signals: $signals_str.
 Pre-loaded data (JSON):
 $payload_json
 
-Give the directional read. Format:
-- 3-5 tight sentences (thesis / lean / what to watch).
-- Be terse. Reasoned conviction; state risk as a clause, no disclaimers.
+Write a 3-4 sentence directional read (≤ 280 visible tokens):
+thesis → lean (long/short/fade/wait) with invalidator → what to watch.
+Terse. State risk in a clause, no disclaimers.
 
 If directional:
-CALL: $$TICKER LONG|SHORT <conviction 1-5>
+CALL: $$TICKER LONG|SHORT <1-5>
 
 End with EXACTLY:
 IMPORTANCE: <1-5> — <≤10-word reason>
@@ -300,10 +297,11 @@ async def _run() -> None:
                 system_prompt=CONV_TOOL_SYSTEM,
                 registry=tool_registry,
                 model="heavy",
-                # 500/2 mirrors the why_moved trim — one tool call
-                # then commit. Token bill was outsized vs the gain
-                # from a third iteration.
-                max_tokens=500,
+                # 700/2: heavy reasoning model spends ~200-300 tokens
+                # thinking before the visible answer; 500 was cutting
+                # mid-sentence. 700 leaves ~400 for the 3-4 sentence
+                # read + CALL + IMPORTANCE — comfortable headroom.
+                max_tokens=700,
                 max_iterations=2,
                 pipeline="convergence",
                 ticker=ticker,
@@ -325,11 +323,13 @@ async def _run() -> None:
             rendered = CONVERGENCE_PROMPT.safe_substitute(
                 payload_json=json.dumps(evidence, default=str)
             )
-            # 500 fits the 3-5 sentence narrative + CALL + IMPORTANCE
-            # comfortably (was 650, then 400 before that). Bumped back
-            # down after observing actual outputs sit ~250-350 tokens.
+            # 750 budget = ~200-300 reasoning tokens (heavy model
+            # thinks before answering) + ~350-400 visible tokens for
+            # the 3-4 sentence read + CALL + IMPORTANCE. A 500 cap
+            # was leaving the answer truncated mid-sentence because
+            # the model's reasoning ate too much of the budget.
             synthesis = await asyncio.to_thread(
-                llm.complete, rendered, model="heavy", max_tokens=500
+                llm.complete, rendered, model="heavy", max_tokens=750
             )
         if not synthesis or synthesis == LLM_ERROR_SENTINEL:
             logger.error("convergence LLM error on {}", ticker)
