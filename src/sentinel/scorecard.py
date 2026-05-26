@@ -137,11 +137,19 @@ def record_call(
         logger.debug("record_call({}, {}) failed: {}", ticker, source, e)
 
 
-def _price_asof(session, ticker: str, target: datetime) -> float | None:
-    """Close at/just before `target`, naive-UTC aware. Returns None if the
-    nearest prior bar is staler than `_MARK_STALE_DAYS` — a far-stale close
-    is not a fair mark for this horizon, so the call stays unmarked (and is
-    eventually retired unscored) rather than scored off a dead price."""
+def _price_bar_asof(
+    session, ticker: str, target: datetime
+) -> tuple[float, datetime] | None:
+    """(close, bar_ts) at/just before `target`, naive-UTC aware. Returns
+    None if the nearest prior bar is staler than `_MARK_STALE_DAYS` — a
+    far-stale close is not a fair mark for this horizon, so the call
+    stays unmarked (and is eventually retired unscored) rather than
+    scored off a dead price.
+
+    Returning the bar timestamp lets callers distinguish "horizon has
+    actually elapsed in market time" from "we have only the same pre-
+    call close available", which the prior `_price_asof` couldn't and
+    is the root cause of the closed-market-window 0% ret bug."""
     t = target.replace(tzinfo=None)
     floor = t - timedelta(days=_MARK_STALE_DAYS)
     bar = session.exec(
@@ -152,7 +160,16 @@ def _price_asof(session, ticker: str, target: datetime) -> float | None:
         .order_by(PriceBar.ts.desc())
         .limit(1)
     ).first()
-    return bar.close if bar is not None else None
+    if bar is None:
+        return None
+    return bar.close, bar.ts
+
+
+def _price_asof(session, ticker: str, target: datetime) -> float | None:
+    """Back-compat scalar form. Use ``_price_bar_asof`` when the caller
+    needs to know which bar produced the close."""
+    res = _price_bar_asof(session, ticker, target)
+    return res[0] if res is not None else None
 
 
 def mark_open_calls() -> int:
@@ -177,8 +194,21 @@ def mark_open_calls() -> int:
                 horizon = created + timedelta(days=days)
                 if now.replace(tzinfo=None) < horizon:
                     continue
-                px = _price_asof(s, c.ticker, horizon)
-                if px is None:
+                bar = _price_bar_asof(s, c.ticker, horizon)
+                if bar is None:
+                    continue
+                px, bar_ts = bar
+                # Closed-market guard: when the horizon falls on a
+                # weekend/holiday, the most-recent bar is the same
+                # pre-call close that price_at_call captured. Marking
+                # a return off that bar always reads 0.00% and
+                # silently kills the calibration hit rate. Require the
+                # horizon bar to be strictly *after* the call was
+                # created so we only score against post-call price
+                # action. Skipped horizons retry on the next 2h tick;
+                # if no bar ever arrives within _GIVE_UP_DAYS the call
+                # retires unscored (the existing settle branch).
+                if bar_ts <= created:
                     continue
                 setattr(
                     c, field,

@@ -23,8 +23,7 @@
   import { usd, compact, timeAgo, pct, tone, stripMd } from '$lib/format';
   import {
     Newspaper, FileText, Target as TargetIcon, ArrowUpRight, ArrowDownRight,
-    Wallet, TrendingUp, Activity as ActivityIcon, Brain, Sparkles, Zap, Flame,
-    Plus, Search as SearchIcon, GitCompareArrows as ScaleIcon, BookText, FlaskConical as Beaker
+    Wallet, TrendingUp, Activity as ActivityIcon, Brain, Sparkles, Zap, Flame
   } from 'lucide-svelte';
 
   type Range = { label: string; days: number };
@@ -198,46 +197,6 @@
   </div>
 </div>
 
-<!-- ── Quick actions ─────────────────────────────────────────────────── -->
-<div class="mb-4 flex flex-wrap items-center gap-1.5 text-[11px]">
-  <a
-    href={`${base}/book?action=open`}
-    class="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary-soft px-2.5 py-1 font-medium text-primary transition-colors hover:bg-primary/15"
-    title="Open a new paper position"
-  >
-    <Plus class="h-3 w-3" /> Open trade
-  </a>
-  <a
-    href={`${base}/lookup`}
-    class="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2.5 py-1 text-muted transition-colors hover:border-primary/40 hover:text-text"
-  >
-    <SearchIcon class="h-3 w-3" /> Lookup
-  </a>
-  <a
-    href={`${base}/compare`}
-    class="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2.5 py-1 text-muted transition-colors hover:border-primary/40 hover:text-text"
-  >
-    <ScaleIcon class="h-3 w-3" /> Compare
-  </a>
-  <a
-    href={`${base}/copilot`}
-    class="inline-flex items-center gap-1 rounded-md border border-violet/40 bg-violet-soft px-2.5 py-1 font-medium text-violet transition-colors hover:bg-violet/15"
-  >
-    <Sparkles class="h-3 w-3" /> Ask copilot
-  </a>
-  <a
-    href={`${base}/journal`}
-    class="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2.5 py-1 text-muted transition-colors hover:border-primary/40 hover:text-text"
-  >
-    <BookText class="h-3 w-3" /> Journal
-  </a>
-  <a
-    href={`${base}/research`}
-    class="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2.5 py-1 text-muted transition-colors hover:border-primary/40 hover:text-text"
-  >
-    <Beaker class="h-3 w-3" /> Research
-  </a>
-</div>
 
 <!-- ── TODAY'S PULSE + book tape + live events + daily plan ─────────── -->
 <div class="mb-4 space-y-2">
