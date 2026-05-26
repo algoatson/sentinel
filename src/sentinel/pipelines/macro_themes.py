@@ -135,7 +135,10 @@ async def _run() -> None:
         get_llm().complete,
         rendered,
         model="heavy",
-        max_tokens=1200,
+        # Macro themes runs every 4h; output is typically 400-600
+        # tokens. 900 leaves comfortable headroom over the observed
+        # 95th-percentile output length.
+        max_tokens=900,
         fallback_light=True,
     )
     if not _usable(body):

@@ -28,7 +28,10 @@ class AskRequest(BaseModel):
 async def ask(body: AskRequest) -> dict:
     from .. import chat
 
+    # 1100 cap covers the long-form "summarise the book" answer while
+    # being half the previous 1600 default. Tools + pre-built context
+    # carry most of the weight; the model rarely needs more than 600.
     res = await chat.answer_question_with_meta(
-        body.question, max_tokens=1600, use_tools=body.deep,
+        body.question, max_tokens=1100, use_tools=body.deep,
     )
     return res

@@ -156,7 +156,9 @@ async def _run() -> None:
         payload_json=json.dumps(payload, default=str),
     )
     body = await asyncio.to_thread(
-        llm.complete, rendered, model="heavy", max_tokens=1000
+        # Pre-market briefing is a short paragraph — never seen close
+        # to 1000 tokens. 700 trims it without risking a cut-off.
+        llm.complete, rendered, model="heavy", max_tokens=700
     )
     if body == LLM_ERROR_SENTINEL:
         logger.error("briefing: LLM error")

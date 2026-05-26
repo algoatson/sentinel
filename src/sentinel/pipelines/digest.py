@@ -105,7 +105,11 @@ async def _run() -> None:
     tmpl = get_prompt("daily_digest")
     rendered = tmpl.safe_substitute(input_json=json.dumps(payload, default=str))
     body = await asyncio.to_thread(
-        llm.complete, rendered, model="heavy", max_tokens=1500
+        # Digest output runs ~700-900 tokens of dense markdown. 1500
+        # was paying for slack we never used; 1000 still has comfortable
+        # headroom and runs only once a day so the overall impact is
+        # modest — kept for hygiene.
+        llm.complete, rendered, model="heavy", max_tokens=1000
     )
     if body == LLM_ERROR_SENTINEL:
         logger.error("digest: LLM error")

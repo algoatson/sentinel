@@ -65,7 +65,10 @@ def _tag_batch(rows: list[RedditMention]) -> None:
     )
     rendered = tmpl.safe_substitute(numbered_items=numbered)
 
-    raw = llm.complete(rendered, model="light", json_mode=True, max_tokens=2000)
+    # 8-item batches return ~8 small dicts (~40 tokens each). 800 leaves
+    # ~2× headroom and was empirically enough; 2000 was wildly over-spec
+    # and was the single largest avoidable token bill on busy days.
+    raw = llm.complete(rendered, model="light", json_mode=True, max_tokens=600)
     parsed = parse_json_response(raw, expect=list)
     if parsed is None:
         logger.warning("sentiment LLM error or parse failure, marking batch defaults")

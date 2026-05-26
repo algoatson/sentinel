@@ -35,7 +35,12 @@ _COOLDOWN = timedelta(hours=12)
 # Each finding is a heavy-LLM call (~minutes on CPU). Once price history is
 # backfilled, dozens of tickers can align at once — cap per cycle, strongest
 # (most signals) first, so a cycle can't run for hours.
-_MAX_PER_CYCLE = 6
+# Was 6 — trimmed because the top-ranked signals (most distinct
+# triggers firing) are the ones worth LLM-ing; the long tail rarely
+# adds an actionable read and is now skipped under the new tighter
+# token budget. Convergence runs every 30 min, so 4 × 48 = 192
+# max-candidate slots per day is still plenty.
+_MAX_PER_CYCLE = 4
 
 
 CONVERGENCE_PROMPT = Template("""\
@@ -295,8 +300,11 @@ async def _run() -> None:
                 system_prompt=CONV_TOOL_SYSTEM,
                 registry=tool_registry,
                 model="heavy",
-                max_tokens=650,
-                max_iterations=3,
+                # 500/2 mirrors the why_moved trim — one tool call
+                # then commit. Token bill was outsized vs the gain
+                # from a third iteration.
+                max_tokens=500,
+                max_iterations=2,
                 pipeline="convergence",
                 ticker=ticker,
             )
@@ -317,10 +325,11 @@ async def _run() -> None:
             rendered = CONVERGENCE_PROMPT.safe_substitute(
                 payload_json=json.dumps(evidence, default=str)
             )
-            # 650: narrative + CALL + IMPORTANCE — mirrors the why_moved bump
-            # (was 400, sometimes cut off the trailing IMPORTANCE line).
+            # 500 fits the 3-5 sentence narrative + CALL + IMPORTANCE
+            # comfortably (was 650, then 400 before that). Bumped back
+            # down after observing actual outputs sit ~250-350 tokens.
             synthesis = await asyncio.to_thread(
-                llm.complete, rendered, model="heavy", max_tokens=650
+                llm.complete, rendered, model="heavy", max_tokens=500
             )
         if not synthesis or synthesis == LLM_ERROR_SENTINEL:
             logger.error("convergence LLM error on {}", ticker)

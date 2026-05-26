@@ -136,7 +136,10 @@ async def _run_watchlist_movers() -> None:
         mover_json=json.dumps(movers, default=str)
     )
     body = await asyncio.to_thread(
-        llm.complete, rendered, model="heavy", max_tokens=800
+        # Daily end-of-day mover narrative — runs once at 16:15 ET, so
+        # not high frequency, but 800 was generous. 600 fits the typical
+        # 350-500 token output without truncation.
+        llm.complete, rendered, model="heavy", max_tokens=600
     )
     if body == LLM_ERROR_SENTINEL:
         logger.error("movers: LLM error")

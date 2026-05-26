@@ -347,7 +347,10 @@ async def _run() -> None:
         snapshot_json=json.dumps(snapshot, default=str)
     )
     body = await asyncio.to_thread(
-        llm.complete, rendered, model="heavy", max_tokens=2000,
+        # Synthesis output is typically 600-1200 tokens of cross-asset
+        # narrative; 2000 was leaving ~40% unused. 1300 leaves headroom
+        # for the longest legitimate outputs without paying for slack.
+        llm.complete, rendered, model="heavy", max_tokens=1300,
         fallback_light=True,
     )
     if not body or body == LLM_ERROR_SENTINEL:

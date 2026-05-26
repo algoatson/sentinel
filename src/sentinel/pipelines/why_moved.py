@@ -480,8 +480,11 @@ async def _run() -> None:
                 system_prompt=WHY_TOOL_SYSTEM,
                 registry=tool_registry,
                 model="heavy",
-                max_tokens=700,
-                max_iterations=3,
+                # 500/2: one tool call + a final answer is enough for
+                # most thin-coverage hits; was 700/3 which was burning
+                # ~50% more tokens for marginal additional accuracy.
+                max_tokens=500,
+                max_iterations=2,
                 pipeline="why_moved",
                 ticker=ticker,
             )
@@ -509,8 +512,12 @@ async def _run() -> None:
             # uses heavy. 800 tokens leaves headroom for narrative + CALL +
             # IMPORTANCE on thin-coverage hits where the model wants to
             # explain what it couldn't find.
+            # Pre-emptive enrichment (ATR / move-vs-ATR / bars_7d /
+            # benchmarks / peers) now covers what 800 tokens used to
+            # need slack for. 600 fits the 3-5 sentence narrative +
+            # optional CALL + IMPORTANCE line comfortably.
             body = await asyncio.to_thread(
-                llm.complete, rendered, model="heavy", max_tokens=800,
+                llm.complete, rendered, model="heavy", max_tokens=600,
                 fallback_light=True,
             )
         if not body or body == LLM_ERROR_SENTINEL:

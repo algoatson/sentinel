@@ -130,7 +130,9 @@ async def _run() -> None:
     tmpl = get_prompt("social_pulse")
     rendered = tmpl.safe_substitute(spike_data_json=json.dumps(spikes))
     text = await asyncio.to_thread(
-        llm.complete, rendered, model="heavy", max_tokens=600
+        # Social-pulse output is 200-400 tokens of bullet-y summary.
+        # 400 trims off generous padding without risking truncation.
+        llm.complete, rendered, model="heavy", max_tokens=400
     )
     if text == LLM_ERROR_SENTINEL:
         logger.error("social pulse LLM error")

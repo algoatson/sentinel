@@ -1427,14 +1427,19 @@ async def answer_question(
                 "question + pre-built context are below. You have tools "
                 "to pull chart bars, ATR, peer movers, news, filings, "
                 "correlation, microstructure, and the current book — "
-                "use them when the context doesn't already answer the "
-                "question. After at most a couple of calls, write the "
-                "answer in markdown. Don't repeat the question."
+                "use them ONLY when the context doesn't already answer "
+                "the question. Be terse. After at most one tool call "
+                "OR zero, write the answer in markdown. Don't repeat "
+                "the question."
             ),
             registry=default_registry(),
-            model="heavy",
-            max_tokens=max_tokens,
-            max_iterations=3,
+            # Most copilot answers fit in 800 tokens; 1600 was a hold-
+            # over from the v1 chat which had no tools. The tool path
+            # itself bills the *input* heavily as each iteration's
+            # transcript grows, so capping the per-iteration cap is
+            # where the actual savings live.
+            max_tokens=min(max_tokens, 900),
+            max_iterations=2,
             pipeline="copilot",
             ticker=ticker_hint,
         )
