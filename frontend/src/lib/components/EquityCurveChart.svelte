@@ -160,48 +160,11 @@
       });
       api.setData(data);
 
-      // Cluster trade markers per UTC day so a busy session doesn't
-      // paint a wall of overlapping dots on one line. Each daily
-      // cluster is one marker: net-PnL-coloured, labelled with the
-      // tickers (truncated). lightweight-charts requires monotonic
-      // time order so we anchor each cluster at noon UTC of its day
-      // (one unique time per day).
-      type DayBucket = {
-        pnl: number;
-        tickers: string[];
-        count: number;
-      };
-      const byDay = new Map<string, DayBucket>();
-      for (const t of s.trades || []) {
-        const day = new Date(t.ts).toISOString().slice(0, 10);
-        const bucket = byDay.get(day) ?? { pnl: 0, tickers: [], count: 0 };
-        bucket.pnl += t.pnl ?? 0;
-        if (!bucket.tickers.includes(t.ticker)) bucket.tickers.push(t.ticker);
-        bucket.count += 1;
-        byDay.set(day, bucket);
-      }
-      const trades = Array.from(byDay.entries())
-        .map(([day, b]) => {
-          // Anchor at 12:00 UTC of the day so the marker sits cleanly
-          // on the daily equity tick around the same time.
-          const ts = Math.floor(new Date(day + 'T12:00:00Z').getTime() / 1000);
-          const label =
-            b.tickers.length === 1
-              ? b.tickers[0]
-              : b.count > 1
-                ? `${b.tickers.slice(0, 2).join(',')}${b.count > 2 ? '+' + (b.count - 2) : ''}`
-                : b.tickers[0];
-          return {
-            time: ts as unknown as Time,
-            position: (b.pnl >= 0 ? 'aboveBar' : 'belowBar') as
-              'aboveBar' | 'belowBar',
-            color: b.pnl >= 0 ? '#3ddc97' : '#ff6b6b',
-            shape: 'circle' as const,
-            text: label,
-          };
-        })
-        .sort((a, b) => (a.time as number) - (b.time as number));
-      if (trades.length) api.setMarkers(trades);
+      // (Per-fund trade markers were tried — clustering them per UTC
+      // day landed every fund's daily marker at the same x, which
+      // stacked on or near the same y on flat / closely-tracked lines
+      // and was genuinely worse than no markers. Removed. The
+      // /journal page is where per-trade detail lives now.)
 
       lineSeries.push({
         name: s.fund,
