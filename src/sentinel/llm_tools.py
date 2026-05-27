@@ -213,6 +213,12 @@ def tool_loop(
     schemas = registry.openai_schemas()
     all_calls: list[dict] = []
     iterations = 0
+    # Within-loop result cache. Some models repeat the same tool call
+    # across iterations (e.g. asks `get_atr` twice while reasoning) —
+    # we return the prior result without re-executing or paying for a
+    # duplicate result-string in the conversation context. Key is
+    # (tool_name, canonical-json-args). Cleared at loop end.
+    result_cache: dict[str, str] = {}
 
     while iterations < max_iterations:
         iterations += 1
@@ -304,6 +310,35 @@ def tool_loop(
                 })
                 continue
             tool = registry._tools.get(name)
+            # Canonical-form key so the same call with reordered keys
+            # or whitespace variants still hits the cache.
+            try:
+                cache_key = name + "|" + json.dumps(args, sort_keys=True, default=str)
+            except (TypeError, ValueError):
+                cache_key = name + "|" + str(args)
+            cached = result_cache.get(cache_key)
+            if cached is not None:
+                # Skip dispatch; reuse the prior rendered result. We
+                # still log the call (telemetry should reflect what the
+                # model *asked* for, not what actually executed) but
+                # mark it cached + zero-cost.
+                all_calls.append(
+                    {"name": name, "arguments": args,
+                     "result": "_cached_", "iteration": iterations,
+                     "cached": True}
+                )
+                llm_tool_log.record(
+                    pipeline=pipeline, tool=name, arguments=args,
+                    result={"cached": True}, ticker=ticker,
+                    iteration=iterations, took_ms=0.0,
+                )
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": c["id"] or f"call_{iterations}",
+                    "name": name,
+                    "content": cached,
+                })
+                continue
             t0 = time.monotonic()
             result = registry.call(name, args)
             took_ms = (time.monotonic() - t0) * 1000
@@ -321,14 +356,16 @@ def tool_loop(
                 iteration=iterations,
                 took_ms=took_ms,
             )
+            rendered = _stringify(
+                result,
+                as_json=tool.json_result if tool else True,
+            )
+            result_cache[cache_key] = rendered
             messages.append({
                 "role": "tool",
                 "tool_call_id": c["id"] or f"call_{iterations}",
                 "name": name,
-                "content": _stringify(
-                    result,
-                    as_json=tool.json_result if tool else True,
-                ),
+                "content": rendered,
             })
 
     # Iteration cap reached without a plain-text answer. Try one last

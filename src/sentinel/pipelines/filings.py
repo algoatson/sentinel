@@ -44,6 +44,15 @@ from .enrich import EnrichmentContext, enrich
 # only a ceiling).
 _FILINGS_LLM_MAX_TOKENS = 1500
 
+# Pre-LLM triage: we feed the first N chars of the raw doc to the
+# materiality scorer BEFORE generating the expensive summary. Filings
+# scored < 2 here never post (see _route) so the summary would be
+# wasted tokens. 3000 chars ≈ ~750 tokens — enough context for the
+# scorer to judge form-type + key paragraphs without paying full
+# summary cost. Filings that score >= 2 still get the full summary.
+_TRIAGE_EXCERPT_CHARS = 3000
+_TRIAGE_SUMMARY_PLACEHOLDER_PREFIX = "[EXCERPT]"
+
 
 FORM_TYPE_MAPPING: dict[str, tuple[str, str]] = {
     "8-K": ("summarize_8k", "light"),
@@ -242,14 +251,6 @@ async def _process_filing(client: EdgarClient, llm, meta: FilingMeta) -> bool:
         )
         return False
 
-    prompt_name, model = _select_prompt_and_model(meta.form_type)
-    tmpl = get_prompt(prompt_name)
-    rendered = tmpl.safe_substitute(text=doc_text)
-    summary = await asyncio.to_thread(
-        llm.complete, rendered, model=model,
-        max_tokens=_FILINGS_LLM_MAX_TOKENS,
-    )
-
     filing_obj = Filing(
         cik=meta.cik,
         ticker=meta.ticker,
@@ -259,17 +260,86 @@ async def _process_filing(client: EdgarClient, llm, meta: FilingMeta) -> bool:
         primary_doc_url=meta.primary_doc_url,
     )
 
+    # ── Triage pass: score on a raw-doc excerpt first.
+    # _route() only posts filings with score ≥ 2 (insiders) or
+    # score ∈ {2, 3} (regular). Score 0/1 filings used to incur a
+    # full 1500-token summary that was then thrown away. Now we
+    # score the excerpt cheaply and only generate the summary when
+    # the filing might actually post.
+    excerpt = (doc_text or "")[:_TRIAGE_EXCERPT_CHARS]
+    triage_input = (
+        f"{_TRIAGE_SUMMARY_PLACEHOLDER_PREFIX} "
+        f"(first {len(excerpt)} chars of raw filing) "
+        f"{excerpt}"
+    )
+    context = enrich(filing_obj)
+    triage_score, triage_reason = await asyncio.to_thread(
+        _score_materiality_sync,
+        meta.form_type,
+        meta.ticker,
+        triage_input,
+        context,
+    )
+
+    if triage_score is None:
+        logger.warning(
+            "triage scorer failed on {} ({}) — falling back to full path",
+            meta.accession_number, meta.form_type,
+        )
+        # On triage failure we still want to capture the filing rather
+        # than drop it silently. Fall through to the full summary +
+        # rescoring flow below.
+        triage_score = -1
+
+    if 0 <= triage_score < 2:
+        # Skip the expensive summary — this filing won't post anyway.
+        # We persist with summary=None and the triage score so the
+        # row exists for audit (TodayPulse counts, holdings news,
+        # etc. still work; consumers already guard against None).
+        filing_obj.summary = None
+        filing_obj.materiality_score = triage_score
+        filing_obj.materiality_reason = triage_reason
+        with session_scope() as session:
+            session.add(filing_obj)
+        logger.debug(
+            "filings triage: skip summary on {} {} (score {})",
+            meta.form_type, meta.accession_number, triage_score,
+        )
+        return False
+
+    # Triage said this might be material — generate the full summary,
+    # then re-score with the proper summary to get the better-tuned
+    # reason text and final score (the triage score informed *whether*
+    # to summarise, not the final number).
+    prompt_name, model = _select_prompt_and_model(meta.form_type)
+    tmpl = get_prompt(prompt_name)
+    rendered = tmpl.safe_substitute(text=doc_text)
+    summary = await asyncio.to_thread(
+        llm.complete, rendered, model=model,
+        max_tokens=_FILINGS_LLM_MAX_TOKENS,
+    )
+
     if summary == LLM_ERROR_SENTINEL:
         logger.error("LLM error on {}", meta.accession_number)
+        # Fall back to the triage score + a synthetic reason so the
+        # filing still has *something* if routing tries to post it.
         filing_obj.summary = None
+        filing_obj.materiality_score = (
+            triage_score if triage_score >= 0 else None
+        )
+        filing_obj.materiality_reason = (
+            (triage_reason + " (summary failed)") if triage_reason
+            else None
+        )
         with session_scope() as session:
             session.add(filing_obj)
         return False
 
     filing_obj.summary = summary
 
-    # Enrich (pure DB) + score (LLM, async-wrapped).
-    context = enrich(filing_obj)
+    # Re-score with the actual summary — this is the authoritative
+    # score that drives routing + downstream displays. Same scorer,
+    # same prompt, just better input.
     score, reason = await asyncio.to_thread(
         _score_materiality_sync,
         meta.form_type,
@@ -277,8 +347,12 @@ async def _process_filing(client: EdgarClient, llm, meta: FilingMeta) -> bool:
         summary,
         context,
     )
-    filing_obj.materiality_score = score
-    filing_obj.materiality_reason = reason
+    filing_obj.materiality_score = (
+        score if score is not None else triage_score
+    )
+    filing_obj.materiality_reason = (
+        reason if reason is not None else triage_reason
+    )
 
     channel_id, channel_name = _route(meta.form_type, score)
     posted = False
