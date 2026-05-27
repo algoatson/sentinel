@@ -58,7 +58,10 @@ def run() -> dict:
             for c in calls:
                 if len(created_ids) >= _MAX_PER_RUN:
                     break
-                # Dedup: existing active thesis on same ticker + direction?
+                # Dedup 1: an active thesis on this (ticker, direction)
+                # already covers the position. Skip — even if the
+                # triggering call is different, we don't want two live
+                # theses on the same view.
                 dup = s.exec(
                     select(Thesis)
                     .where(Thesis.ticker == c.ticker)
@@ -67,6 +70,21 @@ def run() -> dict:
                     .limit(1)
                 ).first()
                 if dup is not None:
+                    skipped_dup += 1
+                    continue
+                # Dedup 2: this call has already been promoted to a
+                # thesis at some point — *regardless of current state*.
+                # Without this, a thesis that was invalidated mid-week
+                # would be re-created from the same call on the next
+                # sweep (the call's still in the 12h lookback), which
+                # both pollutes the timeline and erases the prior
+                # invalidation as a signal.
+                from_this_call = s.exec(
+                    select(Thesis)
+                    .where(Thesis.source_event == f"auto-from-call:{c.id}")
+                    .limit(1)
+                ).first()
+                if from_this_call is not None:
                     skipped_dup += 1
                     continue
 

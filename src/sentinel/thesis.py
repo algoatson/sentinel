@@ -119,37 +119,6 @@ Rules:
 """)
 
 
-_LINK_LLM_PROMPT = Template("""\
-You are the linker. One new event has arrived; given the active
-theses below, identify which (if any) are MATERIALLY affected and
-classify the impact as `supports`, `challenges`, or `neutral`.
-
-NEW EVENT:
-$event_json
-
-ACTIVE THESES (only return entries for theses this event materially
-relates to — skip the rest):
-$theses_json
-
-OUTPUT — strict JSON list, no fences:
-
-[
-  {
-    "thesis_id": 7,
-    "impact": "supports|challenges|neutral",
-    "rationale": "1 sentence — why this event bears on the thesis"
-  }
-]
-
-Rules:
-- Only include theses where the connection is concrete and material.
-  A new earnings beat is material for the company's thesis; a generic
-  macro headline usually isn't.
-- "neutral" is reserved for "directly relevant but doesn't move the
-  needle either way" — not "I'm unsure". When unsure, omit the entry.
-""")
-
-
 # ── helpers ───────────────────────────────────────────────────────────────
 
 
@@ -311,18 +280,85 @@ def _impact_for_news(news: NewsItem, thesis: Thesis) -> tuple[str, str]:
 
 
 def _impact_for_filing(filing: Filing, thesis: Thesis) -> tuple[str, str]:
-    """Materiality + filing-type heuristic. Form 8-K with materiality
-    score >= 7 reads as a substantive event whose direction the LLM
-    digest will have hinted at via the summary (no further LLM here —
-    impact-on-direction is left as `neutral` since the linker is
-    cheap-by-design). User can read the filing summary in the modal
-    if they want to judge the direction themselves."""
+    """Materiality + filing-type heuristic on the actual 0-3
+    materiality scale (was 0-10 before a scorer refactor; the old
+    >=7 / >=4 branches were unreachable and every filing tagged
+    'neutral' → filings never moved the supports/challenges ratio).
+
+    Directional inference (cheap, no LLM):
+      * Form 4 BUY / "purchase" / "acquired" → bullish (supports long,
+        challenges short).
+      * Form 4 SELL / "disposed" → bearish (challenges long, supports
+        short). Routine 10b5-1 plan sales are tagged in the summary
+        and treated as neutral (the prefix is the existing convention
+        the summariser uses).
+      * 10-K / 10-Q / 8-K with score >= 2 and a clear "beat" / "raised
+        guidance" tone → bullish; "miss" / "cut guidance" / "going
+        concern" → bearish.
+      * Everything else stays neutral with a tiered rationale —
+        materiality 3 = "material", 2 = "notable", else "routine"."""
+    form = (filing.form_type or "").upper()
     score = filing.materiality_score or 0
-    if score >= 7:
-        return ("neutral", f"material {filing.form_type} (score {score}/10)")
-    if score >= 4:
-        return ("neutral", f"{filing.form_type} (score {score}/10)")
-    return ("neutral", f"{filing.form_type}")
+    summary = (filing.summary or "").lower()
+
+    # ── Form 4 directional inference ─────────────────────────────────
+    if form.startswith("4"):
+        is_buy = any(t in summary for t in (
+            "purchase", "purchased", "buy ", "acquired", "open market buy",
+        ))
+        is_sell = any(t in summary for t in (
+            "sale", "sold", "disposed", "sell ",
+        ))
+        is_planned = "10b5-1" in summary or "rule 10b5" in summary
+        if is_planned:
+            return ("neutral", "Form 4 10b5-1 planned trade — scheduled, not directional")
+        if is_buy and not is_sell:
+            if thesis.direction == "long":
+                return ("supports", "insider purchase aligns with the long thesis")
+            if thesis.direction == "short":
+                return ("challenges", "insider purchase against the short thesis")
+        if is_sell and not is_buy:
+            if thesis.direction == "long":
+                return ("challenges", "insider sale against the long thesis")
+            if thesis.direction == "short":
+                return ("supports", "insider sale aligns with the short thesis")
+        return ("neutral", "Form 4 — direction unclear from summary")
+
+    # ── 8-K / 10-Q / 10-K directional sniff ──────────────────────────
+    if score >= 2 and form in ("8-K", "8-K/A", "10-Q", "10-Q/A", "10-K", "10-K/A"):
+        bullish_hits = sum(
+            1 for t in (
+                "beat", "raised guidance", "raise guidance",
+                "exceeded", "above consensus", "record revenue", "buyback",
+                "dividend increase", "acquisition target",
+            )
+            if t in summary
+        )
+        bearish_hits = sum(
+            1 for t in (
+                "miss", "missed", "cut guidance", "below consensus",
+                "going concern", "restatement", "restated", "fraud",
+                "investigation", "subpoena", "dilut", "secondary offering",
+            )
+            if t in summary
+        )
+        if bullish_hits > bearish_hits:
+            if thesis.direction == "long":
+                return ("supports", f"{form} reads bullish — supports the long thesis")
+            if thesis.direction == "short":
+                return ("challenges", f"{form} reads bullish — challenges the short thesis")
+        elif bearish_hits > bullish_hits:
+            if thesis.direction == "long":
+                return ("challenges", f"{form} reads bearish — challenges the long thesis")
+            if thesis.direction == "short":
+                return ("supports", f"{form} reads bearish — supports the short thesis")
+
+    # ── Tiered neutral fallback ─────────────────────────────────────
+    if score >= 3:
+        return ("neutral", f"material {form} (score 3/3) — direction unclear")
+    if score >= 2:
+        return ("neutral", f"notable {form} (score 2/3) — direction unclear")
+    return ("neutral", f"{form} (routine)")
 
 
 def link_news(news_id: int) -> int:
