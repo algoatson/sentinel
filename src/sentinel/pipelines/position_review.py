@@ -235,35 +235,50 @@ def _build_position_payload(
 def _persist_verdicts(verdicts: list[dict], now: datetime) -> None:
     """Append the verdict line to FundTrade.notes, record a narrative
     event (tier 2 so it floats up alongside convergence on /book), and
-    publish an SSE event so the dashboard can flash a banner."""
+    publish an SSE event so the dashboard can flash a banner.
+
+    Only the LLM-actioned verdicts (trim/close/flag — and gate-fired
+    holds) get persisted. Auto-holds — the "nothing material since
+    entry" rows — are noise after the first day: they'd stack up as
+    duplicate lines on the trade notes and the ticker timeline with
+    no new information. They still flow through the SSE payload so
+    the dashboard banner shows the full picture.
+    """
     if not verdicts:
         return
-    stamp = now.strftime("%Y-%m-%d")
-    with session_scope() as s:
-        for v in verdicts:
-            t = s.get(FundTrade, v["trade_id"])
-            if t is None:
-                continue
-            verdict = v.get("verdict", "?")
-            reason = (v.get("reason") or "").strip()[:240]
-            line = f"\n[{stamp} morning review · {verdict.upper()}]\n{reason}"
-            t.notes = ((t.notes or "") + line)[:2000]
-            s.add(t)
 
-    try:
-        from ..narrative import record_event
-        for v in verdicts:
-            t = v.get("ticker")
-            if not t:
-                continue
-            record_event(
-                t,
-                "position_review",
-                f"{v.get('verdict', '?').upper()}: {(v.get('reason') or '')[:140]}",
-                tier=2,
-            )
-    except Exception as e:
-        logger.debug("position_review record_event failed: {}", e)
+    actionable = [v for v in verdicts if v.get("verdict") != "hold" or v.get("reason") != "nothing material since entry"]
+
+    stamp = now.strftime("%Y-%m-%d")
+    if actionable:
+        with session_scope() as s:
+            for v in actionable:
+                t = s.get(FundTrade, v["trade_id"])
+                if t is None:
+                    continue
+                verdict = v.get("verdict", "?")
+                reason = (v.get("reason") or "").strip()[:240]
+                line = f"\n[{stamp} morning review · {verdict.upper()}]\n{reason}"
+                combined = (t.notes or "") + line
+                # Keep the most-recent 2000 chars — naïve [:2000]
+                # would truncate the new entry once history piles up.
+                t.notes = combined[-2000:] if len(combined) > 2000 else combined
+                s.add(t)
+
+        try:
+            from ..narrative import record_event
+            for v in actionable:
+                t = v.get("ticker")
+                if not t:
+                    continue
+                record_event(
+                    t,
+                    "position_review",
+                    f"{v.get('verdict', '?').upper()}: {(v.get('reason') or '')[:140]}",
+                    tier=2,
+                )
+        except Exception as e:
+            logger.debug("position_review record_event failed: {}", e)
 
     try:
         from .. import events

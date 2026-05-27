@@ -788,6 +788,7 @@ def review_cycle() -> dict:
     """
     now = _now()
     validated = invalidated = matured = 0
+    transitions: list[tuple[str, str | None, str, str | None]] = []
     with session_scope() as s:
         active = s.exec(
             select(Thesis).where(Thesis.state == "active")
@@ -872,12 +873,45 @@ def review_cycle() -> dict:
                 t.close_reason = close_reason
                 t.updated_at = now
                 s.add(t)
+                transitions.append((t.ticker, t.direction, close_state, close_reason))
                 if close_state == "validated":
                     validated += 1
                 elif close_state == "invalidated":
                     invalidated += 1
                 elif close_state == "matured":
                     matured += 1
+
+    # Cross-pollination: tell the rest of the system a thesis just
+    # changed state. Without these emits the transition was silent —
+    # synthesis, book_risk, and the dashboard had no way to learn that
+    # the active stance on $X just flipped. Tier 2 so a coincident
+    # filing / why_moved on the same ticker still supersedes (those
+    # are the actual moves driving the invalidation).
+    if transitions:
+        try:
+            from .narrative import record_event
+            for tk, direction, state, reason in transitions:
+                headline = (
+                    f"thesis {state}"
+                    + (f" ({direction})" if direction in ("long", "short") else "")
+                )
+                record_event(
+                    tk, "thesis_state", headline,
+                    tier=2, detail=(reason or "")[:1200],
+                )
+        except Exception as e:
+            logger.debug("thesis.review_cycle: narrative emit failed: {}", e)
+        try:
+            from . import events as _ev
+            for tk, direction, state, reason in transitions:
+                _ev.publish("thesis", {
+                    "kind": f"thesis_{state}",
+                    "ticker": tk,
+                    "direction": direction,
+                    "summary": reason or state,
+                })
+        except Exception:
+            pass
 
     if validated or invalidated or matured:
         logger.info(
