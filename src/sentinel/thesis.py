@@ -44,6 +44,7 @@ from .models import (
     FundTrade,
     NewsItem,
     PaperTrade,
+    PriceBar,
     PriceContext,
     Thesis,
     ThesisEvent,
@@ -65,6 +66,16 @@ _MAX_ACTIVE = 12
 # so a single bad headline doesn't kill an otherwise-warm thesis.
 _INVALIDATE_CHALLENGE_RATIO = 3.0
 _INVALIDATE_MIN_EVENTS = 4
+# Percent-move-against-direction that auto-invalidates a thesis on the
+# next review_cycle. Matches the default `invalidation_criteria` text
+# auto_thesis writes (">5% against the thesis for 2 sessions") with
+# some slack for intraday noise — we don't track session-by-session
+# closes, so a single ≥10% adverse mark is treated as definitive.
+_INVALIDATE_ADVERSE_PCT = 0.10
+# How far back to look for the price-at-creation bar. Theses generated
+# midweek with a Friday review on a fresh ticker should still find a
+# pre-creation bar within this window.
+_PRICE_LOOKUP_WINDOW_DAYS = 14
 
 # Below this many days from target, we ask the LLM to consider whether
 # the thesis is on track — used by the review prompt context.
@@ -741,13 +752,36 @@ def _parse_generator_output(raw: str) -> dict | None:
 # ── review (rule-based, daily-ish) ────────────────────────────────────────
 
 
+def _price_at_or_before(session, ticker: str, when: datetime) -> float | None:
+    """Closest PriceBar at or before `when` within
+    ``_PRICE_LOOKUP_WINDOW_DAYS``. Used to anchor the price-based
+    invalidation against the actual price when the thesis was opened,
+    not against the live mark at review time."""
+    when_naive = when.replace(tzinfo=None) if when.tzinfo else when
+    floor = when_naive - timedelta(days=_PRICE_LOOKUP_WINDOW_DAYS)
+    bar = session.exec(
+        select(PriceBar)
+        .where(PriceBar.ticker == ticker)
+        .where(PriceBar.ts <= when_naive)
+        .where(PriceBar.ts >= floor)
+        .order_by(PriceBar.ts.desc())
+        .limit(1)
+    ).first()
+    return bar.close if bar is not None else None
+
+
 def review_cycle() -> dict:
     """Walk active theses, apply state transitions based on accumulated
     events + price moves. Pure rules; LLM-free; cheap.
 
-    Transitions implemented in this v1:
+    Transitions implemented:
     - target_price hit (long → last_price ≥ target; short → last_price
       ≤ target) → state=`validated`
+    - last_price has moved ≥ ``_INVALIDATE_ADVERSE_PCT`` against the
+      thesis direction since creation → state=`invalidated`
+      (matches the default invalidation_criteria text auto_thesis
+      writes; was missing as actual logic, so a thesis going 30%
+      adverse just sat until events or horizon caught it)
     - challenge ratio ≥ `_INVALIDATE_CHALLENGE_RATIO` and total events
       ≥ `_INVALIDATE_MIN_EVENTS` → state=`invalidated`
     - horizon_days elapsed without invalidation → state=`matured`
@@ -762,22 +796,44 @@ def review_cycle() -> dict:
             close_state: str | None = None
             close_reason: str | None = None
 
+            # Look up current mark once per thesis — used by both
+            # target-hit and adverse-move checks below.
+            pc = s.get(PriceContext, t.ticker)
+            last = pc.last_price if pc else None
+
             # Target hit?
-            if t.target_price and t.target_price > 0:
-                pc = s.get(PriceContext, t.ticker)
-                last = pc.last_price if pc else None
-                if last is not None:
-                    if t.direction == "long" and last >= t.target_price:
-                        close_state = "validated"
+            if t.target_price and t.target_price > 0 and last is not None:
+                if t.direction == "long" and last >= t.target_price:
+                    close_state = "validated"
+                    close_reason = (
+                        f"target ${t.target_price:.4g} hit "
+                        f"(last ${last:.4g})"
+                    )
+                elif t.direction == "short" and last <= t.target_price:
+                    close_state = "validated"
+                    close_reason = (
+                        f"target ${t.target_price:.4g} hit "
+                        f"(last ${last:.4g})"
+                    )
+
+            # Price-based invalidation: hard adverse move from creation.
+            # Anchors against the price bar at thesis open (not the
+            # live mark) so a thesis that ran up and reverted only
+            # invalidates when actually underwater from inception.
+            # Neutral-direction theses can't auto-invalidate this way —
+            # no direction to be adverse to.
+            if close_state is None and last is not None and t.direction in ("long", "short"):
+                anchor = _price_at_or_before(s, t.ticker, _aware(t.created_at))
+                if anchor and anchor > 0:
+                    move = (last - anchor) / anchor
+                    adverse = -move if t.direction == "long" else move
+                    if adverse >= _INVALIDATE_ADVERSE_PCT:
+                        close_state = "invalidated"
                         close_reason = (
-                            f"target ${t.target_price:.4g} hit "
-                            f"(last ${last:.4g})"
-                        )
-                    elif t.direction == "short" and last <= t.target_price:
-                        close_state = "validated"
-                        close_reason = (
-                            f"target ${t.target_price:.4g} hit "
-                            f"(last ${last:.4g})"
+                            f"{t.direction} ${t.ticker} moved "
+                            f"{move * 100:+.1f}% from ${anchor:.4g} "
+                            f"(open) to ${last:.4g} — adverse "
+                            f"≥ {_INVALIDATE_ADVERSE_PCT * 100:.0f}%"
                         )
 
             # Decisive challenge accumulation
