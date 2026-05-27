@@ -862,6 +862,15 @@ export const putDailyPlan = (body: string) =>
     return r.json() as Promise<DailyPlan>;
   });
 
+export interface BriefingToday {
+  brief_date: string | null;
+  body: string;
+  importance: number | null;
+  importance_reason: string | null;
+  generated_at: string | null;
+}
+export const briefingToday = () => get<BriefingToday>('/briefing/today');
+
 export interface TradeLifecycle {
   trade: {
     id: number;

@@ -25,7 +25,7 @@ from .. import discord_client
 from ..config import settings
 from ..db import session_scope
 from ..llm import LLM_ERROR_SENTINEL, get_llm
-from ..models import Filing, HnMention, PriceContext, SocialPulse
+from ..models import Briefing, DailyPlan, Filing, HnMention, PriceContext, SocialPulse
 
 
 _ET = ZoneInfo("America/New_York")
@@ -46,6 +46,14 @@ pre-market brief that actually takes positions, not a neutral wire.
    HN/Reddit chatter, sector rotation, crypto/rates). Use $TICKER form.
 3. "Game plan today" — 2-4 specific names with a direction/lean, the
    trigger or level, and what invalidates it. Commit to a view.
+
+If `user_plan` is present in the payload, that's the user's own stance
+for the day ("watching NVDA into earnings, no new shorts this week" or
+similar). Anchor your read against it:
+  - Confirm or push back on the names they're watching with the evidence.
+  - Surface anything they DIDN'T mention that contradicts or amplifies
+    their stance.
+  - Don't quote the plan back at them — read with it in mind.
 
 Rules:
 - No bullet points. No hedging filler. State conviction; put risk in a
@@ -123,6 +131,15 @@ async def _run() -> None:
             reverse=True,
         )[:8]
 
+        # User's morning stance (the DailyPlan scratchpad). When set,
+        # we feed it into the LLM payload so the brief reads against
+        # the user's intent — confirms or pushes back on their names,
+        # surfaces overnight signal they didn't mention. The dashboard
+        # already keys DailyPlan by UTC date so we match that here.
+        utc_today = datetime.now(timezone.utc).date()
+        plan_row = session.get(DailyPlan, utc_today)
+        user_plan_body = (plan_row.body or "").strip() if plan_row else ""
+
     payload = {
         "filings": [
             {
@@ -150,6 +167,9 @@ async def _run() -> None:
         logger.info("briefing: quiet overnight, sending quiet note")
         payload["note"] = "quiet"
 
+    if user_plan_body:
+        payload["user_plan"] = user_plan_body[:1200]
+
     llm = get_llm()
     rendered = BRIEFING_PROMPT.safe_substitute(
         today=today_et.isoformat(),
@@ -167,6 +187,34 @@ async def _run() -> None:
     from ..llm import parse_trailing_importance
 
     body, level, why = parse_trailing_importance(body)
+
+    # Persist the briefing body before posting — even if Discord is
+    # down or rate-limited, the dashboard still gets the morning
+    # read. Upserted by ET date so a re-run on the same day just
+    # overwrites (briefing isn't expected to fire twice on a
+    # trading day, but the misfire_grace_time on the scheduler
+    # could in theory cause a near-immediate retry).
+    now_utc = datetime.now(timezone.utc)
+    try:
+        with session_scope() as session:
+            row = session.get(Briefing, today_et)
+            if row is None:
+                session.add(Briefing(
+                    brief_date=today_et,
+                    body=body,
+                    importance=level,
+                    importance_reason=(why or None) and why[:200],
+                    generated_at=now_utc,
+                ))
+            else:
+                row.body = body
+                row.importance = level
+                row.importance_reason = (why or None) and why[:200]
+                row.generated_at = now_utc
+                session.add(row)
+    except Exception as e:
+        logger.warning("briefing: persist failed: {}", e)
+
     embed = discord.Embed(
         title=f"🌅 Pre-market briefing — {today_et.isoformat()}",
         description=body[:4000],

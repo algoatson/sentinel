@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ..db import session_scope
-from ..models import DailyPlan
+from ..models import Briefing, DailyPlan
 
 
 router = APIRouter()
@@ -95,3 +95,40 @@ def _upsert(d: date, body_text: str) -> dict:
              else p.updated_at.replace(tzinfo=timezone.utc)).isoformat()
         )
     return {"plan_date": d.isoformat(), "body": text, "updated_at": updated_iso}
+
+
+@router.get("/briefing/today")
+def briefing_today() -> dict:
+    """Most-recent pre-market briefing body (today's, or yesterday's
+    if today's run hasn't happened yet — useful when the dashboard
+    loads pre-08:30 ET or on a weekend). Empty body means the
+    pipeline hasn't produced one yet."""
+    from datetime import date as _date  # avoid shadowing
+    from sqlmodel import select as _select
+    today_et_iso: str | None = None
+    with session_scope() as s:
+        # Pick the latest row regardless of date — the dashboard
+        # surfacing should show the most recent briefing the user
+        # cares about (yesterday's on a weekend, today's on a
+        # market morning).
+        row = s.exec(
+            _select(Briefing).order_by(Briefing.brief_date.desc()).limit(1)
+        ).first()
+        if row is None:
+            return {
+                "brief_date": None,
+                "body": "",
+                "importance": None,
+                "importance_reason": None,
+                "generated_at": None,
+            }
+        return {
+            "brief_date": row.brief_date.isoformat(),
+            "body": row.body,
+            "importance": row.importance,
+            "importance_reason": row.importance_reason,
+            "generated_at": (
+                row.generated_at if row.generated_at.tzinfo
+                else row.generated_at.replace(tzinfo=timezone.utc)
+            ).isoformat(),
+        }

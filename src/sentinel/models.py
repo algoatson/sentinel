@@ -527,3 +527,20 @@ class DailyPlan(SQLModel, table=True):
     plan_date: date = Field(primary_key=True)
     body: str = Field(default="", max_length=4000)
     updated_at: datetime
+
+
+class Briefing(SQLModel, table=True):
+    """Pre-market briefing output — one row per ET trading day, upserted
+    when the briefing pipeline runs at 08:30 ET. Stored so the dashboard
+    can render the body next to the user's DailyPlan without re-running
+    the LLM (and so a user opening the dashboard at 11am still sees
+    the morning read instead of an empty card).
+
+    `importance` and `importance_reason` are parsed off the same
+    trailing-IMPORTANCE line that the Discord post uses, so the
+    dashboard can render the same urgency badge."""
+    brief_date: date = Field(primary_key=True)
+    body: str
+    importance: Optional[int] = Field(default=None)
+    importance_reason: Optional[str] = Field(default=None, max_length=200)
+    generated_at: datetime
