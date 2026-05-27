@@ -64,9 +64,28 @@ async def run_synthesis_cycle() -> None:
 
 def _build_snapshot() -> dict:
     from ..portfolio import held_tickers, open_positions
+    from ..funds import open_positions_all
 
+    # Union of both books for the LLM payload — the legacy paper book
+    # AND the autonomous fund book. Previously synthesis only saw
+    # PaperTrade, so the cross-asset narrative had no idea what the
+    # autonomous funds were actually holding.
     held = held_tickers()
-    positions = open_positions()
+    paper = open_positions()
+    fund_positions = [
+        {
+            "ticker": p["ticker"],
+            "side": p["side"],
+            "qty": p["qty"],
+            "entry": p["entry"],
+            "mark": p.get("mark"),
+            "pnl": p.get("upnl"),
+            "pnl_pct": p.get("upnl_pct"),
+            "fund": p.get("fund"),
+        }
+        for p in open_positions_all()
+    ]
+    positions = paper + fund_positions
     now = datetime.now(timezone.utc)
     cut_24h = now - timedelta(hours=24)
 

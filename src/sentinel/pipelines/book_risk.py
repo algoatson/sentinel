@@ -92,13 +92,68 @@ def _worse(cur: tuple[int, set[str]], prev: tuple[int, set[str]]) -> bool:
     return cdd > pdd or bool(ck - pk)
 
 
+def _all_open_positions() -> list[dict]:
+    """Unified open-positions iterator across the legacy PaperTrade
+    store AND the autonomous fund book. book_risk previously only
+    looked at PaperTrade, so the bot's own trades got no alerts.
+
+    When the same ticker is held in both stores (or in multiple
+    wallets), we collapse them per (ticker, side) and report the
+    WORST single pnl_pct — that's the bar that matters for an alert
+    tier. Aggregated qty + a comma-joined fund list go in the
+    metadata so the embed can show "$NVDA (degen + catalyst)".
+    """
+    from .. import funds as _funds
+    rows: list[dict] = []
+    for p in portfolio.open_positions():
+        rows.append({
+            "ticker": p["ticker"], "side": p["side"], "qty": p["qty"],
+            "entry": p["entry"], "mark": p.get("mark"),
+            "pnl": p.get("pnl"), "pnl_pct": p.get("pnl_pct"),
+            "fund": None,
+        })
+    for p in _funds.open_positions_all():
+        rows.append({
+            "ticker": p["ticker"], "side": p["side"], "qty": p["qty"],
+            "entry": p["entry"], "mark": p.get("mark"),
+            "pnl": p.get("upnl"), "pnl_pct": p.get("upnl_pct"),
+            "fund": p.get("fund"),
+        })
+
+    # Collapse per (ticker, side) — worst-pnl-pct wins for the
+    # alert tier; qty and fund list are aggregated for context.
+    by_key: dict[tuple[str, str], dict] = {}
+    for r in rows:
+        k = (r["ticker"], r["side"])
+        cur = by_key.get(k)
+        if cur is None:
+            by_key[k] = {
+                **r,
+                "qty": float(r["qty"] or 0),
+                "funds": [r["fund"]] if r.get("fund") else [],
+            }
+            continue
+        cur["qty"] = (cur["qty"] or 0) + float(r["qty"] or 0)
+        if r.get("fund") and r["fund"] not in cur["funds"]:
+            cur["funds"].append(r["fund"])
+        # Worst pnl_pct wins (most negative).
+        cur_pp = cur.get("pnl_pct")
+        new_pp = r.get("pnl_pct")
+        if new_pp is not None and (cur_pp is None or new_pp < cur_pp):
+            cur["pnl_pct"] = new_pp
+            cur["entry"] = r["entry"]
+            cur["mark"] = r["mark"]
+            cur["pnl"] = r.get("pnl")
+    return list(by_key.values())
+
+
 def _assess(now: datetime, *, earnings_of) -> list[dict]:
     """Pure-ish core: which open positions to alert on this cycle, after the
     cooldown/escalation gate. `earnings_of` is injected (a ticker→date|None
     callable) so this is unit-testable without network."""
     today = now.date()
     flagged: list[dict] = []
-    for p in portfolio.open_positions():
+    for p in _all_open_positions():
         ticker = p["ticker"]
         triggers: dict[str, str] = {}
 
@@ -149,6 +204,7 @@ def _assess(now: datetime, *, earnings_of) -> list[dict]:
                 "mark": p["mark"],
                 "pnl": p["pnl"],
                 "pnl_pct": p["pnl_pct"],
+                "funds": p.get("funds") or [],
                 "triggers": triggers,
                 "dd": dd,
                 "sev": _sev_token(dd, triggers.keys()),

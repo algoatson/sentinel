@@ -17,8 +17,20 @@ from .models import Holding, PaperTrade, PriceBar, PriceContext
 
 
 def held_tickers() -> set[str]:
-    """Canonical tickers in the book — Holdings + open paper positions.
-    Cheap; recomputed per call so it's never stale after !hold/!buy."""
+    """Canonical tickers in the book — Holdings + open paper positions
+    + open autonomous-fund positions. Cheap; recomputed per call so
+    it's never stale after !hold/!buy/!fund-open.
+
+    The FundTrade leg was the missing piece: callers like
+    why_moved.is_held (the 📌 badge), synthesis._build_snapshot
+    (cross-asset context), and book_risk._assess (open-position
+    alerts) were all blind to the autonomous fund book because this
+    helper only counted PaperTrade.
+    """
+    # Local import — FundTrade lives in models; importing it at
+    # module load would create a circular import with funds.py.
+    from .models import FundTrade
+
     with session_scope() as s:
         out = {h.ticker for h in s.exec(select(Holding)).all() if h.ticker}
         out |= {
@@ -27,6 +39,13 @@ def held_tickers() -> set[str]:
                 select(PaperTrade).where(PaperTrade.status == "open")
             ).all()
             if p.ticker
+        }
+        out |= {
+            t.ticker
+            for t in s.exec(
+                select(FundTrade).where(FundTrade.status == "open")
+            ).all()
+            if t.ticker
         }
     return out
 

@@ -69,9 +69,9 @@ def _run() -> None:
             t_1h = pub_naive + _HORIZON_1H
             t_1d = pub_naive + _HORIZON_1D
 
-            p_at = _nearest_price(session, ticker, pub_naive)
-            p_1h = _nearest_price(session, ticker, t_1h) if t_1h <= now_naive else None
-            p_1d = _nearest_price(session, ticker, t_1d) if t_1d <= now_naive else None
+            at_bar = _nearest_price_bar(session, ticker, pub_naive)
+            h1_bar = _nearest_price_bar(session, ticker, t_1h) if t_1h <= now_naive else None
+            d1_bar = _nearest_price_bar(session, ticker, t_1d) if t_1d <= now_naive else None
 
             # Even if we couldn't find prices, mark tagged so we don't keep
             # retrying — but only if the news is old enough that prices
@@ -79,13 +79,23 @@ def _run() -> None:
             should_finalize = pub_naive <= (now_naive - _HORIZON_1D)
 
             updated = False
-            if p_at is not None:
+            if at_bar is not None:
+                p_at, at_ts = at_bar
                 item.price_at_publish = p_at
                 updated = True
-                if p_1h is not None and p_at:
-                    item.impact_1h_pct = (p_1h - p_at) / p_at
-                if p_1d is not None and p_at:
-                    item.impact_1d_pct = (p_1d - p_at) / p_at
+                # Closed-market guard: the horizon bar must be
+                # strictly *after* the publish bar — otherwise we're
+                # measuring the same bar twice and writing impact=0%
+                # for what was really "we don't have a post-publish
+                # bar yet". Same fix pattern as scorecard._price_bar_asof.
+                if h1_bar is not None and p_at:
+                    p_1h, h1_ts = h1_bar
+                    if h1_ts > at_ts:
+                        item.impact_1h_pct = (p_1h - p_at) / p_at
+                if d1_bar is not None and p_at:
+                    p_1d, d1_ts = d1_bar
+                    if d1_ts > at_ts:
+                        item.impact_1d_pct = (p_1d - p_at) / p_at
 
             if updated or should_finalize:
                 item.impact_tagged_at = now
@@ -96,11 +106,15 @@ def _run() -> None:
     logger.info("news impact tagger: measured {} items", tagged)
 
 
-def _nearest_price(session, ticker: str, when: datetime) -> Optional[float]:
-    """Find the closest PriceBar to `when` within ±2 hours.
-
-    For after-hours news, this may return None — that's expected and the
-    caller should mark the item tagged without an impact value.
+def _nearest_price_bar(
+    session, ticker: str, when: datetime,
+) -> Optional[tuple[float, datetime]]:
+    """Find the closest PriceBar to `when` within ±2 hours, returning
+    (close, bar_ts). Returning the bar timestamp lets the caller
+    distinguish "horizon bar advanced past publish bar" from "we got
+    the same pre-publish bar both times" — the latter is the
+    closed-market 0% artefact that previously poisoned impact_1h on
+    every after-hours news item.
 
     SQLite returns naive datetimes on read; strip tz from `when` so the
     comparison is apples-to-apples.
@@ -119,4 +133,10 @@ def _nearest_price(session, ticker: str, when: datetime) -> Optional[float]:
         )
         .limit(1)
     ).first()
-    return bar.close if bar else None
+    return (bar.close, bar.ts) if bar else None
+
+
+def _nearest_price(session, ticker: str, when: datetime) -> Optional[float]:
+    """Back-compat thin wrapper around _nearest_price_bar."""
+    res = _nearest_price_bar(session, ticker, when)
+    return res[0] if res is not None else None

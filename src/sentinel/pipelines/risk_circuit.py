@@ -17,7 +17,7 @@ effort).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from loguru import logger
 from sqlmodel import select
@@ -31,6 +31,13 @@ _DD_TRIP_PCT = -15.0
 # Trip only once per stretch — if the user manually re-enables, we
 # don't re-trip until the wallet recovers above _DD_TRIP_PCT/2.
 _DD_RECOVER_PCT = -7.0
+# Sliding drawdown window. 90d matches funds._drawdown_scale, the
+# size-taper used by the entry path — so the soft taper (5-15% over
+# 90d) and the hard kill switch (this) agree on what "drawdown" is.
+# Lifetime DD made the breaker trip on positions that had nothing
+# to do with the recent stretch (a wallet up 30% then back to break-
+# even would read -23% lifetime and pause).
+_DD_WINDOW_DAYS = 90
 
 
 def _peak_to_now(equity_pts: list[float]) -> float:
@@ -56,6 +63,7 @@ def run() -> dict:
     reset: list[str] = []
     audited = 0
 
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_DD_WINDOW_DAYS)
     try:
         with session_scope() as s:
             funds = s.exec(select(Fund)).all()
@@ -64,6 +72,7 @@ def run() -> dict:
                 pts_rows = s.exec(
                     select(FundEquity)
                     .where(FundEquity.fund_id == f.id)
+                    .where(FundEquity.ts >= cutoff)
                     .order_by(FundEquity.ts)
                 ).all()
                 pts = [p.equity for p in pts_rows]
