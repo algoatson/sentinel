@@ -47,6 +47,7 @@ from .pipelines import (
     movers,
     news_alerts,
     news_impact,
+    position_review,
     reddit_feed,
     risk_circuit,
     sentiment,
@@ -167,6 +168,16 @@ def make_scheduler() -> AsyncIOScheduler:
         hot_movers.run_hot_movers,
         _every(minutes=15),
         id="hot_movers",
+        **_COMMON,
+    )
+    # 08:00 ET — runs before the briefing at 08:30. Position-review
+    # is a narrow LLM check: only flagged positions hit the model
+    # (quiet morning → 0 tokens). Sits in front of the briefing so
+    # the user sees the verdicts before the day's narrative.
+    sched.add_job(
+        position_review.run_position_review,
+        CronTrigger(hour=8, minute=0, timezone=ET),
+        id="position_review",
         **_COMMON,
     )
     sched.add_job(
