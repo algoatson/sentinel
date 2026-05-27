@@ -45,6 +45,17 @@ def upsert_earnings(rows: list[dict]) -> int:
             if row is None:
                 s.add(EarningsDate(ticker=ticker, report_date=rd, fetched_at=now))
             else:
+                # When the report_date is rolling forward (the print
+                # just happened and the catalyst pipeline now sees the
+                # NEXT quarter's date), preserve the prior date so the
+                # post-earnings entry blackout still has something to
+                # check. Only move it when we're actually rolling
+                # *past* the old date — not when the upstream simply
+                # republishes the same date or pulls in an earlier
+                # one (rare, but happens on guidance changes).
+                today_d = date.today()
+                if row.report_date < today_d and rd > row.report_date:
+                    row.last_report_date = row.report_date
                 row.report_date = rd
                 row.fetched_at = now
                 s.add(row)
@@ -118,3 +129,29 @@ def days_until_earnings(ticker: str, today: date | None = None) -> int | None:
         return None
     delta = (rd - (today or date.today())).days
     return delta if delta >= 0 else None
+
+
+def days_since_last_earnings(
+    ticker: str, today: date | None = None,
+) -> int | None:
+    """Days since the immediately-prior earnings print (>=0), or None
+    if we have no prior on file.
+
+    Powers the funds._post_earnings_blackout — the post-print
+    gap/drift volatility cool-down that the engine uses to skip
+    entries for N days after a report. Without this helper the
+    blackout was structurally dead (the next-quarter upsert wipes
+    the past date and days_until_earnings filters out negatives).
+    """
+    if not ticker:
+        return None
+    try:
+        with session_scope() as s:
+            row = s.get(EarningsDate, ticker.upper())
+            if row is None or row.last_report_date is None:
+                return None
+            delta = ((today or date.today()) - row.last_report_date).days
+            return delta if delta >= 0 else None
+    except Exception as e:
+        logger.debug("days_since_last_earnings({}) failed: {}", ticker, e)
+        return None

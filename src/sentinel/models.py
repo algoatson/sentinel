@@ -485,10 +485,19 @@ class EarningsDate(SQLModel, table=True):
     """Next scheduled earnings report per ticker, one row per ticker
     (upserted). Populated by the catalyst pipeline; read by funds (entry
     blackout) and synthesis (binary-risk awareness) so nothing trades or
-    reasons blind into a print. `fetched_at` lets readers reject stale rows."""
+    reasons blind into a print. `fetched_at` lets readers reject stale rows.
+
+    `last_report_date` preserves the immediately-prior print so the
+    post-earnings entry blackout (funds._post_earnings_blackout) can
+    still fire after the catalyst pipeline overwrites `report_date`
+    with the next quarter's date. Without this the post-earnings
+    cool-down was structurally dead (days_until_earnings returns None
+    on negative deltas, and the next-date upsert wipes the past one).
+    """
     ticker: str = Field(primary_key=True)
     report_date: date = Field(index=True)
     fetched_at: datetime
+    last_report_date: Optional[date] = Field(default=None)
 
 
 class PendingTuning(SQLModel, table=True):

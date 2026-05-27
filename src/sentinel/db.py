@@ -193,6 +193,13 @@ def init_db() -> None:
                 ("max_opens_per_day", "INTEGER"),
             ],
         )
+        # Preserves the previous earnings date so the post-earnings
+        # entry blackout can fire after the catalyst pipeline overwrites
+        # report_date with next quarter's print.
+        _migrate_add_columns(
+            "earningsdate",
+            [("last_report_date", "DATE")],
+        )
 
     from .funds import seed_funds
     from .prompts import seed_prompts

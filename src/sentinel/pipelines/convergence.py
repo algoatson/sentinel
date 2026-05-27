@@ -191,6 +191,11 @@ async def _run() -> None:
                 or hn_24h >= 2
             )
             # Signal 4: ticker-tagged news in last 24h.
+            # ≥ 2 items OR 1 tagged-significant (non-zero sentiment OR
+            # measurable 1d impact). A single noise headline with no
+            # sentiment/impact tag was previously enough to add the
+            # "news" signal — combined with a small price blip that's
+            # 2 signals and an LLM call. The narrower gate stops that.
             news_rows = session.exec(
                 select(NewsItem)
                 .where(NewsItem.ticker == ticker)
@@ -198,7 +203,19 @@ async def _run() -> None:
                 .order_by(NewsItem.published_at.desc())
                 .limit(5)
             ).all()
+            news_significant = False
             if news_rows:
+                if len(news_rows) >= 2:
+                    news_significant = True
+                else:
+                    n = news_rows[0]
+                    has_sentiment = (n.sentiment or 0) != 0
+                    has_impact = (
+                        (n.impact_1d_pct or 0) != 0
+                        or (n.impact_1h_pct or 0) != 0
+                    )
+                    news_significant = has_sentiment or has_impact
+            if news_rows and news_significant:
                 signals.append("news")
                 evidence["news"] = {
                     "count_24h": len(news_rows),

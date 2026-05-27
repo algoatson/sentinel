@@ -566,14 +566,18 @@ def _opens_today(session, fund_id: int, now: datetime) -> int:
 
 
 def _post_earnings_blackout(ticker: str, now: datetime) -> bool:
-    """True iff `ticker` reported earnings in the last N days. The
-    print + the day after carry abnormal gap/drift vol that swamps
-    most thesis edges. earnings.days_until_earnings returns
-    negative for past prints."""
-    d = earnings.days_until_earnings(ticker, now.date())
+    """True iff `ticker` reported earnings in the last N days.
+
+    Sources the most-recent print from EarningsDate.last_report_date —
+    that field is preserved by upsert_earnings when the catalyst
+    pipeline rolls report_date forward to the next quarter (without
+    it, the prior date was wiped immediately and this blackout was
+    structurally dead). 0 = "reported today", which we also block.
+    """
+    d = earnings.days_since_last_earnings(ticker, now.date())
     if d is None:
         return False
-    return -_POST_EARNINGS_BLACKOUT_DAYS <= d < 0
+    return 0 <= d <= _POST_EARNINGS_BLACKOUT_DAYS
 
 
 def _run() -> list[dict]:
