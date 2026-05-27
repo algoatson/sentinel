@@ -203,27 +203,13 @@ def seed_funds() -> None:
             )
             logger.info("fund seeded: {} (user-directed, no autonomous policy)",
                         RESEARCH_WALLET_NAME)
-        elif existing_research.mandate != RESEARCH_WALLET_MANDATE:
-            # Mandate text was updated in code — refresh the DB so the
-            # dashboard reads the new short version on next render. Same
-            # treatment for every other fund whose mandate string drifts
-            # against `_POLICIES` is below in the main loop (added now).
-            existing_research.mandate = RESEARCH_WALLET_MANDATE
-            s.add(existing_research)
-            logger.info("fund mandate refreshed: {}", RESEARCH_WALLET_NAME)
 
-        # Same self-healing for every policy-driven fund: if the code's
-        # mandate string has been edited, propagate to the existing DB
-        # row so the dashboard always shows the current copy.
-        for name, pol in _POLICIES.items():
-            pol_mandate = pol.get("mandate")
-            if not pol_mandate:
-                continue
-            row = s.exec(select(Fund).where(Fund.name == name)).first()
-            if row is not None and row.mandate != pol_mandate:
-                row.mandate = pol_mandate
-                s.add(row)
-                logger.info("fund mandate refreshed: {}", name)
+        # NOTE: an earlier version of this function "self-healed" every
+        # fund's `mandate` text against `_POLICIES[name]["mandate"]` on
+        # boot. That stomped the wallet policy editor (task #189) —
+        # any user-edited mandate would silently revert on the next
+        # restart. Code mandate is the SEED at first creation only;
+        # once a fund exists, the DB row is authoritative.
 
 
 def _mark(session, ticker: str) -> float | None:

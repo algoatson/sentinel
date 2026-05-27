@@ -37,7 +37,13 @@ from ..narrative import recent_events, record_event
 from ..prompts import get_prompt
 
 _BR_KIND = "book_risk"
-_MATERIAL_KINDS = {"filing", "why_moved", "convergence", "news_alert", "synthesis"}
+_MATERIAL_KINDS = {
+    "filing", "why_moved", "convergence", "news_alert", "synthesis",
+    # thesis_state covers thesis.review_cycle transitions (validated /
+    # invalidated / matured). An open position whose thesis just got
+    # invalidated is exactly the kind of thing book_risk should escalate.
+    "thesis_state",
+}
 _DRAWDOWN_BUCKETS = (-8.0, -15.0, -25.0, -40.0)  # adverse pnl_pct → bucket 1..4
 _EARNINGS_DAYS = 4          # report within N days → flag (binary risk)
 _EVENT_LOOKBACK_DAYS = 5
