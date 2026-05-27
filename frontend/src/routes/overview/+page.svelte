@@ -18,6 +18,8 @@
   import DailyPlanCard from '$components/DailyPlanCard.svelte';
   import LiveEvents from '$components/LiveEvents.svelte';
   import WalletAllocation from '$components/WalletAllocation.svelte';
+  import HealthPill from '$components/HealthPill.svelte';
+  import ConvergingNow from '$components/ConvergingNow.svelte';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
   import { usd, compact, timeAgo, pct, tone, stripMd } from '$lib/format';
@@ -116,6 +118,7 @@
         · {$kpiQ.data.wallets} wallets
       </span>
     {/if}
+    <span class="ml-auto"><HealthPill /></span>
   </div>
 
   <div class="mt-1 flex flex-wrap items-end gap-x-4 gap-y-1.5">
@@ -317,6 +320,11 @@
 <!-- ── HOLDINGS NEWS (full width) ───────────────────── -->
 <div class="mt-4">
   <HoldingsNews />
+</div>
+
+<!-- ── CONVERGING NOW (full width) ──────────────────── -->
+<div class="mt-4">
+  <ConvergingNow />
 </div>
 
 <!-- ── HOT NOW ──────────────────────────────────────── -->

@@ -20,6 +20,7 @@ from ..analytics import holdings_news as _hnews
 from ..analytics import streaks as _streaks
 from ..analytics import perf_by_source as _pbs
 from ..analytics import pnl_distribution as _pnld
+from ..analytics import converging as _conv
 from ..analytics import hot as _hot
 from ..analytics import monthly as _monthly
 from ..analytics import sentiment_quality as _sq
@@ -154,6 +155,14 @@ def perf_by_source(limit: int = 500) -> dict:
     expectancy, avg win / avg loss, avg R-multiple, avg hold time,
     and the most-recent 5 PnLs."""
     return _pbs.perf_by_source(limit=limit)
+
+
+@router.get("/analytics/converging")
+def converging(hours: int = 6, limit: int = 8) -> dict:
+    """Tickers with multi-source signal stacking in the last `hours`.
+    Same view the convergence pipeline uses internally — surfaced so
+    the user sees what's about to fire, not just what already has."""
+    return _conv.converging_now(hours=hours, limit=limit)
 
 
 @router.get("/analytics/pnl-distribution")

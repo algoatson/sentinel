@@ -65,6 +65,22 @@
     return (c?.points ?? []).map((p) => p.equity);
   }
 
+  /**
+   * Peak-to-current drawdown as a *negative* percent.
+   * Returns 0 when the wallet is at a new high (or has no points to
+   * draw down from). Drives the per-card DD chip below; matches the
+   * scale the engine's drawdown-aware sizing already uses (-5 / -10
+   * / -15 are the meaningful tiers).
+   */
+  function drawdownPct(values: number[]): number {
+    if (values.length < 2) return 0;
+    let peak = values[0];
+    for (const v of values) if (v > peak) peak = v;
+    const cur = values[values.length - 1];
+    if (peak <= 0) return 0;
+    return Math.min(0, ((cur - peak) / peak) * 100);
+  }
+
   // Mandates come like "🎯 Catalyst — convergence/synthesis on equities…".
   // Strip the leading "[emoji] [name] —" since the card already shows
   // the name big — keep only the description so the caption isn't
@@ -140,6 +156,7 @@
       {#each $walletsQ.data as w (w.name)}
         {@const points = pointsFor(w.name)}
         {@const trendCol = w.ret_pct >= 0 ? 'var(--color-good)' : 'var(--color-bad)'}
+        {@const dd = drawdownPct(points)}
         <Card interactive onclick={() => (selected = w.name)} class="overflow-hidden p-0">
           <!-- ── header strip with name + return ─────────────── -->
           <div class="flex items-center gap-2 px-4 pt-3.5 pb-1">
@@ -157,6 +174,19 @@
             >
               {w.ret_pct >= 0 ? '+' : ''}{w.ret_pct.toFixed(2)}%
             </span>
+            {#if dd < -0.5}
+              <span
+                class={[
+                  'tabular rounded border px-1.5 py-0.5 text-[10px] font-medium',
+                  dd <= -10
+                    ? 'border-bad/40 bg-bad-soft text-bad'
+                    : dd <= -5
+                      ? 'border-warn/40 bg-warn-soft text-warn'
+                      : 'border-border bg-surface-2 text-muted'
+                ].join(' ')}
+                title="Peak-to-current drawdown over the loaded equity window. The engine's drawdown-aware sizing taper starts at −5% and tightens to −15%."
+              >dd {dd.toFixed(1)}%</span>
+            {/if}
             <button
               type="button"
               onclick={(e) => { e.stopPropagation(); policyName = w.name; }}

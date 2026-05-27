@@ -787,6 +787,24 @@ export interface PnlDistribution {
 export const pnlDistribution = (limit = 500) =>
   get<PnlDistribution>(`/analytics/pnl-distribution?limit=${limit}`);
 
+export interface ConvergingRow {
+  ticker: string;
+  sources: string[];
+  source_count: number;
+  filings: number;
+  news: number;
+  social: number;
+  calls: number;
+  last_ts: string | null;
+}
+export interface ConvergingPayload {
+  window_hours: number;
+  as_of: string;
+  rows: ConvergingRow[];
+}
+export const convergingNow = (hours = 6, limit = 8) =>
+  get<ConvergingPayload>(`/analytics/converging?hours=${hours}&limit=${limit}`);
+
 export interface SymbolNote {
   ticker: string;
   body: string;
