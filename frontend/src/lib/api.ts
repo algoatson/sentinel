@@ -131,6 +131,34 @@ export const runThesisReview = () =>
 /* ─── wallets ─── */
 export const wallets = () => get<Wallet[]>('/wallets');
 
+export interface EdgeMultiplierDiag {
+  n: number;
+  avg_r_pct: number | null;
+  raw_mult?: number;
+  confidence?: number;
+  mult: number;
+  shrunk: boolean;
+  reason?: string;
+}
+export interface EdgeMultipliers {
+  as_of: string;
+  min_sample: number;
+  full_conf_n: number;
+  floor: number;
+  ceiling: number;
+  by_source: Record<string, EdgeMultiplierDiag>;
+}
+export interface WalletMeta {
+  as_of: string;
+  funds: Record<string, unknown>[];
+  by_source: Record<string, Record<string, unknown>>;
+  by_conviction: Record<string, Record<string, unknown>>;
+  by_asset: Record<string, Record<string, unknown>>;
+  experiments: Record<string, Record<string, unknown>>;
+  edge_multipliers: EdgeMultipliers;
+}
+export const walletMeta = () => get<WalletMeta>('/wallets/meta');
+
 export interface WalletKnob {
   value: number | null;
   default: number | null;

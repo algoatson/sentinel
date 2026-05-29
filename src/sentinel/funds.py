@@ -383,6 +383,156 @@ _DEFAULT_MAX_OPENS_PER_DAY = 4
 _POST_EARNINGS_BLACKOUT_DAYS = 1
 
 
+# ── per-source edge multiplier (the "press on winners" control loop) ────
+#
+# The autonomous engine takes the same risk_pct on every call regardless
+# of which source produced it. Meanwhile attribution.signal_attribution
+# already measures, per source, the avg signed return per call over the
+# last 90d. We use that measurement to SCALE the per-trade risk budget:
+# proven-positive sources get a boost (more $ at risk per call), proven-
+# negative sources get a fade (less $ at risk per call).
+#
+# This is asymmetric and conservative on purpose:
+#
+#   * Floor at 0.3× — it's easier to know a source is bleeding than to
+#     know it has a long-run edge. The auto_fade in scorecard already
+#     lowers conviction on bad sources; this adds a notional shrink on
+#     top.
+#   * Ceiling at 1.5× — never let one good streak ramp size past 1.5×
+#     the baseline. Single-source concentration risk is the silent
+#     killer here.
+#   * Sample-confidence shrinkage — multipliers attenuate toward 1.0
+#     when n is small. Only at 30+ scored calls do you get the full
+#     effect. A 12-call streak with +5% avg lands at ~1.2×, a 60-call
+#     streak at the full 1.5×.
+#   * Cached for an hour — the engine cycle runs every few minutes; the
+#     90d attribution window doesn't move meaningfully on that timescale.
+#
+# Drives a separate dial from auto_fade (which dampens conviction).
+# Conviction dampening is "trust the signal less"; risk multiplier is
+# "size into / out of the source's pocket." Both push the same way for
+# losing sources, but the multiplier also lets us PRESS on winning
+# sources — auto_fade never does that.
+_EDGE_MIN_SAMPLE = 12       # below this n, multiplier is 1.0 (no data)
+_EDGE_FULL_CONF_N = 30      # at this n, confidence shrinkage is 1.0
+_EDGE_FLOOR = 0.3
+_EDGE_CEILING = 1.5
+# Breakpoints on avg_r_pct (signed direction-adjusted 5d return per call):
+#   avg_r ≤ -2.0% → 0.3× (clear bleeder)
+#   avg_r ∈ (-2, 0) → linear 0.3 → 1.0
+#   avg_r ∈ (0, 3) → linear 1.0 → 1.5
+#   avg_r ≥ 3.0% → 1.5×
+_EDGE_BAD_THR = -2.0
+_EDGE_GOOD_THR = 3.0
+_EDGE_CACHE_TTL = timedelta(hours=1)
+
+_EDGE_MULTS: dict[str, float] = {}
+_EDGE_DIAG: dict[str, dict] = {}  # diagnostics shown on /system
+_EDGE_TS: datetime | None = None
+
+
+def _edge_raw_mult(avg_r_pct: float) -> float:
+    """Map a source's avg signed return (per-call %) to its raw size
+    multiplier, before sample-confidence shrinkage. Piecewise linear
+    so behaviour at the breakpoints is smooth and intuitive."""
+    if avg_r_pct <= _EDGE_BAD_THR:
+        return _EDGE_FLOOR
+    if avg_r_pct >= _EDGE_GOOD_THR:
+        return _EDGE_CEILING
+    if avg_r_pct <= 0:
+        # -2 → 0.3, 0 → 1.0
+        frac = (avg_r_pct - _EDGE_BAD_THR) / (0 - _EDGE_BAD_THR)
+        return _EDGE_FLOOR + frac * (1.0 - _EDGE_FLOOR)
+    # 0 → 1.0, 3 → 1.5
+    frac = avg_r_pct / _EDGE_GOOD_THR
+    return 1.0 + frac * (_EDGE_CEILING - 1.0)
+
+
+def _refresh_edge_mults(now: datetime) -> None:
+    """Recompute per-source multipliers from the attribution window.
+
+    Pure and safe to call any time; results land in module globals
+    that `_source_edge_mult` reads. Failures are logged at debug and
+    leave the prior cache intact — a sizing pipeline must never crash
+    on an analytics hiccup.
+    """
+    global _EDGE_MULTS, _EDGE_DIAG, _EDGE_TS
+    try:
+        from .analytics.attribution import signal_attribution
+        attr = signal_attribution(days=90)
+    except Exception as e:
+        logger.debug("edge multipliers: attribution unavailable: {}", e)
+        _EDGE_TS = now
+        return
+    new_mults: dict[str, float] = {}
+    new_diag: dict[str, dict] = {}
+    for entry in attr.get("by_source") or []:
+        src = entry.get("source") or ""
+        if not src:
+            continue
+        n = int(entry.get("n") or 0)
+        avg_r = entry.get("ret_avg_pct")
+        if n < _EDGE_MIN_SAMPLE or avg_r is None:
+            new_mults[src] = 1.0
+            new_diag[src] = {
+                "n": n, "avg_r_pct": avg_r,
+                "mult": 1.0, "shrunk": False,
+                "reason": "below min-sample",
+            }
+            continue
+        raw = _edge_raw_mult(float(avg_r))
+        # Sample-confidence shrinkage: pull `raw` toward 1.0 when n is
+        # small. At n=_EDGE_FULL_CONF_N+ the multiplier is fully applied.
+        conf = min(1.0, n / _EDGE_FULL_CONF_N)
+        mult = 1.0 + (raw - 1.0) * conf
+        # Final clamp — belt and braces; the math above already
+        # respects floor/ceiling but bounding here makes the invariant
+        # explicit for the caller.
+        mult = max(_EDGE_FLOOR, min(_EDGE_CEILING, mult))
+        new_mults[src] = round(mult, 3)
+        new_diag[src] = {
+            "n": n, "avg_r_pct": float(avg_r),
+            "raw_mult": round(raw, 3),
+            "confidence": round(conf, 3),
+            "mult": round(mult, 3),
+            "shrunk": conf < 1.0,
+        }
+    _EDGE_MULTS = new_mults
+    _EDGE_DIAG = new_diag
+    _EDGE_TS = now
+
+
+def _source_edge_mult(source: str, now: datetime) -> float:
+    """Cached per-source risk multiplier. Returns 1.0 (the baseline) on
+    unknown sources or insufficient data — never raises out, never
+    returns NaN."""
+    if (
+        _EDGE_TS is None
+        or (now - _EDGE_TS) > _EDGE_CACHE_TTL
+    ):
+        _refresh_edge_mults(now)
+    return _EDGE_MULTS.get(source, 1.0)
+
+
+def edge_multipliers() -> dict:
+    """Public read-only snapshot — powers the /system edge-control panel
+    and the wallet_meta payload. Cheap; no DB read on a warm cache."""
+    now = datetime.now(timezone.utc)
+    if (
+        _EDGE_TS is None
+        or (now - _EDGE_TS) > _EDGE_CACHE_TTL
+    ):
+        _refresh_edge_mults(now)
+    return {
+        "as_of": (_EDGE_TS or now).isoformat(),
+        "min_sample": _EDGE_MIN_SAMPLE,
+        "full_conf_n": _EDGE_FULL_CONF_N,
+        "floor": _EDGE_FLOOR,
+        "ceiling": _EDGE_CEILING,
+        "by_source": _EDGE_DIAG.copy(),
+    }
+
+
 def _atr_in_session(session, ticker: str, period: int = 14) -> float | None:
     """Wilder ATR over `period` daily bars, computed inside the caller's
     open session — duplicates analytics.volatility.atr_for() so we don't
@@ -758,9 +908,14 @@ def _run() -> list[dict]:
                 # Conviction- and drawdown-scaled risk budget. Capped by
                 # the original size_pct on top conviction so a c5 sniper
                 # trade can still scale into a meaningful position.
+                # Per-source edge multiplier (the new control loop): if
+                # `call.source` has a measured edge over the last 90d,
+                # scale risk up toward 1.5×; if it's been bleeding, scale
+                # down toward 0.3×. 1.0 = no data / insufficient sample.
                 conv_bias = call.conviction / 5
+                edge_mult = _source_edge_mult(call.source, now)
                 risk_pct = (
-                    _BASE_RISK_PCT * conv_bias * dd_scale
+                    _BASE_RISK_PCT * conv_bias * dd_scale * edge_mult
                     * max(1.0, pol["size_pct"] / 0.20)
                 )
                 qty = _fixed_risk_qty(
@@ -770,16 +925,26 @@ def _run() -> list[dict]:
                 # Fall back to legacy notional sizing only when we don't
                 # have a usable stop. Saves freshly-listed tickers (no
                 # bar history yet → no ATR) from being silently dropped.
+                # Edge multiplier rides on this path too — otherwise
+                # ATR-less tickers would escape the per-source allocation.
                 if qty <= 0:
-                    size_cash = equity * pol["size_pct"] * conv_bias * dd_scale
+                    size_cash = (
+                        equity * pol["size_pct"]
+                        * conv_bias * dd_scale * edge_mult
+                    )
                     qty = size_cash / mark
                     if qty <= 0:
                         continue
                 # Notional ceiling — never let fixed-risk sizing balloon
                 # past the policy's original notional limit on a very
                 # tight stop. (e.g. a stop 0.5% away on a degen would
-                # otherwise demand 20× the wallet to risk 1%.)
-                cap_cash = equity * pol["size_pct"] * conv_bias * dd_scale
+                # otherwise demand 20× the wallet to risk 1%.) Edge mult
+                # applies here too so a faded source can't slip past the
+                # cap via a tight-stop trade.
+                cap_cash = (
+                    equity * pol["size_pct"]
+                    * conv_bias * dd_scale * edge_mult
+                )
                 if qty * mark > cap_cash:
                     qty = cap_cash / mark
                 if qty <= 0:
@@ -828,6 +993,7 @@ def _run() -> list[dict]:
                         "target": target,
                         "atr": atr,
                         "dd_scale": dd_scale,
+                        "edge_mult": edge_mult,
                     }
                 )
 
@@ -861,10 +1027,23 @@ def _moves_embed(moves: list[dict]) -> discord.Embed | None:
                 thesis = m["thesis"] or "(no thesis on the call)"
                 if len(thesis) > 240:
                     thesis = thesis[:240].rstrip() + "…"
+                # Surface the size scalars when they're non-trivial so the
+                # user sees WHY this position was sized the way it was. A
+                # trade at the baseline (edge≈1.0, dd≈1.0) shows nothing
+                # extra; a faded or boosted size reads e.g. "× 0.6 edge" or
+                # "× 1.4 edge · × 0.7 dd".
+                size_bits: list[str] = []
+                em = m.get("edge_mult")
+                if em is not None and abs(em - 1.0) >= 0.05:
+                    size_bits.append(f"×{em:.2f} edge")
+                dd = m.get("dd_scale")
+                if dd is not None and dd < 0.95:
+                    size_bits.append(f"×{dd:.2f} dd")
+                size_suffix = (" · " + " · ".join(size_bits)) if size_bits else ""
                 lines.append(
                     f"{arrow} {tag}**{m['side'].upper()}** "
                     f"`${m['ticker']}` {m['qty']:.4g}@{m['price']:.4g} "
-                    f"· {m['source']} c{m['conviction']}\n"
+                    f"· {m['source']} c{m['conviction']}{size_suffix}\n"
                     f"   ↳ {thesis}"
                 )
             else:
@@ -2171,6 +2350,11 @@ def wallet_meta() -> dict:
             "momentum": _exp("degen", "contrarian", "momentum"),
             "crowd": _exp("hype", "degen", "crowd"),
         },
+        # Live per-source risk multipliers — the active control loop
+        # that's currently shaping every new position's size. Surfaced
+        # here so the dashboard can render a small panel: which sources
+        # are being pressed on, which are being faded, and why.
+        "edge_multipliers": edge_multipliers(),
     }
 
 
