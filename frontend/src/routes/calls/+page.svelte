@@ -133,14 +133,9 @@
 <svelte:head><title>Calls · Sentinel</title></svelte:head>
 
 <div class="mb-4 flex items-end justify-between border-b border-border pb-3">
-  <div>
-    <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
-      <Target class="h-5 w-5 text-primary" /><span>Calls</span>
-    </h1>
-    <div class="mt-0.5 text-[11.5px] text-faint">
-      Every trading call the bot has made, scored against price action. Click for the dossier and follow-up Q&A.
-    </div>
-  </div>
+  <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
+    <Target class="h-5 w-5 text-primary" /><span>Calls</span>
+  </h1>
 </div>
 
 <!-- ── scorecard ribbon ────────────────────────────────────────── -->

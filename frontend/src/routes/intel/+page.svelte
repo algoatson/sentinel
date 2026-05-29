@@ -190,24 +190,23 @@
 
 <svelte:head><title>Intel · Sentinel</title></svelte:head>
 
-<div class="mb-4 flex items-end justify-between border-b border-border pb-3">
-  <div>
-    <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
-      {#if mode === 'news'}
-        <Newspaper class="h-5 w-5 text-primary" />
-      {:else}
-        <FileText class="h-5 w-5 text-violet" />
-      {/if}
-      <span>Intel</span>
-    </h1>
-    <div class="mt-0.5 text-[11.5px] text-faint">
-      {#if mode === 'news'}
-        Ingested news with sentiment, 1-day price impact, and on-demand LLM dossiers.
-      {:else}
-        SEC filings (8-K / 10-Q / 13D / 4) with cached LLM materiality scores.
-      {/if}
-    </div>
-  </div>
+<!-- Header — caption was a feature description (sentiment, impact,
+     dossiers, materiality scores). Once the tab is selected the
+     feed below speaks for itself; the caption was just adding a
+     paragraph of text between the title and the working surface.
+     Icon now follows the active mode so the page still feels
+     contextual. -->
+<div class="mb-4 flex items-end justify-between gap-3 border-b border-border pb-3">
+  <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
+    {#if mode === 'news'}
+      <Newspaper class="h-5 w-5 text-primary" />
+    {:else if mode === 'filings'}
+      <FileText class="h-5 w-5 text-violet" />
+    {:else}
+      <MessageCircle class="h-5 w-5 text-warn" />
+    {/if}
+    <span>Intel</span>
+  </h1>
 
   <div class="flex rounded-md border border-border bg-surface p-0.5">
     <button
@@ -264,108 +263,90 @@
   </div>
 </div>
 
-<!-- ── filter ribbon ─────────────────────────────────────────── -->
-<Card class="px-4 py-3">
-  <div class="flex flex-wrap items-center gap-3">
-    <div class="flex items-center gap-1">
-      <span class="mr-2 text-[10px] font-semibold uppercase tracking-wider text-faint">Window</span>
-      {#each RANGES as r (r.value)}
-        <button
-          onclick={() => (hours = r.value)}
-          class={[
-            'rounded-md border px-2 py-1 text-[11px] transition-colors',
-            hours === r.value
-              ? 'border-primary/50 bg-primary-soft text-primary'
-              : 'border-border bg-surface-2 text-muted hover:text-text'
-          ].join(' ')}
-        >{r.label}</button>
-      {/each}
-    </div>
+<!-- ── filter ribbon ───────────────────────────────────────────
+     Was: four eyebrow labels ("Window", "Mood", "Form", "Mat ≥") on
+     a row of chips — by far the loudest typography on the row, and
+     all four are inferable from the chip values (24h vs 7d vs 30d
+     are obviously time windows). Now: chip groups separated by a
+     thin divider, no labels. Filter inputs are at the right, count
+     anchored far right. -->
+<Card class="px-3 py-2">
+  <div class="flex flex-wrap items-center gap-x-1.5 gap-y-1.5">
+    {#each RANGES as r (r.value)}
+      <button
+        onclick={() => (hours = r.value)}
+        class={[
+          'rounded-md border px-2 py-1 text-[11px] transition-colors',
+          hours === r.value
+            ? 'border-primary/50 bg-primary-soft text-primary'
+            : 'border-border bg-surface-2 text-muted hover:text-text'
+        ].join(' ')}
+      >{r.label}</button>
+    {/each}
+
+    <span class="mx-1 h-5 w-px bg-border"></span>
 
     {#if mode === 'news'}
-      <div class="flex items-center gap-1">
-        <span class="mr-2 text-[10px] font-semibold uppercase tracking-wider text-faint">Mood</span>
-        {#each [['all', 'All'], ['pos', '↑ Bullish'], ['neg', '↓ Bearish'], ['macro', 'Macro']] as [key, label] (key)}
-          <button
-            onclick={() => (sentimentFilter = key as any)}
-            class={[
-              'rounded-md border px-2 py-1 text-[11px] transition-colors',
-              sentimentFilter === key
-                ? key === 'pos'
-                  ? 'border-good/40 bg-good-soft text-good'
-                  : key === 'neg'
-                    ? 'border-bad/40 bg-bad-soft text-bad'
-                    : key === 'macro'
-                      ? 'border-violet/40 bg-violet-soft text-violet'
-                      : 'border-primary/50 bg-primary-soft text-primary'
-                : 'border-border bg-surface-2 text-muted hover:text-text'
-            ].join(' ')}
-          >{label}</button>
-        {/each}
-      </div>
-      <label class="flex items-center gap-1.5 cursor-pointer rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px]">
-        <input
-          type="checkbox"
-          bind:checked={dedupeNews}
-          class="h-3 w-3 cursor-pointer accent-primary"
-        />
-        <span class={dedupeNews ? 'text-text' : 'text-muted'}>Collapse dupes</span>
-      </label>
-    {:else if mode === 'social'}
-      <span class="text-[11px] text-faint">Reddit mentions across tracked subreddits.</span>
-    {:else}
-      <div class="flex items-center gap-1">
-        <span class="mr-2 text-[10px] font-semibold uppercase tracking-wider text-faint">Form</span>
+      {#each [['all', 'All'], ['pos', '↑'], ['neg', '↓'], ['macro', 'Macro']] as [key, label] (key)}
         <button
-          onclick={() => (formFilter = 'all')}
+          onclick={() => (sentimentFilter = key as any)}
+          title={key === 'pos' ? 'Bullish only' : key === 'neg' ? 'Bearish only' : key === 'macro' ? 'Macro only' : 'All sentiments'}
           class={[
-            'rounded-md border px-2 py-1 text-[11px] transition-colors',
-            formFilter === 'all'
-              ? 'border-primary/50 bg-primary-soft text-primary'
+            'min-w-[28px] rounded-md border px-2 py-1 text-[11px] transition-colors',
+            sentimentFilter === key
+              ? key === 'pos' ? 'border-good/40 bg-good-soft text-good'
+              : key === 'neg' ? 'border-bad/40 bg-bad-soft text-bad'
+              : key === 'macro' ? 'border-violet/40 bg-violet-soft text-violet'
+              : 'border-primary/50 bg-primary-soft text-primary'
               : 'border-border bg-surface-2 text-muted hover:text-text'
           ].join(' ')}
-        >All</button>
-        {#each KNOWN_FORMS as f (f)}
-          <button
-            onclick={() => (formFilter = f)}
-            class={[
-              'rounded-md border px-2 py-1 font-mono text-[11px] transition-colors',
-              formFilter === f
-                ? 'border-violet/40 bg-violet-soft text-violet'
-                : 'border-border bg-surface-2 text-muted hover:text-text'
-            ].join(' ')}
-          >{f}</button>
-        {/each}
-      </div>
-      <div class="flex items-center gap-1">
-        <span class="mr-2 text-[10px] font-semibold uppercase tracking-wider text-faint">
-          Mat ≥
-        </span>
-        {#each [0, 4, 7] as m (m)}
-          <button
-            onclick={() => (materialityMin = m)}
-            class={[
-              'rounded-md border px-2 py-1 text-[11px] transition-colors',
-              materialityMin === m
-                ? 'border-primary/50 bg-primary-soft text-primary'
-                : 'border-border bg-surface-2 text-muted hover:text-text'
-            ].join(' ')}
-          >{m === 0 ? 'any' : m + '+'}</button>
-        {/each}
-      </div>
+        >{label}</button>
+      {/each}
+      <label class="flex cursor-pointer items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px]" title="Collapse near-duplicate stories">
+        <input type="checkbox" bind:checked={dedupeNews} class="h-3 w-3 cursor-pointer accent-primary" />
+        <span class={dedupeNews ? 'text-text' : 'text-muted'}>dedupe</span>
+      </label>
+    {:else if mode === 'filings'}
+      <button
+        onclick={() => (formFilter = 'all')}
+        class={[
+          'rounded-md border px-2 py-1 text-[11px] transition-colors',
+          formFilter === 'all' ? 'border-primary/50 bg-primary-soft text-primary' : 'border-border bg-surface-2 text-muted hover:text-text'
+        ].join(' ')}
+      >All</button>
+      {#each KNOWN_FORMS as f (f)}
+        <button
+          onclick={() => (formFilter = f)}
+          class={[
+            'rounded-md border px-2 py-1 font-mono text-[11px] transition-colors',
+            formFilter === f ? 'border-violet/40 bg-violet-soft text-violet' : 'border-border bg-surface-2 text-muted hover:text-text'
+          ].join(' ')}
+        >{f}</button>
+      {/each}
+      <span class="mx-1 h-5 w-px bg-border"></span>
+      {#each [0, 4, 7] as m (m)}
+        <button
+          onclick={() => (materialityMin = m)}
+          title={m === 0 ? 'Any materiality' : `Materiality ≥ ${m}`}
+          class={[
+            'rounded-md border px-2 py-1 text-[11px] transition-colors',
+            materialityMin === m ? 'border-primary/50 bg-primary-soft text-primary' : 'border-border bg-surface-2 text-muted hover:text-text'
+          ].join(' ')}
+        >{m === 0 ? 'mat·any' : `mat≥${m}`}</button>
+      {/each}
     {/if}
 
     <input
       type="text"
       bind:value={tickerFilter}
       placeholder="$ticker"
-      class="w-24 rounded-md border border-border bg-surface-2 px-2 py-1 font-mono text-[12px] text-text placeholder:text-faint/50 focus:border-primary/60 focus:outline-none"
+      class="w-24 rounded-md border border-border bg-surface-2 px-2 py-1 font-mono text-[11.5px] text-text placeholder:text-faint/50 focus:border-primary/60 focus:outline-none"
     />
     <input
       type="text"
       bind:value={textFilter}
-      placeholder={mode === 'news' ? 'Title filter…' : 'Summary filter…'}
-      class="w-56 rounded-md border border-border bg-surface-2 px-2 py-1 text-[12px] text-text placeholder:text-faint/50 focus:border-primary/60 focus:outline-none"
+      placeholder={mode === 'news' ? 'Title filter…' : mode === 'filings' ? 'Summary filter…' : 'Title filter…'}
+      class="w-48 rounded-md border border-border bg-surface-2 px-2 py-1 text-[11.5px] text-text placeholder:text-faint/50 focus:border-primary/60 focus:outline-none"
     />
 
     <span class="ml-auto text-[11px] tabular text-faint">

@@ -303,65 +303,17 @@
 
 <svelte:head><title>Book · Sentinel</title></svelte:head>
 
+<!-- Page header — was a 4-line subtitle of feature-list docs ("CSV
+     export, bulk close, R-multiple, risk-reward bars"). That belongs
+     in the README, not above the working surface. Header now: title +
+     primary action (Open trade). Cut/Lock/Export demoted into a kebab
+     overflow so the row stays uncluttered. -->
 <div class="mb-4 flex items-end justify-between gap-3 border-b border-border pb-3">
-  <div>
-    <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
-      <Briefcase class="h-5 w-5 text-primary" /><span>Book</span>
-    </h1>
-    <div class="mt-0.5 text-[11.5px] text-faint">
-      Every open position. Set stops + targets per row — the
-      <code class="rounded bg-surface-2 px-1 text-[10px]">auto_exits</code>
-      pipeline enforces them every 5min. CSV export, bulk close, R-multiple,
-      risk-reward bars.
-    </div>
-  </div>
+  <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
+    <Briefcase class="h-5 w-5 text-primary" /><span>Book</span>
+  </h1>
 
-  <div class="flex items-center gap-1.5">
-    <button
-      type="button"
-      onclick={() => {
-        const losers = ($positionsQ.data ?? []).filter((p) => p.upnl < 0).map((p) => p.id);
-        if (!losers.length) {
-          toast.info('No losing positions to close');
-          return;
-        }
-        selected.clear();
-        losers.forEach((id) => selected.add(id));
-        bulkConfirm = true;
-      }}
-      class="flex items-center gap-1.5 rounded-md border border-bad/30 bg-bad-soft px-2.5 py-1.5 text-[11px] text-bad transition-colors hover:bg-bad/15"
-      title="Select every currently-underwater position; one click to bulk-close"
-    >
-      <TrendingDown class="h-3 w-3" />
-      Cut losers
-    </button>
-    <button
-      type="button"
-      onclick={() => {
-        const winners = ($positionsQ.data ?? []).filter((p) => p.upnl > 0).map((p) => p.id);
-        if (!winners.length) {
-          toast.info('No winning positions to lock in');
-          return;
-        }
-        selected.clear();
-        winners.forEach((id) => selected.add(id));
-        bulkConfirm = true;
-      }}
-      class="flex items-center gap-1.5 rounded-md border border-good/30 bg-good-soft px-2.5 py-1.5 text-[11px] text-good transition-colors hover:bg-good/15"
-      title="Select every position in profit; one click to lock in wins"
-    >
-      <TrendingUp class="h-3 w-3" />
-      Lock winners
-    </button>
-    <a
-      href={csvExportUrl}
-      download
-      class="flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[11px] text-muted transition-colors hover:border-primary/40 hover:text-text"
-      title="Download the current open book as CSV"
-    >
-      <Download class="h-3 w-3" />
-      Export
-    </a>
+  <div class="relative flex items-center gap-1.5">
     <button
       type="button"
       onclick={() => (openTradeOpen = true)}
@@ -370,11 +322,68 @@
       <Plus class="h-3 w-3" />
       Open trade
     </button>
+
+    <details class="relative">
+      <summary
+        class="flex cursor-pointer list-none items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-1.5 text-[11px] text-muted transition-colors hover:border-primary/40 hover:text-text [&::-webkit-details-marker]:hidden"
+        title="More book actions"
+      >
+        <MoreVertical class="h-3.5 w-3.5" />
+      </summary>
+      <div
+        class="absolute right-0 top-full z-30 mt-1.5 w-44 rounded-md border border-border bg-surface shadow-xl"
+      >
+        <button
+          type="button"
+          onclick={() => {
+            const losers = ($positionsQ.data ?? []).filter((p) => p.upnl < 0).map((p) => p.id);
+            if (!losers.length) { toast.info('No losing positions to close'); return; }
+            selected.clear();
+            losers.forEach((id) => selected.add(id));
+            bulkConfirm = true;
+          }}
+          class="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-bad hover:bg-bad-soft"
+        >
+          <TrendingDown class="h-3.5 w-3.5" />
+          Cut losers
+        </button>
+        <button
+          type="button"
+          onclick={() => {
+            const winners = ($positionsQ.data ?? []).filter((p) => p.upnl > 0).map((p) => p.id);
+            if (!winners.length) { toast.info('No winning positions to lock in'); return; }
+            selected.clear();
+            winners.forEach((id) => selected.add(id));
+            bulkConfirm = true;
+          }}
+          class="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-[12px] text-good hover:bg-good-soft"
+        >
+          <TrendingUp class="h-3.5 w-3.5" />
+          Lock winners
+        </button>
+        <a
+          href={csvExportUrl}
+          download
+          class="flex items-center gap-2 border-t border-border px-3 py-2 text-[12px] text-muted hover:bg-surface-2 hover:text-text"
+        >
+          <Download class="h-3.5 w-3.5" />
+          Export CSV
+        </a>
+      </div>
+    </details>
   </div>
 </div>
 
-<!-- ── headline aggregates ─────────────────────────── -->
-<div class="grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-6">
+<!-- ── headline aggregates ───────────────────────────
+     Was 6 tiles. Cut: Winners/Losers (the table sorts by uPnL — the
+     red/green rows speak for themselves) and Notional (rarely the
+     deciding number — the user is much more often asking "am I in
+     control of risk?" than "how much am I deploying?"). The four
+     that survive are decision-relevant: position count + L/S split,
+     where the book sits right now in uPnL, the avg R of risk-defined
+     trades (the actual quality reading), and whether risk is set on
+     every row. -->
+<div class="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
   <div class="rounded-lg border border-border bg-surface px-3 py-2">
     <div class="text-[10px] uppercase tracking-wider text-faint">Open positions</div>
     <div class="mt-0.5 text-[18px] font-semibold tabular text-text">{totals.count}</div>
@@ -391,17 +400,9 @@
     ].join(' ')}>
       {usd(totals.upnl, true)}
     </div>
-    <div class="text-[10.5px] tabular text-faint">across all wallets</div>
-  </div>
-
-  <div class="rounded-lg border border-border bg-surface px-3 py-2">
-    <div class="text-[10px] uppercase tracking-wider text-faint">Winners / Losers</div>
-    <div class="mt-0.5 text-[18px] font-semibold tabular">
-      <span class="text-good">{totals.wins}</span>
-      <span class="text-faint"> / </span>
-      <span class="text-bad">{totals.losses}</span>
+    <div class="text-[10.5px] tabular text-faint">
+      <span class="text-good">{totals.wins} up</span> · <span class="text-bad">{totals.losses} down</span>
     </div>
-    <div class="text-[10.5px] tabular text-faint">in profit / underwater</div>
   </div>
 
   <div class="rounded-lg border border-border bg-surface px-3 py-2">
@@ -413,12 +414,6 @@
       {totals.avgR !== null ? (totals.avgR >= 0 ? '+' : '') + totals.avgR.toFixed(2) + 'R' : '—'}
     </div>
     <div class="text-[10.5px] tabular text-faint">across stop-set positions</div>
-  </div>
-
-  <div class="rounded-lg border border-border bg-surface px-3 py-2">
-    <div class="text-[10px] uppercase tracking-wider text-faint">Notional</div>
-    <div class="mt-0.5 text-[18px] font-semibold tabular text-text">{usd(totals.notional)}</div>
-    <div class="text-[10.5px] tabular text-faint">total exposure</div>
   </div>
 
   <div class="rounded-lg border border-border bg-surface px-3 py-2">
@@ -435,168 +430,130 @@
   </div>
 </div>
 
-<!-- ── quick-filter strip ──────────────────────── -->
-<Card class="mt-3 flex flex-wrap items-center gap-2 px-4 py-2">
-  <span class="text-[10px] font-semibold uppercase tracking-wider text-faint">Quick</span>
-  {#each [
-    ['all',       'All',       null],
-    ['winners',   'Winners',   TrendingUp],
-    ['losers',    'Losers',    TrendingDown],
-    ['near_stop', 'Near stop', AlertTriangle],
-    ['naked',     'No stop',   Shield]
-  ] as [k, label, Icon] (k)}
-    <button
-      type="button"
-      onclick={() => (quick = k as QuickFilter)}
-      class={[
-        'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors',
-        quick === k
-          ? k === 'winners'
-            ? 'border-good/40 bg-good-soft text-good'
-            : k === 'losers'
-              ? 'border-bad/40 bg-bad-soft text-bad'
-              : k === 'near_stop'
+<!-- ── unified toolbar ─────────────────────────────
+     Was two separate Card rows ("quick filter strip" + "filter
+     ribbon") which together held: 5 quick-filter chips, view toggle,
+     wallet select, side chips, has-stop checkbox, select-mode chip,
+     ticker input, bulk-action area. Two Cards stacked on top of each
+     other with the same kind of content is the worst kind of clutter
+     — equal weight, nothing leads.
+
+     Now: one row, grouped left→right by intent:
+       1. Quick filters (the most common day-to-day cut)
+       2. Wallet · Side · Search · Has-stop (refine the cut)
+       3. View toggle + bulk-action area (right-anchored)
+     Eyebrow labels removed — the buttons are self-explanatory and
+     the labels were the loudest thing on the row. -->
+<Card class="mt-3 px-3 py-2">
+  <div class="flex flex-wrap items-center gap-x-1.5 gap-y-1.5">
+    {#each [
+      ['all',       'All',       null],
+      ['winners',   'Winners',   TrendingUp],
+      ['losers',    'Losers',    TrendingDown],
+      ['near_stop', 'Near stop', AlertTriangle],
+      ['naked',     'No stop',   Shield]
+    ] as [k, label, Icon] (k)}
+      <button
+        type="button"
+        onclick={() => (quick = k as QuickFilter)}
+        class={[
+          'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors',
+          quick === k
+            ? k === 'winners'
+              ? 'border-good/40 bg-good-soft text-good'
+              : k === 'losers' || k === 'near_stop'
                 ? 'border-bad/40 bg-bad-soft text-bad'
                 : k === 'naked'
                   ? 'border-warn/40 bg-warn-soft text-warn'
                   : 'border-primary/50 bg-primary-soft text-primary'
-          : 'border-border bg-surface-2 text-muted hover:text-text'
-      ].join(' ')}
-    >
-      {#if Icon}
-        <Icon class="h-3 w-3" />
-      {/if}
-      {label}
-    </button>
-  {/each}
-  <div class="ml-auto inline-flex overflow-hidden rounded-md border border-border">
-    <button
-      type="button"
-      onclick={() => (viewMode = 'table')}
-      class={[
-        'inline-flex items-center gap-1 px-2 py-1 text-[11px] transition-colors',
-        viewMode === 'table'
-          ? 'bg-primary-soft text-primary'
-          : 'bg-surface-2 text-muted hover:text-text'
-      ].join(' ')}
-      title="Table view"
-    ><List class="h-3 w-3" /> Table</button>
-    <button
-      type="button"
-      onclick={() => (viewMode = 'heatmap')}
-      class={[
-        'inline-flex items-center gap-1 border-l border-border px-2 py-1 text-[11px] transition-colors',
-        viewMode === 'heatmap'
-          ? 'bg-primary-soft text-primary'
-          : 'bg-surface-2 text-muted hover:text-text'
-      ].join(' ')}
-      title="Heatmap view"
-    ><LayoutGrid class="h-3 w-3" /> Heatmap</button>
-  </div>
-</Card>
+            : 'border-border bg-surface-2 text-muted hover:text-text'
+        ].join(' ')}
+      >
+        {#if Icon}<Icon class="h-3 w-3" />{/if}
+        {label}
+      </button>
+    {/each}
 
-<!-- ── filter ribbon ───────────────────────────── -->
-<Card class="mt-3 px-4 py-2.5">
-  <div class="flex flex-wrap items-center gap-2">
-    <span class="text-[10px] font-semibold uppercase tracking-wider text-faint">Wallet</span>
+    <span class="mx-1 h-5 w-px bg-border"></span>
+
     <select
       bind:value={fundFilter}
-      class="rounded-md border border-border bg-surface-2 px-2 py-1 text-[12px] text-text focus:border-primary/60 focus:outline-none"
+      title="Filter by wallet"
+      class="rounded-md border border-border bg-surface-2 px-2 py-1 text-[11.5px] text-text focus:border-primary/60 focus:outline-none"
     >
-      <option value="all">all</option>
-      {#each funds as f (f)}
-        <option value={f}>{f}</option>
-      {/each}
+      <option value="all">all wallets</option>
+      {#each funds as f (f)}<option value={f}>{f}</option>{/each}
     </select>
 
-    <span class="ml-2 text-[10px] font-semibold uppercase tracking-wider text-faint">Side</span>
-    {#each [['all', 'All'], ['long', 'Long'], ['short', 'Short']] as [k, label] (k)}
+    {#each [['all', 'All'], ['long', 'L'], ['short', 'S']] as [k, label] (k)}
       <button
         type="button"
         onclick={() => (sideFilter = k as any)}
+        title={k === 'long' ? 'Longs only' : k === 'short' ? 'Shorts only' : 'Both sides'}
         class={[
-          'rounded-md border px-2 py-1 text-[11px] transition-colors',
+          'w-8 rounded-md border px-1.5 py-1 text-[11px] transition-colors',
           sideFilter === k
-            ? k === 'long'
-              ? 'border-good/40 bg-good-soft text-good'
-              : k === 'short'
-                ? 'border-bad/40 bg-bad-soft text-bad'
-                : 'border-primary/50 bg-primary-soft text-primary'
+            ? k === 'long' ? 'border-good/40 bg-good-soft text-good'
+            : k === 'short' ? 'border-bad/40 bg-bad-soft text-bad'
+            : 'border-primary/50 bg-primary-soft text-primary'
             : 'border-border bg-surface-2 text-muted hover:text-text'
         ].join(' ')}
       >{label}</button>
     {/each}
 
-    <label class="flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px]">
-      <input
-        type="checkbox"
-        bind:checked={onlyHasRisk}
-        class="h-3 w-3 cursor-pointer accent-primary"
-      />
+    <input
+      type="text"
+      bind:value={tickerFilter}
+      placeholder="$ticker"
+      class="w-24 rounded-md border border-border bg-surface-2 px-2 py-1 font-mono text-[11.5px] text-text placeholder:text-faint/50 focus:border-primary/60 focus:outline-none"
+    />
+
+    <label class="flex cursor-pointer items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px]" title="Show only positions with a stop OR target set">
+      <input type="checkbox" bind:checked={onlyHasRisk} class="h-3 w-3 cursor-pointer accent-primary" />
       <Shield class="h-3 w-3 text-faint" />
-      <span class={onlyHasRisk ? 'text-text' : 'text-muted'}>Has stop/target</span>
+      <span class={onlyHasRisk ? 'text-text' : 'text-muted'}>risk-set</span>
     </label>
 
     <button
       type="button"
-      onclick={() => {
-        selectMode = !selectMode;
-        if (!selectMode) selected.clear();
-      }}
-      class={[
-        'flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] transition-colors',
-        selectMode
-          ? 'border-primary/50 bg-primary-soft text-primary'
-          : 'border-border bg-surface-2 text-muted hover:text-text'
-      ].join(' ')}
+      onclick={() => { selectMode = !selectMode; if (!selectMode) selected.clear(); }}
       title="Toggle multi-select rows for bulk actions"
+      class={[
+        'flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors',
+        selectMode ? 'border-primary/50 bg-primary-soft text-primary' : 'border-border bg-surface-2 text-muted hover:text-text'
+      ].join(' ')}
     >
       <Layers class="h-3 w-3" />
       {selectMode ? 'Selecting' : 'Select'}
     </button>
 
-    <input
-      type="text"
-      bind:value={tickerFilter}
-      placeholder="$ticker"
-      class="ml-2 w-24 rounded-md border border-border bg-surface-2 px-2 py-1 font-mono text-[12px] text-text placeholder:text-faint/50 focus:border-primary/60 focus:outline-none"
-    />
+    <div class="ml-auto flex items-center gap-2">
+      {#if selected.size > 0}
+        <div class="flex items-center gap-1.5 rounded-md border border-bad/40 bg-bad-soft px-2 py-1 text-[11px] text-bad">
+          <Layers class="h-3 w-3" />
+          <span>{selected.size} selected</span>
+          {#if bulkConfirm}
+            <button
+              type="button"
+              onclick={() => $bulkM.mutate({ ids: [...selected], reason: 'bulk via /book' })}
+              disabled={$bulkM.isPending}
+              class="rounded border border-bad bg-bad/30 px-2 py-0.5 font-medium text-text hover:bg-bad/40 disabled:opacity-50"
+            >Confirm × {selected.size}</button>
+            <button type="button" onclick={() => (bulkConfirm = false)} class="rounded border border-border bg-bg px-2 py-0.5 text-muted hover:text-text">Cancel</button>
+          {:else}
+            <button type="button" onclick={() => (bulkConfirm = true)} class="rounded border border-bad bg-bad/20 px-2 py-0.5 font-medium hover:bg-bad/30">Close</button>
+            <button type="button" onclick={() => selected.clear()} class="text-muted hover:text-text" title="Clear selection"><X class="h-3 w-3" /></button>
+          {/if}
+        </div>
+      {:else}
+        <span class="text-[11px] tabular text-faint">{sorted.length} of {$positionsQ.data?.length ?? 0}</span>
+      {/if}
 
-    {#if selected.size > 0}
-      <div class="ml-auto flex items-center gap-2 rounded-md border border-bad/40 bg-bad-soft px-2 py-1 text-[11px] text-bad">
-        <Layers class="h-3 w-3" />
-        <span>{selected.size} selected</span>
-        {#if bulkConfirm}
-          <button
-            type="button"
-            onclick={() => $bulkM.mutate({ ids: [...selected], reason: 'bulk via /book' })}
-            disabled={$bulkM.isPending}
-            class="rounded border border-bad bg-bad/30 px-2 py-0.5 font-medium text-text hover:bg-bad/40 disabled:opacity-50"
-          >Confirm — close {selected.size}</button>
-          <button
-            type="button"
-            onclick={() => (bulkConfirm = false)}
-            class="rounded border border-border bg-bg px-2 py-0.5 text-muted hover:text-text"
-          >Cancel</button>
-        {:else}
-          <button
-            type="button"
-            onclick={() => (bulkConfirm = true)}
-            class="rounded border border-bad bg-bad/20 px-2 py-0.5 font-medium hover:bg-bad/30"
-          >Close selected</button>
-          <button
-            type="button"
-            onclick={() => selected.clear()}
-            class="text-muted hover:text-text"
-            title="Clear selection"
-          ><X class="h-3 w-3" /></button>
-        {/if}
+      <div class="inline-flex overflow-hidden rounded-md border border-border">
+        <button type="button" onclick={() => (viewMode = 'table')} title="Table" class={['inline-flex items-center gap-1 px-2 py-1 text-[11px] transition-colors', viewMode === 'table' ? 'bg-primary-soft text-primary' : 'bg-surface-2 text-muted hover:text-text'].join(' ')}><List class="h-3 w-3" /></button>
+        <button type="button" onclick={() => (viewMode = 'heatmap')} title="Heatmap" class={['inline-flex items-center gap-1 border-l border-border px-2 py-1 text-[11px] transition-colors', viewMode === 'heatmap' ? 'bg-primary-soft text-primary' : 'bg-surface-2 text-muted hover:text-text'].join(' ')}><LayoutGrid class="h-3 w-3" /></button>
       </div>
-    {:else}
-      <span class="ml-auto text-[11px] tabular text-faint">
-        {sorted.length} of {$positionsQ.data?.length ?? 0}
-      </span>
-    {/if}
+    </div>
   </div>
 </Card>
 

@@ -129,14 +129,9 @@
 <svelte:head><title>Markets · Sentinel</title></svelte:head>
 
 <div class="mb-4 flex items-end justify-between border-b border-border pb-3">
-  <div>
-    <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
-      <span>📈</span><span>Markets</span>
-    </h1>
-    <div class="mt-0.5 text-[11.5px] text-faint">
-      Candle chart with entry markers; live watchlist with multi-period returns.
-    </div>
-  </div>
+  <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
+    <span>📈</span><span>Markets</span>
+  </h1>
 </div>
 
 <!-- ── ticker picker + range chips ─────────────────────────────────── -->

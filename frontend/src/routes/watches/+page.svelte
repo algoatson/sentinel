@@ -56,15 +56,9 @@
 <svelte:head><title>Watches · Sentinel</title></svelte:head>
 
 <div class="mb-4 flex items-end justify-between border-b border-border pb-3">
-  <div>
-    <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
-      <Bell class="h-5 w-5 text-warn" /><span>Watches</span>
-    </h1>
-    <div class="mt-0.5 text-[11.5px] text-faint">
-      Describe what to alert on in plain English. The bot compiles it to a
-      machine-checkable spec and posts to Discord when the condition trips.
-    </div>
-  </div>
+  <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
+    <Bell class="h-5 w-5 text-warn" /><span>Watches</span>
+  </h1>
 </div>
 
 <Card class="px-4 py-3">

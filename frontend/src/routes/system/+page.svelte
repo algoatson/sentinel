@@ -43,15 +43,9 @@
 <svelte:head><title>System · Sentinel</title></svelte:head>
 
 <div class="mb-4 flex items-end justify-between border-b border-border pb-3">
-  <div>
-    <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
-      <Cog class="h-5 w-5 text-muted" /><span>System</span>
-    </h1>
-    <div class="mt-0.5 text-[11.5px] text-faint">
-      Live health verdict, job runs, ingestion streams, LLM stats, and
-      process resource gauges. Auto-refreshes every 15–30s.
-    </div>
-  </div>
+  <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
+    <Cog class="h-5 w-5 text-muted" /><span>System</span>
+  </h1>
 </div>
 
 {#if $healthQ.data}

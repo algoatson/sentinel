@@ -48,15 +48,9 @@
 <svelte:head><title>Lookup · Sentinel</title></svelte:head>
 
 <div class="mb-4 flex items-end justify-between border-b border-border pb-3">
-  <div>
-    <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
-      <Search class="h-5 w-5 text-primary" /><span>Lookup</span>
-    </h1>
-    <div class="mt-0.5 text-[11.5px] text-faint">
-      Every read-only Discord <code class="rounded bg-surface-2 px-1 text-[10px]">!cmd</code>
-      in one place. Same path the chat uses, so the result here matches Discord verbatim.
-    </div>
-  </div>
+  <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
+    <Search class="h-5 w-5 text-primary" /><span>Lookup</span>
+  </h1>
 </div>
 
 <Card class="px-4 py-3">

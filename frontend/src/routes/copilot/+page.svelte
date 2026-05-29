@@ -113,15 +113,9 @@
 <svelte:head><title>Copilot · Sentinel</title></svelte:head>
 
 <div class="mb-4 flex items-end justify-between border-b border-border pb-3">
-  <div>
-    <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
-      <Sparkles class="h-5 w-5 text-violet" /><span>Copilot</span>
-    </h1>
-    <div class="mt-0.5 text-[11.5px] text-faint">
-      Same context as Discord <code class="rounded bg-surface-2 px-1 text-[10px]">!ask</code> /
-      @-mention — the bot sees the live book, wallets, recent filings &amp; theses.
-    </div>
-  </div>
+  <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
+    <Sparkles class="h-5 w-5 text-violet" /><span>Copilot</span>
+  </h1>
   {#if turns.length > 0}
     <button
       onclick={clearChat}

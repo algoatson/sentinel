@@ -162,14 +162,9 @@
 <svelte:head><title>Journal · Sentinel</title></svelte:head>
 
 <div class="mb-4 flex items-end justify-between gap-3 border-b border-border pb-3">
-  <div>
-    <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
-      <BookText class="h-5 w-5 text-primary" /><span>Journal</span>
-    </h1>
-    <div class="mt-0.5 text-[11.5px] text-faint">
-      Post-mortem for every closed trade. Reflect, search, learn.
-    </div>
-  </div>
+  <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
+    <BookText class="h-5 w-5 text-primary" /><span>Journal</span>
+  </h1>
   {#if stats}
     <div class="flex items-baseline gap-3 text-[11px] tabular text-faint">
       <span><span class="text-text">{stats.count}</span> trades</span>

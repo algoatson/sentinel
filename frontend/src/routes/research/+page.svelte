@@ -94,16 +94,9 @@
 <svelte:head><title>Research · Sentinel</title></svelte:head>
 
 <div class="mb-4 flex items-end justify-between border-b border-border pb-3">
-  <div>
-    <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
-      <FlaskConical class="h-5 w-5 text-violet" /><span>Research Desk</span>
-    </h1>
-    <div class="mt-0.5 text-[11.5px] text-faint">
-      Send a prompt → the bot researches → it returns a verdict
-      (<span class="text-good">TRADE</span> / <span class="text-warn">WATCHLIST</span> / <span class="text-bad">PASS</span>).
-      Approved trades execute against the <span class="font-mono text-violet">research</span> wallet.
-    </div>
-  </div>
+  <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
+    <FlaskConical class="h-5 w-5 text-violet" /><span>Research Desk</span>
+  </h1>
   <div class="flex items-center gap-3 text-[11px] tabular">
     <span class="text-faint">Executions left today:</span>
     <span class="text-[14px] font-semibold {($remainingQ.data?.remaining ?? 0) > 0 ? 'text-good' : 'text-bad'}">

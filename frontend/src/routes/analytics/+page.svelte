@@ -96,15 +96,9 @@
 <svelte:head><title>Analytics · Sentinel</title></svelte:head>
 
 <div class="mb-4 flex flex-wrap items-end justify-between gap-3 border-b border-border pb-3">
-  <div>
-    <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
-      <BarChart3 class="h-5 w-5 text-primary" /><span>Analytics</span>
-    </h1>
-    <div class="mt-0.5 text-[11.5px] text-faint">
-      Hot tickers · calibration (Brier + reliability) · realised-P&L
-      attribution. The bot's signal layer, audited.
-    </div>
-  </div>
+  <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
+    <BarChart3 class="h-5 w-5 text-primary" /><span>Analytics</span>
+  </h1>
 
   <div class="flex items-center gap-1">
     <span class="mr-1 text-[10px] font-semibold uppercase tracking-wider text-faint">Window</span>

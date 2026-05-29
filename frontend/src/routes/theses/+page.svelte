@@ -87,15 +87,9 @@
 <svelte:head><title>Theses · Sentinel</title></svelte:head>
 
 <div class="mb-4 flex items-end justify-between border-b border-border pb-3">
-  <div>
-    <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
-      <Brain class="h-5 w-5 text-violet" /><span>Running theses</span>
-    </h1>
-    <div class="mt-0.5 text-[11.5px] text-faint">
-      Hypotheses the bot maintains across days. News + filings auto-link as
-      supports / challenges / neutral.
-    </div>
-  </div>
+  <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
+    <Brain class="h-5 w-5 text-violet" /><span>Running theses</span>
+  </h1>
   <button
     onclick={() => $generateM.mutate()}
     disabled={$generateM.isPending}

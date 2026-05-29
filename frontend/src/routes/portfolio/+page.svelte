@@ -4,7 +4,6 @@
   import { wallets, walletHistory, equityCurve } from '$api';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
-  import StatTile from '$components/StatTile.svelte';
   import Drawer from '$components/Drawer.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
@@ -124,27 +123,39 @@
 
 <svelte:head><title>Portfolio · Sentinel</title></svelte:head>
 
-<div class="mb-4 flex items-end justify-between border-b border-border pb-3">
-  <div>
-    <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
-      <span>💼</span><span>Portfolio</span>
-    </h1>
-    <div class="mt-0.5 text-[11.5px] text-faint">
-      Autonomous wallets — each runs its own mandate. Click a card for open positions and 90-day trade history.
+<!-- Header — was a 2-line "what is this page" description. The page
+     IS the description; the wallet cards explain themselves. Title +
+     a small aggregate line on the right, no caption. -->
+<div class="mb-4 flex items-end justify-between gap-3 border-b border-border pb-3">
+  <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
+    <span>💼</span><span>Portfolio</span>
+  </h1>
+  {#if aggregate}
+    <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11.5px] tabular text-faint">
+      <span class="font-semibold text-text">{usd(aggregate.equity)}</span>
+      <span class={[
+        'tabular font-semibold',
+        aggregate.ret_pct > 0 ? 'text-good' : aggregate.ret_pct < 0 ? 'text-bad' : 'text-muted'
+      ].join(' ')}>{aggregate.ret_pct >= 0 ? '+' : ''}{aggregate.ret_pct.toFixed(1)}%</span>
+      <span>·</span>
+      <span class={aggregate.upnl > 0 ? 'text-good' : aggregate.upnl < 0 ? 'text-bad' : ''}>
+        uPnL {usd(aggregate.upnl, true)}
+      </span>
+      {#if aggregate.closed > 0 && aggregate.win_rate !== null}
+        <span>·</span>
+        <span>{aggregate.win_rate.toFixed(0)}% win on {aggregate.closed}</span>
+      {/if}
     </div>
-  </div>
+  {/if}
 </div>
 
-{#if aggregate}
-  <div class="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-    <StatTile label="Aggregate equity" value={usd(aggregate.equity)} sub={`from ${usd(aggregate.start)}`} />
-    <StatTile label="Aggregate return" value={`${aggregate.ret_pct.toFixed(1)}%`} toneValue={aggregate.ret_pct} sub="since inception" />
-    <StatTile label="Unrealized P&L" value={usd(aggregate.upnl, true)} toneValue={aggregate.upnl} sub={`${aggregate.open} open`} />
-    <StatTile label="Win rate" value={aggregate.win_rate !== null ? `${aggregate.win_rate.toFixed(0)}%` : '—'} sub={`${aggregate.wins}/${aggregate.closed} closed`} />
-    <StatTile label="Wallets" value={String($walletsQ.data?.length ?? 0)} sub="active funds" />
-    <StatTile label="Closed trades" value={String(aggregate.closed)} sub="all time" />
-  </div>
-{/if}
+<!-- Aggregate ribbon — was 6 tiles where 4 of them duplicated numbers
+     that are already on every per-wallet card below (Aggregate return:
+     each card shows its own; Wallets: we literally render the count of
+     cards; Closed trades: each card shows it; uPnL: each card shows
+     it). Now: a single line in the header above. The wallet cards
+     ARE the story on this page. -->
+<!-- (intentionally empty — aggregate moved into header) -->
 
 <div class="mt-5">
   {#if $walletsQ.isLoading}

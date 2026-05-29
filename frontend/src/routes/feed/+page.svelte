@@ -137,15 +137,9 @@
 <svelte:head><title>Live feed · Sentinel</title></svelte:head>
 
 <div class="mb-4 flex flex-wrap items-end justify-between gap-3 border-b border-border pb-3">
-  <div>
-    <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
-      <ActivityIcon class="h-5 w-5 text-primary" /><span>Live feed</span>
-    </h1>
-    <div class="mt-0.5 text-[11.5px] text-faint">
-      Unified stream of bot events — news, calls, filings, watch trips,
-      trades. Hydrates from history then streams over SSE.
-    </div>
-  </div>
+  <h1 class="flex items-center gap-2 text-lg font-semibold tracking-tight">
+    <ActivityIcon class="h-5 w-5 text-primary" /><span>Live feed</span>
+  </h1>
 
   <div class="flex items-center gap-3 text-[11px]">
     <span class="flex items-center gap-1.5 tabular">
