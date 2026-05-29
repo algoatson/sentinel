@@ -36,9 +36,13 @@ from ..models import (
 from ..portfolio import is_held
 
 
-# Move thresholds (abs 1d %) by asset class — crypto is noisier so the bar
-# is higher. Volume ≥ this ×20d-avg triggers regardless of price.
-_PCT_THRESHOLD = {"equity": 0.07, "crypto": 0.15, "future": 0.04, "rate": 0.05}
+# Move thresholds (abs 1d %) by asset class — Volume ≥ this ×20d-avg
+# triggers regardless of price. Crypto threshold was 0.15 (15%): too high
+# for the kind of moves we actually want to be trading on. A coin moving
+# 6-10% is exactly where the bot should be forming a read; the old gate
+# kept it silent until the squeeze was already half-done. Crypto wallet's
+# stop band is now -12% so triggering at +8% gives a real R:R window.
+_PCT_THRESHOLD = {"equity": 0.07, "crypto": 0.08, "future": 0.04, "rate": 0.05}
 _VOL_THRESHOLD = 3.0
 # Heavy model is the reasoning model but slow on CPU; keep the per-cycle cap
 # tight so a cycle can't run for an hour.

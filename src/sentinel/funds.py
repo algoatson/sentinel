@@ -72,16 +72,34 @@ _POLICIES: dict[str, dict] = {
         "max_hold_days": 20,
     },
     "crypto": {
-        "mandate": "🪙 Crypto — coins only, 24/7, any source; wide bands for "
-        "crypto vol, medium book.",
-        "sources": {"why_moved", "convergence", "synthesis"},
+        "mandate": "🪙 Crypto — coins only, 24/7, tighter sizing + faster "
+        "cuts than the old wide-band setup. Requires funding/OI data on the "
+        "ticker at open time (blind crypto = bad crypto).",
+        # `funding_squeeze` is the new deterministic detector — when it
+        # fires the conviction came from a deeply-extreme funding rate,
+        # not a generic price move, so this wallet wants in on those.
+        "sources": {"why_moved", "convergence", "synthesis", "funding_squeeze"},
         "min_conviction": 3,
         "asset_classes": {"crypto"},
-        "size_pct": 0.15,
+        # Notable tighten from the prior (0.15 / -0.20 / 7d) defaults. The
+        # old config let one losing position bleed 3% of equity (20% adverse
+        # × 15% notional) and 8 of those concurrently dominated the wallet.
+        # Smaller bets + faster cuts × 5:1 R:R is the better shape for an
+        # asset class where most moves are noise inside ±15% range.
+        "size_pct": 0.10,
         "max_positions": 8,
-        "stop_pct": -0.20,
+        "stop_pct": -0.12,
         "take_pct": 0.60,
-        "max_hold_days": 7,
+        # Crypto moves fast; a thesis that hasn't played out in 4 days is
+        # almost always wrong. Old 7d held capital in stale theses for
+        # an extra half-week of opportunity cost.
+        "max_hold_days": 4,
+        # Crypto policy is the only wallet that gates on microstructure
+        # data. Read by _run() via pol.get("require_micro"); without
+        # funding/OI/orderbook context the bot is flying blind on a
+        # coin whose price action is dominated by perpetual-futures
+        # flow.
+        "require_micro": True,
     },
     "sniper": {
         "mandate": "🔭 Sniper — ONLY 5/5-conviction convergence/synthesis, a "
@@ -371,6 +389,11 @@ _BASE_RISK_PCT = 0.008
 # manual /book ATR-suggest button uses, so the bot and the user share
 # the same definition of "noise" room.
 _ATR_STOP_MULT = 2.0
+# Crypto trades around the clock and routinely gaps through a tight
+# 2×ATR stop during off-hours liquidity holes. 2.8× gives the position
+# room to survive the regime without becoming structurally directional.
+# This is still tighter than the legacy 20% policy-pct fallback.
+_ATR_STOP_MULT_CRYPTO = 2.8
 
 # No fund opens more than this many positions in one UTC day. Stops
 # news-cascade churn (a CPI print can generate a dozen calls in an
@@ -581,16 +604,18 @@ def _atr_in_session(session, ticker: str, period: int = 14) -> float | None:
 
 
 def _compute_stop_target(
-    *, side: str, mark: float, atr: float | None, pol: dict
+    *, side: str, mark: float, atr: float | None, pol: dict,
+    asset_class: str | None = None,
 ) -> tuple[float | None, float | None]:
     """(stop_price, target_price) for a new position.
 
     Strategy:
-      - If ATR is available → stop is `2 × ATR` off the mark on the
-        loss side. Target preserves the policy's risk-reward ratio
-        (`take_pct / |stop_pct|`) so the long-run R-multiple intent
-        of the wallet stays intact while the *distance* scales with
-        actual volatility.
+      - If ATR is available → stop is `mult × ATR` off the mark on the
+        loss side, where `mult` is 2 for equities and 2.8 for crypto
+        (24/7 vol regime gaps right through a tight 2×ATR stop). Target
+        preserves the policy's risk-reward ratio (`take_pct / |stop_pct|`)
+        so the long-run R-multiple intent of the wallet stays intact
+        while the *distance* scales with actual volatility.
       - Else fall back to the legacy fixed-percent rule from policy
         (stop_pct / take_pct), so funds keep trading on tickers
         without enough bar history yet (fresh crypto, new IPOs).
@@ -604,7 +629,11 @@ def _compute_stop_target(
     rr = (take_pct / stop_pct) if stop_pct > 0 else 0.0
 
     if atr is not None and atr > 0:
-        stop_dist = _ATR_STOP_MULT * atr
+        atr_mult = (
+            _ATR_STOP_MULT_CRYPTO if asset_class == "crypto"
+            else _ATR_STOP_MULT
+        )
+        stop_dist = atr_mult * atr
         target_dist = stop_dist * rr if rr > 0 else stop_dist * 2.0
     else:
         # Legacy: distance is mark × policy pct. Guarantees the
@@ -845,6 +874,27 @@ def _run() -> list[dict]:
                 if mark is None or mark <= 0:
                     continue
 
+                # Crypto-only gate: don't open without microstructure
+                # data on the coin. Funding rate / OI / orderbook
+                # imbalance is the context that explains *why* a coin
+                # ripped — without it the bot is taking a directional
+                # bet on what's often pure perp-flow that the price
+                # series alone can't see. The crypto_micro ingester
+                # covers ~25 curated coins; anything outside that set
+                # isn't suitable autonomous-trading material for this
+                # wallet. Equities/futures don't have an analogue, so
+                # the gate only fires for asset_class=crypto.
+                if pol.get("require_micro") and acls == "crypto":
+                    from .ingesters.crypto_micro import micro_for
+                    micro = micro_for(call.ticker)
+                    if micro is None:
+                        logger.debug(
+                            "funds[{}]: skip ${} — no microstructure data "
+                            "(require_micro)",
+                            fund.name, call.ticker,
+                        )
+                        continue
+
                 # Earnings blackout — no fund INITIATES exposure into a
                 # binary print (also blocks a flip into one: don't churn
                 # into uncontrolled risk).
@@ -904,6 +954,7 @@ def _run() -> list[dict]:
                 atr = _atr_in_session(s, call.ticker)
                 stop, target = _compute_stop_target(
                     side=want, mark=mark, atr=atr, pol=pol,
+                    asset_class=acls,
                 )
                 # Conviction- and drawdown-scaled risk budget. Capped by
                 # the original size_pct on top conviction so a c5 sniper

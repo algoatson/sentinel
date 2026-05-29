@@ -41,6 +41,7 @@ from .pipelines import (
     convergence,
     digest,
     filings,
+    funding_squeeze,
     hot_movers,
     lounge,
     macro_themes,
@@ -202,6 +203,15 @@ def make_scheduler() -> AsyncIOScheduler:
         crypto_micro.poll_crypto_micro,
         _every(minutes=20),
         id="crypto_micro",
+        **_COMMON,
+    )
+    # Funding squeeze detector — pure deterministic rules over the
+    # micro data crypto_micro just stored. Runs 5 min after the micro
+    # poll so the latest tick is in place. No LLM, cheap.
+    sched.add_job(
+        funding_squeeze.run_funding_squeeze,
+        _every(minutes=20),
+        id="funding_squeeze",
         **_COMMON,
     )
     sched.add_job(
