@@ -591,8 +591,24 @@ class LLM:
         """
         if grounded and messages:
             preamble = grounding.prepend("").strip()
-            if preamble and (not messages or messages[0].get("role") != "system"):
-                messages = [{"role": "system", "content": preamble}, *messages]
+            if preamble:
+                if messages[0].get("role") == "system":
+                    # The tool-loop callers (why_moved, convergence,
+                    # copilot) already pre-load their own system
+                    # instructions. Without this merge the grounding
+                    # preamble was silently skipped on every tool-driven
+                    # cycle, which is the entire path the bot uses for
+                    # live reasoning. Prepend the date/world anchor INTO
+                    # the existing system message instead.
+                    first = dict(messages[0])
+                    existing = first.get("content") or ""
+                    first["content"] = f"{preamble}\n\n{existing}"
+                    messages = [first, *messages[1:]]
+                else:
+                    messages = [
+                        {"role": "system", "content": preamble},
+                        *messages,
+                    ]
 
         route = _api_route(model)
         if route is not None:
