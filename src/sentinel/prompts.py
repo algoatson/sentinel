@@ -551,49 +551,32 @@ def get_prompt(name: str) -> Template:
     raise KeyError(f"unknown prompt: {name}")
 
 
-# "materiality" is the only prompt the feedback/tuning loop rewrites at
-# runtime; its DB version is authoritative and must never be overwritten by
-# the code constant. Every other prompt is code-authoritative: editing the
-# constant should actually change behaviour on next boot.
-_USER_TUNED = {"materiality"}
-
-
 def seed_prompts() -> None:
-    """Reconcile PromptVersion with the code constants.
+    """Seed PromptVersion from the code constants on first install only.
 
-    - `materiality`: insert once if missing, then never touch (tuning owns it).
-    - everything else: if the active row doesn't match the current constant,
-      deactivate it and insert the constant as the new active version. This
-      makes prompt edits in code take effect without a manual migration.
-    Idempotent: a boot where nothing changed writes nothing.
+    Once a row exists for a prompt name — whether the original code-seed
+    or a user edit from the /system prompt editor — boot leaves it alone.
+    The DB is authoritative; the code constant is just the fresh-install
+    default.
+
+    Earlier versions of this function "self-healed" the active row to
+    match the code template on every boot, which silently destroyed any
+    edit the user had made via `/api/prompts` (same class of bug as the
+    seed_funds mandate-stomping that was fixed in f94f082). If the user
+    actually wants to pick up a newer code constant after a deploy, they
+    call `/api/prompts/{name}/reset` (which deactivates the DB override
+    and falls back to the code template via `get_prompt`).
+    Idempotent: boots that don't introduce any new prompt name write
+    nothing.
     """
     now = datetime.now(timezone.utc)
     with session_scope() as session:
         for name, tmpl in ALL_PROMPTS.items():
-            rows = session.exec(
+            existing = session.exec(
                 select(PromptVersion).where(PromptVersion.prompt_name == name)
-            ).all()
-            active = next((r for r in rows if r.active), None)
-
-            if name in _USER_TUNED:
-                if not rows:
-                    session.add(
-                        PromptVersion(
-                            prompt_name=name,
-                            content=tmpl.template,
-                            created_at=now,
-                            active=True,
-                        )
-                    )
+            ).first()
+            if existing is not None:
                 continue
-
-            if active is not None and active.content == tmpl.template:
-                continue  # already current — no churn
-
-            for r in rows:
-                if r.active:
-                    r.active = False
-                    session.add(r)
             session.add(
                 PromptVersion(
                     prompt_name=name,
@@ -602,4 +585,4 @@ def seed_prompts() -> None:
                     active=True,
                 )
             )
-            logger.info("prompt '{}' refreshed from code", name)
+            logger.info("prompt '{}' seeded from code (first install)", name)

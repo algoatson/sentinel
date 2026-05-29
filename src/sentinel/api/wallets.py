@@ -141,11 +141,12 @@ def update_wallet_policy(name: str, body: PolicyPatch) -> dict:
         if fund is None:
             raise HTTPException(404, f"wallet {name!r} not found")
         for k, v in payload.items():
-            # Explicit None on a normal field is treated as "no change"
-            # — that's what `clear` is for. exclude_unset already
-            # ensured these keys are explicitly set, so we only skip
-            # the literal-None body of explicit ones (rare).
-            if v is None and k not in ("active",):
+            # Explicit None on any knob is treated as "no change" — that
+            # is what `clear` is for. `active` is a non-nullable bool, so
+            # an explicit null from the caller (e.g. an over-eager UI
+            # form) must be ignored too rather than writing NULL to a
+            # NOT-NULL column.
+            if v is None:
                 continue
             setattr(fund, k, v)
         for k in clear:
