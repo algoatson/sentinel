@@ -85,13 +85,14 @@ def record_call(
         # notable gate, wallet_meta buckets) with no change to those systems.
         by_source = track_record_summary()["by_source"]
         conviction, fade_note = _fade_conviction(source, conviction, by_source)
-        thesis_out = thesis[:400]
         if fade_note:
             thesis_out = f"{thesis} · ⚖︎ {fade_note}"[:400]
             logger.info(
                 "scorecard: {} {} conv→{} ({})",
                 ticker, source, conviction, fade_note,
             )
+        else:
+            thesis_out = thesis[:400]
         with session_scope() as s:
             # De-dup standing ideas: a 6h pipeline re-emitting the same
             # thesis must NOT count as a fresh call (it would inflate the
