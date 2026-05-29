@@ -6,6 +6,7 @@
   import {
     LayoutDashboard,
     Briefcase,
+    Layers,
     LineChart,
     FlaskConical,
     Brain,
@@ -34,34 +35,48 @@
   type Item = { href: string; label: string; icon: typeof LayoutDashboard };
   type Section = { label: string; items: Item[] };
 
+  // Resectioned for scanability. Old layout had "Portfolio" and "Book"
+  // both using the same Briefcase icon (looked like a typo), 11 nav
+  // items in a single section (a wall to scan), and "Live feed" sitting
+  // in the workspace mix even though it's a passive stream. Now:
+  //   • Trade  — the day-to-day money loop (4)
+  //   • Intel  — the bot's research output (4)
+  //   • Tools  — utilities (5)
+  //   • Ops    — config + system (2)
+  // Book gets the Layers icon so it's visually distinct from Portfolio.
   const sections: Section[] = [
     {
-      label: 'Workspace',
+      label: 'Trade',
       items: [
         { href: '/overview', label: 'Overview', icon: LayoutDashboard },
         { href: '/portfolio', label: 'Portfolio', icon: Briefcase },
-        { href: '/book', label: 'Book', icon: Briefcase },
-        { href: '/journal', label: 'Journal', icon: BookText },
+        { href: '/book', label: 'Book', icon: Layers },
+        { href: '/journal', label: 'Journal', icon: BookText }
+      ]
+    },
+    {
+      label: 'Intel',
+      items: [
         { href: '/markets', label: 'Markets', icon: LineChart },
         { href: '/research', label: 'Research', icon: FlaskConical },
         { href: '/theses', label: 'Theses', icon: Brain },
         { href: '/intel', label: 'Intel', icon: Satellite },
         { href: '/calls', label: 'Calls', icon: Target },
-        { href: '/analytics', label: 'Analytics', icon: BarChart3 },
-        { href: '/feed', label: 'Live feed', icon: ActivityIcon }
+        { href: '/analytics', label: 'Analytics', icon: BarChart3 }
       ]
     },
     {
       label: 'Tools',
       items: [
+        { href: '/copilot', label: 'Copilot', icon: Sparkles },
         { href: '/watches', label: 'Watches', icon: Bell },
         { href: '/lookup', label: 'Lookup', icon: Search },
         { href: '/compare', label: 'Compare', icon: GitCompareArrows },
-        { href: '/copilot', label: 'Copilot', icon: Sparkles }
+        { href: '/feed', label: 'Live feed', icon: ActivityIcon }
       ]
     },
     {
-      label: 'Operations',
+      label: 'Ops',
       items: [
         { href: '/system', label: 'System', icon: Cog },
         { href: '/settings', label: 'Settings', icon: SlidersHorizontal }

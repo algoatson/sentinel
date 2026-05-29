@@ -1,7 +1,6 @@
 <script lang="ts">
   import { createQuery } from '@tanstack/svelte-query';
-  import { kpi, health } from '$api';
-  import { usd, pct, tone } from '../format';
+  import { health } from '$api';
   import { Menu, Search } from 'lucide-svelte';
   import NotificationBell from './NotificationBell.svelte';
   import MarketStatusPill from './MarketStatusPill.svelte';
@@ -23,12 +22,10 @@
     modKey = isMac ? '⌘' : 'Ctrl';
   });
 
-  const kpiQ = createQuery({
-    queryKey: ['kpi'],
-    queryFn: kpi,
-    refetchInterval: 30_000
-  });
-
+  // Note: TopBar used to show the equity + inception % too, but the
+  // Overview hero already renders that big — duplicating it cluttered
+  // the strip without giving the user anything new. TopBar is now
+  // strictly globals: clock, market status, notifications, health.
   const healthQ = createQuery({
     queryKey: ['health'],
     queryFn: health,
@@ -72,21 +69,11 @@
     <Menu class="h-5 w-5" />
   </button>
 
-  <div class="flex min-w-0 flex-1 items-baseline gap-3 text-sm">
-    {#if $kpiQ.data}
-      {@const eq = $kpiQ.data.equity}
-      {@const ret = $kpiQ.data.return_pct}
-      <div class="flex items-baseline gap-1.5">
-        <span class="hidden text-[10px] uppercase tracking-wider text-faint sm:inline">Equity</span>
-        <span class="font-semibold tabular text-text">{usd(eq)}</span>
-        {#if ret !== null}
-          <span class={['tabular text-xs', tone(ret) === 'pos' ? 'text-good' : tone(ret) === 'neg' ? 'text-bad' : 'text-muted'].join(' ')}>
-            {pct(ret, 1)}
-          </span>
-        {/if}
-      </div>
-    {/if}
-  </div>
+  <!-- Spacer — the equity readout that used to live here moved out;
+       see the comment near the healthQ definition. Keeping this flex
+       column so the right-side cluster (clock / market / bell /
+       health) still aligns to the far right. -->
+  <div class="flex min-w-0 flex-1 items-baseline gap-3 text-sm"></div>
 
   <div class="flex shrink-0 items-center gap-3 text-xs">
     <button

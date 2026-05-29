@@ -18,14 +18,12 @@
   import DailyPlanCard from '$components/DailyPlanCard.svelte';
   import LiveEvents from '$components/LiveEvents.svelte';
   import WalletAllocation from '$components/WalletAllocation.svelte';
-  import HealthPill from '$components/HealthPill.svelte';
   import ConvergingNow from '$components/ConvergingNow.svelte';
-  import { goto } from '$app/navigation';
   import { base } from '$app/paths';
-  import { usd, compact, timeAgo, pct, tone, stripMd } from '$lib/format';
+  import { usd, timeAgo, pct, tone, stripMd } from '$lib/format';
   import {
     Newspaper, FileText, Target as TargetIcon, ArrowUpRight, ArrowDownRight,
-    Wallet, TrendingUp, Activity as ActivityIcon, Brain, Sparkles, Zap, Flame
+    TrendingUp, Zap, Flame
   } from 'lucide-svelte';
 
   type Range = { label: string; days: number };
@@ -109,19 +107,14 @@
 
 <svelte:head><title>Overview · Sentinel</title></svelte:head>
 
-<!-- ── HERO: equity number + return + today + quick stats ──────────────── -->
-<div class="mb-4">
-  <div class="flex items-baseline gap-2 text-[11px] font-semibold uppercase tracking-[0.13em] text-faint">
-    <span>Aggregate equity</span>
-    {#if $kpiQ.data?.wallets}
-      <span class="normal-case tracking-normal text-faint">
-        · {$kpiQ.data.wallets} wallets
-      </span>
-    {/if}
-    <span class="ml-auto"><HealthPill /></span>
-  </div>
-
-  <div class="mt-1 flex flex-wrap items-end gap-x-4 gap-y-1.5">
+<!-- ── HERO: equity headline + the three numbers that matter ──────────── -->
+<!-- One row, four chips, no eyebrow. The TopBar already shows equity +
+     return + health, so this stays focused on the WIDER context: total
+     equity (big), inception return, today's realised, open uPnL, hit
+     rate. Anything that was duplicated with TopBar or the KPI ribbon
+     below has been removed. -->
+<div class="mb-5">
+  <div class="flex flex-wrap items-end gap-x-4 gap-y-2">
     <span class="text-[2.6rem] font-semibold leading-none tracking-tight tabular text-text">
       {$kpiQ.data ? usd($kpiQ.data.equity) : '—'}
     </span>
@@ -135,8 +128,8 @@
         {#if t === 'pos'}<ArrowUpRight class="h-4 w-4 self-center" />
         {:else if t === 'neg'}<ArrowDownRight class="h-4 w-4 self-center" />{/if}
         {pct(r, 2)}
+        <span class="ml-1 text-[10.5px] font-normal text-faint">since inception</span>
       </span>
-      <span class="text-[11px] text-faint">since inception</span>
     {/if}
 
     {#if realCum.length > 1}
@@ -149,10 +142,10 @@
     {/if}
   </div>
 
-  <!-- Secondary row: today's realised + unrealised + position counts.
-       Each chip is independently shown — we don't drop the whole row
-       when one source is empty. -->
-  <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] tabular">
+  <!-- Single chip-row: today + open uPnL + open count. Dropped the
+       "calls hit-rate" chip — it lives in the KPI ribbon directly
+       below, so the same number is no longer rendered twice. -->
+  <div class="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] tabular">
     {#if $pulseQ.data}
       {@const today = $pulseQ.data.realized_today ?? 0}
       <span class={[
@@ -185,32 +178,31 @@
         {/if}
       </span>
     {/if}
-    {#if $kpiQ.data?.hit_rate_pct !== null && $kpiQ.data?.hit_rate_pct !== undefined}
-      <span class="inline-flex items-baseline gap-1 rounded border border-border bg-surface-2 px-2 py-0.5 text-muted">
-        <span class="text-[9.5px] uppercase tracking-wider opacity-80">calls</span>
-        <span class={[
-          'font-semibold',
-          $kpiQ.data.hit_rate_pct >= 50 ? 'text-good' : 'text-bad'
-        ].join(' ')}>{$kpiQ.data.hit_rate_pct.toFixed(0)}%</span>
-        <span class="text-[9.5px] opacity-70">
-          {$kpiQ.data.hits ?? 0}/{$kpiQ.data.calls_scored ?? 0}
-        </span>
-      </span>
-    {/if}
   </div>
 </div>
 
 
-<!-- ── TODAY'S PULSE + book tape + live events + daily plan ─────────── -->
-<div class="mb-4 space-y-2">
+<!-- ── TODAY + DAILY PLAN (paired) ────────────────────────────────────
+     Was a 4-stack (TodayPulse + HoldingsTape + LiveEvents + DailyPlanCard)
+     which felt like a wall of widgets. Today's pulse sits next to the
+     plan because they read together ("what's happening" vs "what I
+     want to do"). The held-tickers tape sits below as a compact strip.
+     LiveEvents moved to the bottom (it's a passive log, not a hero
+     element). -->
+<div class="mb-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
   <TodayPulse />
-  <HoldingsTape />
-  <LiveEvents />
   <DailyPlanCard />
 </div>
+<div class="mb-4">
+  <HoldingsTape />
+</div>
 
-<!-- ── KPI ribbon ────────────────────────────────────────────────────── -->
-<div class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+<!-- ── KPI ribbon ──────────────────────────────────────────────────────
+     Trimmed from 6 → 3 tiles. Dropped: Wallets (TopBar shows count via
+     the hero subtitle and Portfolio page covers detail), LLM (lives on
+     /system + TopBar pill), Closed trades (already the denominator on
+     the Realised P&L tile). -->
+<div class="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
   {#if $kpiQ.data}
     {@const k = $kpiQ.data}
     {#snippet kpi(label: string, value: string, sub: string, icon: any, accent: 'pos' | 'neg' | 'none' = 'none')}
@@ -234,7 +226,6 @@
       </div>
     {/snippet}
 
-    {@render kpi('Wallets', String(k.wallets ?? '—'), 'active funds', Wallet)}
     {@render kpi(
       'Open positions',
       k.open_positions !== null ? String(k.open_positions) : '—',
@@ -255,16 +246,8 @@
       k.calls_scored ? `${k.hits ?? 0}/${k.calls_scored} scored` : 'none yet',
       TargetIcon
     )}
-    {@render kpi(
-      'LLM',
-      k.llm_reliability_pct !== null ? `${k.llm_reliability_pct.toFixed(1)}%` : '—',
-      k.llm_calls ? `${compact(k.llm_calls)} calls · ${k.llm_errors ?? 0} fail` : 'idle',
-      Sparkles,
-      (k.llm_reliability_pct ?? 100) < 90 ? 'neg' : 'none'
-    )}
-    {@render kpi('Closed trades', String(k.closed ?? 0), 'all time', ActivityIcon)}
   {:else if $kpiQ.isLoading}
-    {#each Array(6) as _, i (i)}
+    {#each Array(3) as _, i (i)}
       <div class="h-[5.4rem] animate-pulse rounded-lg border border-border bg-surface" />
     {/each}
   {/if}
@@ -452,7 +435,11 @@
   </Card>
 {/if}
 
-<!-- ── upcoming catalysts ────────────────────────────────── -->
+<!-- ── upcoming catalysts ──────────────────────────────────
+     Was: each event in a fat bordered chip with two pills, 20 of
+     them wrapping across the row. Now: a compact horizontal strip,
+     one line, with a small earnings/macro marker before each entry.
+     Reads like a calendar bar instead of a sticker collection. -->
 {#if $catalystsQ.data?.events?.length}
   <Card class="mt-4 px-4 py-3">
     <div class="mb-2 flex items-baseline gap-2">
@@ -463,16 +450,16 @@
         {$catalystsQ.data.events.length}
       </span>
     </div>
-    <div class="flex flex-wrap gap-2">
-      {#each $catalystsQ.data.events.slice(0, 20) as e (e.date + (e.ticker ?? e.label ?? ''))}
-        <div class="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[11.5px]">
+    <div class="flex flex-wrap gap-x-3 gap-y-1.5 text-[11.5px]">
+      {#each $catalystsQ.data.events.slice(0, 24) as e (e.date + (e.ticker ?? e.label ?? ''))}
+        <div class="inline-flex items-center gap-1.5">
           <span class="font-mono tabular text-faint">{e.date.slice(5)}</span>
           {#if e.ticker}
+            <span class="h-1.5 w-1.5 rounded-full bg-warn" title="earnings"></span>
             <TickerLink ticker={e.ticker} class="text-[11.5px]" />
-            <Pill variant="warn">earnings</Pill>
           {:else if e.label}
+            <span class="h-1.5 w-1.5 rounded-full bg-primary" title="macro"></span>
             <span class="text-muted">{e.label}</span>
-            <Pill variant="info">macro</Pill>
           {/if}
         </div>
       {/each}
@@ -501,7 +488,7 @@
       </div>
     {:else}
       <ul class="divide-soft -mx-1 flex-1">
-        {#each $callsQ.data.slice(0, 8) as c (c.id)}
+        {#each $callsQ.data.slice(0, 5) as c (c.id)}
           <li>
             <a
               href={`${base}/calls`}
@@ -548,7 +535,7 @@
       </div>
     {:else}
       <ul class="divide-soft -mx-1 flex-1">
-        {#each $filingsQ.data.slice(0, 8) as f (f.id)}
+        {#each $filingsQ.data.slice(0, 5) as f (f.id)}
           <li>
             <a
               href={`${base}/intel`}
@@ -601,7 +588,7 @@
       </div>
     {:else}
       <ul class="divide-soft -mx-1 flex-1">
-        {#each $newsQ.data.slice(0, 8) as n (n.id)}
+        {#each $newsQ.data.slice(0, 5) as n (n.id)}
           <li>
             <a
               href={`${base}/intel`}
@@ -630,4 +617,12 @@
       >View all news →</a>
     {/if}
   </Card>
+</div>
+
+<!-- ── live events (footer) ──────────────────────────────────
+     The SSE stream lives at the bottom now, not as a hero element —
+     it's a passive log, not something to land on. Useful as
+     ambient confirmation that the bot is alive. -->
+<div class="mt-4">
+  <LiveEvents />
 </div>
