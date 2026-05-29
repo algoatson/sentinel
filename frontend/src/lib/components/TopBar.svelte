@@ -1,6 +1,9 @@
 <script lang="ts">
   import { createQuery } from '@tanstack/svelte-query';
-  import { health } from '$api';
+  import { page } from '$app/state';
+  import { base } from '$app/paths';
+  import { kpi, health } from '$api';
+  import { usd, pct, tone } from '../format';
   import { Menu, Search } from 'lucide-svelte';
   import NotificationBell from './NotificationBell.svelte';
   import MarketStatusPill from './MarketStatusPill.svelte';
@@ -22,15 +25,28 @@
     modKey = isMac ? '⌘' : 'Ctrl';
   });
 
-  // Note: TopBar used to show the equity + inception % too, but the
-  // Overview hero already renders that big — duplicating it cluttered
-  // the strip without giving the user anything new. TopBar is now
-  // strictly globals: clock, market status, notifications, health.
+  // Equity readout: stays in the TopBar so it's always visible across
+  // every page (not just Overview where the hero shows it big). A
+  // slimmer treatment than before — equity number + signed return —
+  // and we hide it on Overview specifically, since the hero there
+  // makes it redundant.
+  const kpiQ = createQuery({
+    queryKey: ['kpi'],
+    queryFn: kpi,
+    refetchInterval: 30_000
+  });
   const healthQ = createQuery({
     queryKey: ['health'],
     queryFn: health,
     refetchInterval: 60_000
   });
+
+  // Are we on Overview? If so, the hero already shows the equity 2.6rem
+  // tall, so the TopBar readout is redundant there. Cheap reactive
+  // check; no extra wire calls.
+  const onOverview = $derived(
+    page.url.pathname.replace(new RegExp(`^${base}`), '') === '/overview'
+  );
 
   let now = $state(new Date());
   setInterval(() => (now = new Date()), 1000);
@@ -69,11 +85,28 @@
     <Menu class="h-5 w-5" />
   </button>
 
-  <!-- Spacer — the equity readout that used to live here moved out;
-       see the comment near the healthQ definition. Keeping this flex
-       column so the right-side cluster (clock / market / bell /
-       health) still aligns to the far right. -->
-  <div class="flex min-w-0 flex-1 items-baseline gap-3 text-sm"></div>
+  <!-- Equity readout — slim, always visible (so the user keeps the
+       book context on every page), hidden specifically on /overview
+       where the hero would duplicate it. -->
+  <div class="flex min-w-0 flex-1 items-baseline gap-3 text-sm">
+    {#if !onOverview && $kpiQ.data}
+      {@const eq = $kpiQ.data.equity}
+      {@const ret = $kpiQ.data.return_pct}
+      <a
+        href={`${base}/overview`}
+        class="flex items-baseline gap-1.5 rounded-md px-1 hover:bg-surface-2"
+        title="Go to Overview"
+      >
+        <span class="hidden text-[10px] uppercase tracking-wider text-faint sm:inline">Equity</span>
+        <span class="font-semibold tabular text-text">{usd(eq)}</span>
+        {#if ret !== null}
+          <span class={['tabular text-xs', tone(ret) === 'pos' ? 'text-good' : tone(ret) === 'neg' ? 'text-bad' : 'text-muted'].join(' ')}>
+            {pct(ret, 1)}
+          </span>
+        {/if}
+      </a>
+    {/if}
+  </div>
 
   <div class="flex shrink-0 items-center gap-3 text-xs">
     <button

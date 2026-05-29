@@ -375,15 +375,15 @@
 </div>
 
 <!-- ── headline aggregates ───────────────────────────
-     Was 6 tiles. Cut: Winners/Losers (the table sorts by uPnL — the
-     red/green rows speak for themselves) and Notional (rarely the
-     deciding number — the user is much more often asking "am I in
-     control of risk?" than "how much am I deploying?"). The four
-     that survive are decision-relevant: position count + L/S split,
-     where the book sits right now in uPnL, the avg R of risk-defined
-     trades (the actual quality reading), and whether risk is set on
-     every row. -->
-<div class="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+     Was 6. Dropped Winners/Losers — its two numbers now ride along
+     in the uPnL tile's secondary line as "X up · Y down" (no number
+     lost, just compacted). Kept Notional: this is the one page in
+     the app where total $ exposure is visible at a glance — there's
+     no other surface for it. Final five tiles are all decision-
+     relevant: open count + L/S split, where uPnL sits, the avg R of
+     risk-defined trades (quality reading), how much is deployed,
+     and whether stops are set everywhere. -->
+<div class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
   <div class="rounded-lg border border-border bg-surface px-3 py-2">
     <div class="text-[10px] uppercase tracking-wider text-faint">Open positions</div>
     <div class="mt-0.5 text-[18px] font-semibold tabular text-text">{totals.count}</div>
@@ -414,6 +414,12 @@
       {totals.avgR !== null ? (totals.avgR >= 0 ? '+' : '') + totals.avgR.toFixed(2) + 'R' : '—'}
     </div>
     <div class="text-[10.5px] tabular text-faint">across stop-set positions</div>
+  </div>
+
+  <div class="rounded-lg border border-border bg-surface px-3 py-2">
+    <div class="text-[10px] uppercase tracking-wider text-faint">Notional</div>
+    <div class="mt-0.5 text-[18px] font-semibold tabular text-text">{usd(totals.notional)}</div>
+    <div class="text-[10.5px] tabular text-faint">total exposure</div>
   </div>
 
   <div class="rounded-lg border border-border bg-surface px-3 py-2">
