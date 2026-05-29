@@ -22,13 +22,20 @@ from ..models import FundTrade, PriceBar
 
 
 def _pearson(xs: list[float], ys: list[float]) -> float | None:
-    """Pearson correlation. None when there isn't enough data or the
-    series has zero variance (a flat line correlates with nothing)."""
-    n = min(len(xs), len(ys))
-    if n < 5:
+    """Pearson correlation on two parallel series of equal length.
+
+    Callers MUST align xs and ys by the same observation index before
+    passing in (in this module, date-aligned daily returns). Earlier
+    versions used min(len(xs), len(ys)) and truncated to the prefix
+    of each — a silent correctness hole when the two series start on
+    different dates (e.g. a 30d-old ticker vs a fresh listing), since
+    the first N indices were *different calendar days* on each side.
+    """
+    n = len(xs)
+    if n != len(ys) or n < 5:
         return None
-    mx = sum(xs[:n]) / n
-    my = sum(ys[:n]) / n
+    mx = sum(xs) / n
+    my = sum(ys) / n
     num = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
     dx = sum((xs[i] - mx) ** 2 for i in range(n)) ** 0.5
     dy = sum((ys[i] - my) ** 2 for i in range(n)) ** 0.5
@@ -37,9 +44,15 @@ def _pearson(xs: list[float], ys: list[float]) -> float | None:
     return num / (dx * dy)
 
 
-def _daily_returns(ticker: str, days: int) -> list[float]:
-    """Daily log returns of `ticker` over `days` calendar days. Uses
-    one bar per UTC day (last close)."""
+def _daily_returns(ticker: str, days: int) -> dict[str, float]:
+    """Daily log returns of `ticker` keyed by YYYY-MM-DD. Uses one bar
+    per UTC day (last close).
+
+    Returns a dict (not a list) so callers can intersect by date with
+    another ticker's series before computing correlation — index-by-
+    index alignment was the bug behind the spurious correlations.
+    """
+    import math
     cutoff = datetime.now(timezone.utc) - timedelta(days=days + 2)
     with session_scope() as s:
         bars = s.exec(
@@ -53,15 +66,15 @@ def _daily_returns(ticker: str, days: int) -> list[float]:
     for b in bars:
         d = b.ts.strftime("%Y-%m-%d")
         by_day[d] = b.close
-    closes = [by_day[d] for d in sorted(by_day.keys())]
-    if len(closes) < 2:
-        return []
-    rets: list[float] = []
-    prev = closes[0]
-    for c in closes[1:]:
+    days_sorted = sorted(by_day.keys())
+    if len(days_sorted) < 2:
+        return {}
+    rets: dict[str, float] = {}
+    prev = by_day[days_sorted[0]]
+    for d in days_sorted[1:]:
+        c = by_day[d]
         if prev > 0 and c > 0:
-            import math
-            rets.append(math.log(c / prev))
+            rets[d] = math.log(c / prev)
         prev = c
     return rets
 
@@ -96,8 +109,18 @@ def correlation_matrix(
         for b in tickers:
             if a == b:
                 row.append(1.0)
-            else:
-                row.append(_pearson(series[a], series[b]))
+                continue
+            # Date-intersection alignment — only days BOTH tickers have
+            # a return for. Without this two series with different
+            # listing dates would have been zipped by index and the
+            # correlation would have been computed on unrelated calendar
+            # days. Sorted so the order is deterministic and parallel
+            # for both legs of the pair.
+            sa, sb = series[a], series[b]
+            common = sorted(set(sa) & set(sb))
+            xs = [sa[d] for d in common]
+            ys = [sb[d] for d in common]
+            row.append(_pearson(xs, ys))
         matrix.append(row)
 
     return {
