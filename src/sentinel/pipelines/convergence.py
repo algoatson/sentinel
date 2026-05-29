@@ -72,9 +72,12 @@ CONV_TOOL_SYSTEM = (
     "You convert multi-signal alerts into a directional read for a "
     "private paper-trading copilot.\n"
     "Tools fetch chart / ATR / peers / news / filings / micro / "
-    "correlation. Use AT MOST ONE if the data block is thin — most "
-    "alerts answer off the data block alone. Then write the final "
-    "read.\n\n"
+    "correlation / next_earnings / narrative_timeline. Use AT MOST "
+    "ONE if the data block is thin — most alerts answer off the "
+    "data block alone. Check next_earnings before recommending a "
+    "directional CALL on an equity; never anchor a thesis across "
+    "an imminent print. narrative_timeline tells you what the bot "
+    "has already said about this name — don't repeat yourself.\n\n"
     "FINAL ANSWER FORMAT (3-4 sentences, ≤ 280 visible tokens, optional "
     "CALL, mandatory IMPORTANCE). The exact format is in the user "
     "message."
@@ -121,20 +124,27 @@ async def _run() -> None:
     findings: list[dict] = []
 
     with session_scope() as session:
-        watch_tickers = sorted({
-            r.ticker
-            for r in session.exec(
-                select(Watchlist).where(Watchlist.ticker.is_not(None))
-            ).all()
-            if r.ticker
-        })
+        # Asset class is needed downstream to decide whether a thin
+        # evidence payload should escalate to the tool-loop (non-equity
+        # names have fewer pre-loaded streams, so the LLM benefits from
+        # the extra pull). Carry it through the per-ticker loop.
+        watch_rows = session.exec(
+            select(Watchlist.ticker, Watchlist.asset_class)
+            .where(Watchlist.ticker.is_not(None))
+        ).all()
+        by_ticker: dict[str, str] = {}
+        for tk, ac in watch_rows:
+            if tk and tk not in by_ticker:
+                by_ticker[tk] = ac or "equity"
+        watch_tickers = sorted(by_ticker.keys())
 
         for ticker in watch_tickers:
             if _is_on_cooldown(ticker, now):
                 continue
 
+            asset_class = by_ticker[ticker]
             signals: list[str] = []
-            evidence: dict = {"ticker": ticker}
+            evidence: dict = {"ticker": ticker, "asset_class": asset_class}
 
             # Signal 1: recent material filing.
             filing = session.exec(

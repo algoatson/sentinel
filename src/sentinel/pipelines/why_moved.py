@@ -82,9 +82,13 @@ $payload_json
 # because the tool-calling model burns context fast across iterations.
 WHY_TOOL_SYSTEM = (
     "You explain sharp asset moves for a private paper-trading copilot.\n"
-    "You have tools to pull extra context. Use them sparingly — only when "
-    "the evidence below doesn't tell you what you need. After at most a "
-    "couple of tool calls, write the final answer.\n\n"
+    "You have tools to pull extra context (chart / ATR / peers / news / "
+    "filings / micro / correlation / next_earnings / narrative_timeline). "
+    "Use them sparingly — only when the evidence below doesn't tell you "
+    "what you need. If the move could be earnings-related, check "
+    "next_earnings before committing to a directional CALL. Check "
+    "narrative_timeline so you don't restate what the bot already said. "
+    "After at most a couple of tool calls, write the final answer.\n\n"
     "Format the final answer EXACTLY as the user instructions specify "
     "(3-5 sentences, optional CALL line, mandatory IMPORTANCE line)."
 )

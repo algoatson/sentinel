@@ -502,6 +502,79 @@ def active_thesis(ticker: str) -> dict:
 
 @TOOLS.tool(
     description=(
+        "Next scheduled earnings date for a ticker. Returns the date and "
+        "days-until. Use to avoid taking unhedged directional bets across "
+        "a binary event, or to time entries post-print. Returns "
+        "{'next_earnings': null} if unknown / stale / no upcoming print."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string"},
+        },
+        "required": ["ticker"],
+    },
+)
+def next_earnings(ticker: str) -> dict:
+    from .earnings import days_until_earnings, next_earnings as _ne
+
+    sym = _norm(ticker)
+    rd = _ne(sym)
+    if rd is None:
+        return {"ticker": sym, "next_earnings": None}
+    return {
+        "ticker": sym,
+        "next_earnings": rd.isoformat(),
+        "days_until": days_until_earnings(sym),
+    }
+
+
+@TOOLS.tool(
+    description=(
+        "Recent narrative timeline for a ticker — the bot's own posts "
+        "(filings, why_moved, news_alert, convergence, synthesis, "
+        "book_risk, thesis_state) across the last N days. Use to know "
+        "what the bot has already said, avoid restating the same call, "
+        "and detect reversal patterns (e.g. yesterday's bullish synthesis "
+        "vs. today's bearish filing)."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string"},
+            "days":   {"type": "integer", "minimum": 1, "maximum": 30, "default": 7},
+            "limit":  {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
+        },
+        "required": ["ticker"],
+    },
+)
+def narrative_timeline(ticker: str, days: int = 7, limit: int = 8) -> dict:
+    from .narrative import recent_events
+
+    sym = _norm(ticker)
+    days = max(1, min(int(days), 30))
+    limit = max(1, min(int(limit), 20))
+    evs = recent_events(sym, days=days, limit=limit)
+    return {
+        "ticker": sym,
+        "events": [
+            {
+                "kind": e.kind,
+                "tier": e.tier,
+                "headline": (e.headline or "")[:160],
+                "detail": (e.detail or "")[:200] if e.detail else None,
+                "ts": (
+                    e.ts.replace(tzinfo=timezone.utc)
+                    if e.ts.tzinfo is None else e.ts
+                ).isoformat(),
+            }
+            for e in evs
+        ],
+    }
+
+
+@TOOLS.tool(
+    description=(
         "Recent FundTrade history on a ticker — opens + closes by the "
         "autonomous wallets. Use to know whether the bot has traded "
         "this name recently and how it went."
