@@ -384,7 +384,7 @@
      risk-defined trades (quality reading), how much is deployed,
      and whether stops are set everywhere. -->
 <div class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
-  <div class="rounded-lg border border-border bg-surface px-3 py-2">
+  <div class="card-lift rounded-lg border border-border bg-surface px-3 py-2">
     <div class="text-[10px] uppercase tracking-wider text-faint">Open positions</div>
     <div class="mt-0.5 text-[18px] font-semibold tabular text-text">{totals.count}</div>
     <div class="text-[10.5px] tabular text-faint">
@@ -392,7 +392,12 @@
     </div>
   </div>
 
-  <div class="rounded-lg border border-border bg-surface px-3 py-2">
+  <div class={[
+    'card-lift rounded-lg border px-3 py-2',
+    totals.upnl > 0 ? 'border-good/25 bg-gradient-to-b from-good-soft/30 to-surface'
+    : totals.upnl < 0 ? 'border-bad/25 bg-gradient-to-b from-bad-soft/30 to-surface'
+    : 'border-border bg-surface'
+  ].join(' ')}>
     <div class="text-[10px] uppercase tracking-wider text-faint">Aggregate uPnL</div>
     <div class={[
       'mt-0.5 text-[18px] font-semibold tabular',
@@ -405,7 +410,12 @@
     </div>
   </div>
 
-  <div class="rounded-lg border border-border bg-surface px-3 py-2">
+  <div class={[
+    'card-lift rounded-lg border px-3 py-2',
+    (totals.avgR ?? 0) > 0 ? 'border-good/25 bg-gradient-to-b from-good-soft/30 to-surface'
+    : (totals.avgR ?? 0) < 0 ? 'border-bad/25 bg-gradient-to-b from-bad-soft/30 to-surface'
+    : 'border-border bg-surface'
+  ].join(' ')}>
     <div class="text-[10px] uppercase tracking-wider text-faint">Avg R</div>
     <div class={[
       'mt-0.5 text-[18px] font-semibold tabular',
@@ -416,13 +426,19 @@
     <div class="text-[10.5px] tabular text-faint">across stop-set positions</div>
   </div>
 
-  <div class="rounded-lg border border-border bg-surface px-3 py-2">
+  <div class="card-lift rounded-lg border border-border bg-surface px-3 py-2">
     <div class="text-[10px] uppercase tracking-wider text-faint">Notional</div>
     <div class="mt-0.5 text-[18px] font-semibold tabular text-text">{usd(totals.notional)}</div>
     <div class="text-[10.5px] tabular text-faint">total exposure</div>
   </div>
 
-  <div class="rounded-lg border border-border bg-surface px-3 py-2">
+  <div class={[
+    'card-lift rounded-lg border px-3 py-2',
+    totals.count === 0 ? 'border-border bg-surface'
+    : totals.stopped === totals.count ? 'border-good/25 bg-gradient-to-b from-good-soft/30 to-surface'
+    : totals.stopped >= totals.count * 0.5 ? 'border-warn/25 bg-gradient-to-b from-warn-soft/30 to-surface'
+    : 'border-bad/25 bg-gradient-to-b from-bad-soft/30 to-surface'
+  ].join(' ')}>
     <div class="text-[10px] uppercase tracking-wider text-faint">Risk-defined</div>
     <div class={[
       'mt-0.5 text-[18px] font-semibold tabular',
