@@ -18,12 +18,13 @@
   import DailyPlanCard from '$components/DailyPlanCard.svelte';
   import LiveEvents from '$components/LiveEvents.svelte';
   import WalletAllocation from '$components/WalletAllocation.svelte';
+  import HealthPill from '$components/HealthPill.svelte';
   import ConvergingNow from '$components/ConvergingNow.svelte';
   import { base } from '$app/paths';
-  import { usd, timeAgo, pct, tone, stripMd } from '$lib/format';
+  import { usd, compact, timeAgo, pct, tone, stripMd } from '$lib/format';
   import {
     Newspaper, FileText, Target as TargetIcon, ArrowUpRight, ArrowDownRight,
-    TrendingUp, Zap, Flame
+    Wallet, TrendingUp, Activity as ActivityIcon, Sparkles, Zap, Flame
   } from 'lucide-svelte';
 
   type Range = { label: string; days: number };
@@ -107,14 +108,19 @@
 
 <svelte:head><title>Overview · Sentinel</title></svelte:head>
 
-<!-- ── HERO: equity headline + the three numbers that matter ──────────── -->
-<!-- One row, four chips, no eyebrow. The TopBar already shows equity +
-     return + health, so this stays focused on the WIDER context: total
-     equity (big), inception return, today's realised, open uPnL, hit
-     rate. Anything that was duplicated with TopBar or the KPI ribbon
-     below has been removed. -->
-<div class="mb-5">
-  <div class="flex flex-wrap items-end gap-x-4 gap-y-2">
+<!-- ── HERO: equity number + return + today + quick stats ──────────────── -->
+<div class="mb-4">
+  <div class="flex items-baseline gap-2 text-[11px] font-semibold uppercase tracking-[0.13em] text-faint">
+    <span>Aggregate equity</span>
+    {#if $kpiQ.data?.wallets}
+      <span class="normal-case tracking-normal text-faint">
+        · {$kpiQ.data.wallets} wallets
+      </span>
+    {/if}
+    <span class="ml-auto"><HealthPill /></span>
+  </div>
+
+  <div class="mt-1 flex flex-wrap items-end gap-x-4 gap-y-1.5">
     <span class="text-[2.6rem] font-semibold leading-none tracking-tight tabular text-text">
       {$kpiQ.data ? usd($kpiQ.data.equity) : '—'}
     </span>
@@ -128,8 +134,8 @@
         {#if t === 'pos'}<ArrowUpRight class="h-4 w-4 self-center" />
         {:else if t === 'neg'}<ArrowDownRight class="h-4 w-4 self-center" />{/if}
         {pct(r, 2)}
-        <span class="ml-1 text-[10.5px] font-normal text-faint">since inception</span>
       </span>
+      <span class="text-[11px] text-faint">since inception</span>
     {/if}
 
     {#if realCum.length > 1}
@@ -142,10 +148,10 @@
     {/if}
   </div>
 
-  <!-- Single chip-row: today + open uPnL + open count. Dropped the
-       "calls hit-rate" chip — it lives in the KPI ribbon directly
-       below, so the same number is no longer rendered twice. -->
-  <div class="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] tabular">
+  <!-- Secondary row: today's realised + unrealised + position counts.
+       `usd(_, true)` already prepends the sign, so no extra '+' here
+       (that produced the '++$215' double-plus bug). -->
+  <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] tabular">
     {#if $pulseQ.data}
       {@const today = $pulseQ.data.realized_today ?? 0}
       <span class={[
@@ -155,9 +161,7 @@
         'border-border bg-surface-2 text-muted'
       ].join(' ')}>
         <span class="text-[9.5px] uppercase tracking-wider opacity-80">today</span>
-        <span class="font-semibold">
-          {today >= 0 ? '+' : ''}{usd(today, true)} realised
-        </span>
+        <span class="font-semibold">{usd(today, true)} realised</span>
         {#if $pulseQ.data.trades_closed > 0}
           <span class="text-[9.5px] opacity-70">· {$pulseQ.data.trades_closed} closed</span>
         {/if}
@@ -172,10 +176,22 @@
         'border-border bg-surface-2 text-muted'
       ].join(' ')}>
         <span class="text-[9.5px] uppercase tracking-wider opacity-80">open</span>
-        <span class="font-semibold">{up >= 0 ? '+' : ''}{usd(up, true)} uPnL</span>
+        <span class="font-semibold">{usd(up, true)} uPnL</span>
         {#if $kpiQ.data?.open_positions !== null && $kpiQ.data?.open_positions !== undefined}
           <span class="text-[9.5px] opacity-70">· {$kpiQ.data.open_positions} pos</span>
         {/if}
+      </span>
+    {/if}
+    {#if $kpiQ.data?.hit_rate_pct !== null && $kpiQ.data?.hit_rate_pct !== undefined}
+      <span class="inline-flex items-baseline gap-1 rounded border border-border bg-surface-2 px-2 py-0.5 text-muted">
+        <span class="text-[9.5px] uppercase tracking-wider opacity-80">calls</span>
+        <span class={[
+          'font-semibold',
+          $kpiQ.data.hit_rate_pct >= 50 ? 'text-good' : 'text-bad'
+        ].join(' ')}>{$kpiQ.data.hit_rate_pct.toFixed(0)}%</span>
+        <span class="text-[9.5px] opacity-70">
+          {$kpiQ.data.hits ?? 0}/{$kpiQ.data.calls_scored ?? 0}
+        </span>
       </span>
     {/if}
   </div>
@@ -196,12 +212,8 @@
   <DailyPlanCard />
 </div>
 
-<!-- ── KPI ribbon ──────────────────────────────────────────────────────
-     Trimmed from 6 → 3 tiles. Dropped: Wallets (TopBar shows count via
-     the hero subtitle and Portfolio page covers detail), LLM (lives on
-     /system + TopBar pill), Closed trades (already the denominator on
-     the Realised P&L tile). -->
-<div class="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+<!-- ── KPI ribbon (6 tiles — fills the row at desktop width) ──────────── -->
+<div class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
   {#if $kpiQ.data}
     {@const k = $kpiQ.data}
     {#snippet kpi(label: string, value: string, sub: string, icon: any, accent: 'pos' | 'neg' | 'none' = 'none')}
@@ -225,6 +237,7 @@
       </div>
     {/snippet}
 
+    {@render kpi('Wallets', String(k.wallets ?? '—'), 'active funds', Wallet)}
     {@render kpi(
       'Open positions',
       k.open_positions !== null ? String(k.open_positions) : '—',
@@ -245,8 +258,16 @@
       k.calls_scored ? `${k.hits ?? 0}/${k.calls_scored} scored` : 'none yet',
       TargetIcon
     )}
+    {@render kpi(
+      'LLM',
+      k.llm_reliability_pct !== null ? `${k.llm_reliability_pct.toFixed(1)}%` : '—',
+      k.llm_calls ? `${compact(k.llm_calls)} calls · ${k.llm_errors ?? 0} fail` : 'idle',
+      Sparkles,
+      (k.llm_reliability_pct ?? 100) < 90 ? 'neg' : 'none'
+    )}
+    {@render kpi('Closed trades', String(k.closed ?? 0), 'all time', ActivityIcon)}
   {:else if $kpiQ.isLoading}
-    {#each Array(3) as _, i (i)}
+    {#each Array(6) as _, i (i)}
       <div class="h-[5.4rem] animate-pulse rounded-lg border border-border bg-surface" />
     {/each}
   {/if}
