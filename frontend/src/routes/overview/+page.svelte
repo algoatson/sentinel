@@ -182,19 +182,29 @@
 </div>
 
 
-<!-- ── TODAY + DAILY PLAN (paired) ────────────────────────────────────
-     Was a 4-stack (TodayPulse + HoldingsTape + LiveEvents + DailyPlanCard)
-     which felt like a wall of widgets. Today's pulse sits next to the
-     plan because they read together ("what's happening" vs "what I
-     want to do"). The held-tickers tape sits below as a compact strip.
-     LiveEvents moved to the bottom (it's a passive log, not a hero
-     element). -->
-<div class="mb-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+<!-- ── TODAY + HOLDINGS strips · then DAILY PLAN full-width ──────────
+     Earlier this paired TodayPulse and DailyPlanCard side-by-side. The
+     problem: TodayPulse is a fundamentally horizontal one-row strip
+     (~60px tall), while DailyPlanCard is itself a wide two-pane card
+     (left plan textarea, right multi-paragraph briefing markdown —
+     easily 400px tall). Pairing them in a 2-col grid forces the row to
+     stretch to the briefing's height, leaving a giant blank zone next
+     to the strip and making the briefing pane crammed at half-width.
+
+     Now: both strip components stack as full-width strips, then the
+     DailyPlanCard sits full-width on its own row. The card is already
+     internally split — plan on the left, bot briefing on the right —
+     so it has its OWN two-column layout when it's the full width of
+     the page. Strip-stack → full-width-card is the only shape that
+     lets each component breathe at its natural height. -->
+<div class="mb-3">
   <TodayPulse />
-  <DailyPlanCard />
+</div>
+<div class="mb-3">
+  <HoldingsTape />
 </div>
 <div class="mb-4">
-  <HoldingsTape />
+  <DailyPlanCard />
 </div>
 
 <!-- ── KPI ribbon ──────────────────────────────────────────────────────
