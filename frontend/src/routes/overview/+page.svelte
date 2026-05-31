@@ -91,6 +91,8 @@
     refetchInterval: 60_000
   });
 
+  // Tone of the inception return — drives the hero band's glow colour.
+  const heroTone = $derived(tone($kpiQ.data?.return_pct ?? 0));
   const realCum = $derived(($realQ.data ?? []).map((p) => p.cumulative));
   const sparkColour = $derived(
     realCum.length > 0 && realCum[realCum.length - 1] >= 0
@@ -108,8 +110,20 @@
 
 <svelte:head><title>Overview · Sentinel</title></svelte:head>
 
-<!-- ── HERO: equity number + return + today + quick stats ──────────────── -->
-<div class="mb-4">
+<!-- ── HERO: framed gradient band, focal equity headline ──────────────── -->
+<div class="relative mb-4 overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-surface to-bg px-5 py-4">
+  <!-- faint tone-tinted glow, top-right — green when up, red when down,
+       neutral otherwise. Pointer-events-none so it's purely decorative. -->
+  <div
+    class="pointer-events-none absolute -right-24 -top-28 h-64 w-64 rounded-full blur-3xl opacity-50"
+    style:background={heroTone === 'pos'
+      ? 'radial-gradient(circle, rgba(61,220,151,0.18), transparent 70%)'
+      : heroTone === 'neg'
+        ? 'radial-gradient(circle, rgba(255,107,107,0.16), transparent 70%)'
+        : 'radial-gradient(circle, rgba(102,153,255,0.14), transparent 70%)'}
+  ></div>
+
+  <div class="relative">
   <div class="flex items-baseline gap-2 text-[11px] font-semibold uppercase tracking-[0.13em] text-faint">
     <span>Aggregate equity</span>
     {#if $kpiQ.data?.wallets}
@@ -195,6 +209,7 @@
       </span>
     {/if}
   </div>
+  </div>
 </div>
 
 
@@ -217,7 +232,12 @@
   {#if $kpiQ.data}
     {@const k = $kpiQ.data}
     {#snippet kpi(label: string, value: string, sub: string, icon: any, accent: 'pos' | 'neg' | 'none' = 'none')}
-      <div class="rounded-lg border border-border bg-surface px-3 py-2.5">
+      <div class={[
+        'card-lift rounded-lg border px-3 py-2.5',
+        accent === 'pos' ? 'border-good/25 bg-gradient-to-b from-good-soft/30 to-surface'
+        : accent === 'neg' ? 'border-bad/25 bg-gradient-to-b from-bad-soft/30 to-surface'
+        : 'border-border bg-surface'
+      ].join(' ')}>
         <div class="flex items-center gap-1.5">
           <svelte:component this={icon} class={[
             'h-3 w-3',
