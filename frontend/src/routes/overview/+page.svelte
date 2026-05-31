@@ -182,28 +182,17 @@
 </div>
 
 
-<!-- ── TODAY + HOLDINGS strips · then DAILY PLAN full-width ──────────
-     Earlier this paired TodayPulse and DailyPlanCard side-by-side. The
-     problem: TodayPulse is a fundamentally horizontal one-row strip
-     (~60px tall), while DailyPlanCard is itself a wide two-pane card
-     (left plan textarea, right multi-paragraph briefing markdown —
-     easily 400px tall). Pairing them in a 2-col grid forces the row to
-     stretch to the briefing's height, leaving a giant blank zone next
-     to the strip and making the briefing pane crammed at half-width.
-
-     Now: both strip components stack as full-width strips, then the
-     DailyPlanCard sits full-width on its own row. The card is already
-     internally split — plan on the left, bot briefing on the right —
-     so it has its OWN two-column layout when it's the full width of
-     the page. Strip-stack → full-width-card is the only shape that
-     lets each component breathe at its natural height. -->
-<div class="mb-3">
+<!-- ── TODAY'S PULSE + book tape + live events + daily plan ───────────
+     Restored to the original 4-stack arrangement at the user's request.
+     Earlier passes tried pairing TodayPulse with DailyPlanCard side-by-
+     side (stretched the strip and crammed the briefing), then split
+     them into separate full-width rows. The user preferred the original
+     stacked shape, so it's back: TodayPulse → HoldingsTape →
+     LiveEvents → DailyPlanCard, all full-width, separated by space-y-2. -->
+<div class="mb-4 space-y-2">
   <TodayPulse />
-</div>
-<div class="mb-3">
   <HoldingsTape />
-</div>
-<div class="mb-4">
+  <LiveEvents />
   <DailyPlanCard />
 </div>
 
@@ -627,12 +616,4 @@
       >View all news →</a>
     {/if}
   </Card>
-</div>
-
-<!-- ── live events (footer) ──────────────────────────────────
-     The SSE stream lives at the bottom now, not as a hero element —
-     it's a passive log, not something to land on. Useful as
-     ambient confirmation that the bot is alive. -->
-<div class="mt-4">
-  <LiveEvents />
 </div>
