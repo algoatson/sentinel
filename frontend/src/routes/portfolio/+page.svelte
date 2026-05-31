@@ -169,8 +169,19 @@
         {@const trendCol = w.ret_pct >= 0 ? 'var(--color-good)' : 'var(--color-bad)'}
         {@const dd = drawdownPct(points)}
         <Card interactive onclick={() => (selected = w.name)} class="overflow-hidden p-0">
+          <!-- return-tinted accent edge — a soft centered line, green
+               when the wallet's up, red when down, nothing when flat.
+               Lets the grid read at a glance: winners glow green. -->
+          <div
+            class="h-0.5 w-full"
+            style:background={w.ret_pct > 0.05
+              ? 'linear-gradient(90deg, transparent, rgba(61,220,151,0.65), transparent)'
+              : w.ret_pct < -0.05
+                ? 'linear-gradient(90deg, transparent, rgba(255,107,107,0.6), transparent)'
+                : 'transparent'}
+          ></div>
           <!-- ── header strip with name + return ─────────────── -->
-          <div class="flex items-center gap-2 px-4 pt-3.5 pb-1">
+          <div class="flex items-center gap-2 px-4 pt-3 pb-1">
             <span class="text-[16px] font-semibold tracking-tight capitalize text-text">{w.name}</span>
             {#if w.name === 'research'}
               <span class="rounded border border-violet/30 bg-violet-soft px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-widest text-violet">

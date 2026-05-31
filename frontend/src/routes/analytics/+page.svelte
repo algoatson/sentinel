@@ -155,7 +155,7 @@
       {#each $hotQ.data as h (h.ticker)}
         <a
           href={`/app/symbol/${encodeURIComponent(h.ticker)}`}
-          class="group rounded-lg border border-border bg-surface-2/40 px-3 py-2.5 transition-colors hover:border-warn/40"
+          class="group card-lift rounded-lg border border-border bg-surface-2/40 px-3 py-2.5 hover:border-warn/40"
         >
           <div class="flex items-center gap-2">
             <TickerLink ticker={h.ticker} class="text-[14px]" />
