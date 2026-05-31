@@ -297,9 +297,17 @@
 <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
   <Card class="px-4 py-3 lg:col-span-7">
     <div class="mb-2 flex items-baseline gap-3">
-      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+      <div class="sect-accent text-[10px] font-semibold uppercase tracking-wider text-faint">
         Equity vs inception
       </div>
+      {#if $kpiQ.data}
+        <span class="tabular text-[12px] font-semibold text-text">{usd($kpiQ.data.equity)}</span>
+        {#if $kpiQ.data.return_pct !== null}
+          <span class={['tabular text-[11px] font-semibold', heroTone === 'pos' ? 'text-good' : heroTone === 'neg' ? 'text-bad' : 'text-muted'].join(' ')}>
+            {pct($kpiQ.data.return_pct, 2)}
+          </span>
+        {/if}
+      {/if}
       <div class="ml-auto flex items-center gap-1">
         {#each RANGES as r (r.label)}
           <button
@@ -355,7 +363,7 @@
   <Card class="mt-4 px-4 py-3">
     <div class="mb-2 flex items-baseline gap-2">
       <Flame class="h-3.5 w-3.5 text-warn" />
-      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+      <div class="sect-accent text-[10px] font-semibold uppercase tracking-wider text-faint">
         Hot now (24h composite signal)
       </div>
       <a
@@ -408,7 +416,7 @@
   <Card class="mt-4 px-4 py-3">
     <div class="mb-2 flex items-baseline gap-2">
       <ArrowUpRight class="h-3.5 w-3.5 text-good" />
-      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+      <div class="sect-accent text-[10px] font-semibold uppercase tracking-wider text-faint">
         Top movers (1d)
       </div>
       <span class="ml-auto text-[10.5px] text-faint">
@@ -483,7 +491,7 @@
 {#if $catalystsQ.data?.events?.length}
   <Card class="mt-4 px-4 py-3">
     <div class="mb-2 flex items-baseline gap-2">
-      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+      <div class="sect-accent text-[10px] font-semibold uppercase tracking-wider text-faint">
         Upcoming catalysts (next 14d)
       </div>
       <span class="ml-auto text-[10px] tabular text-faint">
@@ -513,7 +521,7 @@
   <Card class="flex flex-col px-4 py-3">
     <div class="mb-2 flex items-baseline gap-2">
       <TargetIcon class="h-3.5 w-3.5 text-primary" />
-      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+      <div class="sect-accent text-[10px] font-semibold uppercase tracking-wider text-faint">
         Recent calls (7d)
       </div>
       <span class="ml-auto text-[10px] tabular text-faint">
@@ -560,7 +568,7 @@
   <Card class="flex flex-col px-4 py-3">
     <div class="mb-2 flex items-baseline gap-2">
       <FileText class="h-3.5 w-3.5 text-violet" />
-      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+      <div class="sect-accent text-[10px] font-semibold uppercase tracking-wider text-faint">
         Recent filings (7d)
       </div>
       <span class="ml-auto text-[10px] tabular text-faint">
@@ -613,7 +621,7 @@
   <Card class="flex flex-col px-4 py-3">
     <div class="mb-2 flex items-baseline gap-2">
       <Newspaper class="h-3.5 w-3.5 text-primary" />
-      <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+      <div class="sect-accent text-[10px] font-semibold uppercase tracking-wider text-faint">
         Recent news (7d)
       </div>
       <span class="ml-auto text-[10px] tabular text-faint">
