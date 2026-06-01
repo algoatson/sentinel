@@ -26,6 +26,7 @@ import type {
   NewsDossier,
   NewsItem,
   RealizedCurvePoint,
+  RedditDossier,
   RedditMention,
   ResearchExecuteResult,
   ResearchTask,
@@ -419,6 +420,14 @@ export const socialRecent = (hours = 48, ticker?: string) => {
 };
 export const socialTopTickers = (hours = 48, n = 10) =>
   get<SocialTicker[]>(`/social/top-tickers?hours=${hours}&n=${n}`);
+export const socialDetail = (id: number) =>
+  get<RedditMention>(`/social/${id}`);
+export const socialDossier = (id: number, refresh = false) =>
+  get<RedditDossier>(`/social/${id}/dossier${refresh ? '?refresh=true' : ''}`);
+export const askSocial = (id: number, question: string) =>
+  post<{ answer: string }>(`/social/${id}/ask`, { question });
+export const askFiling = (id: number, question: string) =>
+  post<{ answer: string }>(`/filings/${id}/ask`, { question });
 
 /* ─── events (SSE history fallback) ─── */
 export const recentEvents = (sinceId?: number) =>

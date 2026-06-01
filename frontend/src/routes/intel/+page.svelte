@@ -1,7 +1,10 @@
 <script lang="ts">
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
-  import { news, newsDossier, askNews, newsArticle, filings, socialRecent, socialTopTickers } from '$api';
+  import {
+    news, newsDossier, askNews, newsArticle, filings, socialRecent, socialTopTickers,
+    socialDossier, askSocial, askFiling,
+  } from '$api';
   import Card from '$components/Card.svelte';
   import Pill from '$components/Pill.svelte';
   import Delta from '$components/Delta.svelte';
@@ -14,7 +17,10 @@
   import Markdown from '$components/Markdown.svelte';
   import Pager from '$components/Pager.svelte';
   import { timeAgo, compact, stripMd } from '$lib/format';
-  import { Newspaper, ExternalLink, Globe, FileText, MessageCircle } from 'lucide-svelte';
+  import {
+    Newspaper, ExternalLink, Globe, FileText, MessageCircle,
+    ArrowUp, MessageSquare, Sparkles,
+  } from 'lucide-svelte';
 
   type Hours = { label: string; value: number };
   const RANGES: Hours[] = [
@@ -36,7 +42,9 @@
   let textFilter = $state('');
   let selectedNewsId = $state<number | null>(null);
   let selectedFiling = $state<number | null>(null);
+  let selectedSocialId = $state<number | null>(null);
   let refreshing = $state(false);
+  let socialRefreshing = $state(false);
   let dedupeNews = $state(true); // collapse syndicated copies of the same event
 
   // Pagination — one set of state shared across mode tabs (reset on
@@ -104,6 +112,12 @@
     enabled: mode === 'social'
   })));
 
+  const socialDossierQ = createQuery(reactiveQueryOptions(() => ({
+    queryKey: ['social-dossier', selectedSocialId, socialRefreshing],
+    queryFn: () => socialDossier(selectedSocialId!, socialRefreshing),
+    enabled: selectedSocialId !== null
+  })));
+
   function variantForSentimentSimple(s: number | null): 'pos' | 'neg' | 'info' {
     if (s === null || s === undefined) return 'info';
     if (s > 0.15) return 'pos';
@@ -127,6 +141,29 @@
   async function askAboutNews(q: string): Promise<string> {
     if (selectedNewsId === null) throw new Error('no item selected');
     const r = await askNews(selectedNewsId, q);
+    return r.answer;
+  }
+
+  async function regenerateSocial() {
+    if (selectedSocialId === null) return;
+    socialRefreshing = true;
+    try {
+      await socialDossier(selectedSocialId, true);
+      await qc.invalidateQueries({ queryKey: ['social-dossier', selectedSocialId] });
+    } finally {
+      socialRefreshing = false;
+    }
+  }
+
+  async function askAboutSocial(q: string): Promise<string> {
+    if (selectedSocialId === null) throw new Error('no item selected');
+    const r = await askSocial(selectedSocialId, q);
+    return r.answer;
+  }
+
+  async function askAboutFiling(q: string): Promise<string> {
+    if (selectedFiling === null) throw new Error('no item selected');
+    const r = await askFiling(selectedFiling, q);
     return r.answer;
   }
 
@@ -168,6 +205,19 @@
       ? ($filingsQ.data ?? []).find((f) => f.id === selectedFiling)
       : null
   );
+
+  const selectedSocialItem = $derived(
+    selectedSocialId !== null
+      ? ($socialQ.data ?? []).find((r) => r.id === selectedSocialId)
+      : null
+  );
+
+  function sentimentLabel(s: number | null): string {
+    if (s === null || s === undefined) return 'neutral';
+    if (s > 0.15) return '↑ bullish';
+    if (s < -0.15) return '↓ bearish';
+    return '· neutral';
+  }
 
   function variantForSentiment(s: number | null): 'pos' | 'neg' | 'info' {
     if (s === null || s === undefined) return 'info';
@@ -481,30 +531,56 @@
         />
       {:else}
         <Pager bind:page bind:pageSize total={$socialQ.data.length} class="mb-2" />
-        <div class="space-y-2">
+        <div class="grid grid-cols-1 gap-2.5 xl:grid-cols-2">
           {#each $socialQ.data.slice((page - 1) * pageSize, page * pageSize) as r (r.id)}
-            <Card class="px-3.5 py-2.5">
+            <Card interactive onclick={() => (selectedSocialId = r.id)} class="group flex h-full flex-col px-3.5 py-3">
               <div class="flex items-center gap-1.5">
-                <Pill variant={variantForSentimentSimple(r.sentiment)}>
+                <span class="inline-flex items-center gap-1 rounded border border-warn/30 bg-warn-soft px-1.5 py-0.5 text-[10px] font-semibold text-warn">
                   r/{r.subreddit}
-                </Pill>
+                </span>
                 {#if r.ticker}
                   <TickerLink ticker={r.ticker} class="text-[12px]" />
                 {/if}
-                <span class="text-[10.5px] tabular text-faint">↑ {compact(r.score)}</span>
-                <span class="text-[10.5px] tabular text-faint">💬 {r.num_comments}</span>
+                {#if r.is_thesis}
+                  <Pill variant="violet">thesis</Pill>
+                {/if}
+                {#if r.sentiment !== null && r.sentiment !== undefined}
+                  <Pill variant={variantForSentimentSimple(r.sentiment)}>
+                    {r.sentiment > 0.15 ? '↑' : r.sentiment < -0.15 ? '↓' : '·'}
+                    {Math.abs(r.sentiment).toFixed(2)}
+                  </Pill>
+                {/if}
                 <span class="ml-auto text-[10px] tabular text-faint">{timeAgo(r.ts)}</span>
               </div>
-              <a
-                href={`https://www.reddit.com${r.permalink}`}
-                target="_blank"
-                rel="noopener"
-                class="mt-1 block text-[12.5px] leading-snug text-text hover:text-primary"
-              >
+
+              <div class="mt-1.5 line-clamp-2 text-[13px] font-medium leading-snug text-text transition-colors group-hover:text-primary">
                 {r.title}
-                <ExternalLink class="ml-1 inline h-3 w-3 align-baseline opacity-60" />
-              </a>
-              <div class="mt-1 text-[10.5px] text-faint">u/{r.author}</div>
+              </div>
+              {#if r.body_excerpt}
+                <div class="mt-1 line-clamp-2 text-[11.5px] leading-snug text-muted">{r.body_excerpt}</div>
+              {/if}
+
+              <div class="mt-2 flex items-center gap-2.5 pt-0.5 text-[10.5px] tabular text-faint">
+                <span class="truncate">u/{r.author}</span>
+                <span class="inline-flex items-center gap-0.5" title="upvotes">
+                  <ArrowUp class="h-3 w-3" />{compact(r.score)}
+                </span>
+                <span class="inline-flex items-center gap-0.5" title="comments">
+                  <MessageSquare class="h-3 w-3" />{r.num_comments}
+                </span>
+                <span class="ml-auto inline-flex items-center gap-2.5">
+                  <a
+                    href={r.permalink}
+                    target="_blank"
+                    rel="noopener"
+                    onclick={(e) => e.stopPropagation()}
+                    class="inline-flex items-center gap-0.5 text-muted transition-colors hover:text-primary"
+                  >reddit<ExternalLink class="h-3 w-3" /></a>
+                  <span class="inline-flex items-center gap-0.5 text-primary opacity-0 transition-opacity group-hover:opacity-100">
+                    <Sparkles class="h-3 w-3" />AI take
+                  </span>
+                </span>
+              </div>
             </Card>
           {/each}
         </div>
@@ -685,5 +761,81 @@
         <Markdown source={selectedFilingItem.materiality_reason} class="mt-1" />
       </div>
     {/if}
+
+    <div class="mt-5">
+      <AskBox
+        placeholder="Ask a follow-up about this filing…"
+        onAsk={askAboutFiling}
+      />
+    </div>
+  {/if}
+</Drawer>
+
+<!-- ── reddit drawer ──────────────────────────────────────── -->
+<Drawer
+  open={selectedSocialId !== null}
+  onClose={() => (selectedSocialId = null)}
+  class="max-w-2xl"
+>
+  {#snippet header()}
+    {#if selectedSocialItem}
+      <div class="flex flex-1 flex-wrap items-center gap-1.5">
+        <span class="inline-flex items-center gap-1 rounded border border-warn/30 bg-warn-soft px-1.5 py-0.5 text-[11px] font-semibold text-warn">
+          r/{selectedSocialItem.subreddit}
+        </span>
+        {#if selectedSocialItem.ticker}
+          <TickerLink ticker={selectedSocialItem.ticker} class="text-sm font-bold" />
+        {/if}
+        {#if selectedSocialItem.is_thesis}
+          <Pill variant="violet">thesis</Pill>
+        {/if}
+        {#if selectedSocialItem.sentiment !== null && selectedSocialItem.sentiment !== undefined}
+          <Pill variant={variantForSentimentSimple(selectedSocialItem.sentiment)}>
+            {sentimentLabel(selectedSocialItem.sentiment)}
+          </Pill>
+        {/if}
+        <a
+          href={selectedSocialItem.permalink}
+          target="_blank"
+          rel="noopener"
+          onclick={(e) => e.stopPropagation()}
+          class="ml-2 inline-flex items-center gap-1 rounded border border-border bg-surface-2 px-2 py-0.5 text-[10.5px] text-muted transition-colors hover:border-primary/40 hover:text-text"
+        ><ExternalLink class="h-3 w-3" />open</a>
+      </div>
+    {/if}
+  {/snippet}
+
+  {#if selectedSocialItem}
+    <div class="mb-3">
+      <div class="text-[15px] font-semibold leading-snug text-text">{selectedSocialItem.title}</div>
+      <div class="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] tabular text-faint">
+        <span class="text-muted">u/{selectedSocialItem.author}</span>
+        <span class="inline-flex items-center gap-0.5"><ArrowUp class="h-3 w-3" />{compact(selectedSocialItem.score)}</span>
+        <span class="inline-flex items-center gap-0.5"><MessageSquare class="h-3 w-3" />{selectedSocialItem.num_comments} comments</span>
+        <span>·</span>
+        <span>{timeAgo(selectedSocialItem.ts)}</span>
+      </div>
+    </div>
+
+    {#if selectedSocialItem.body_excerpt}
+      <div class="mb-4 rounded-lg border border-border-soft bg-surface-2/40 px-4 py-3 text-[12.5px] leading-relaxed text-muted whitespace-pre-wrap">
+        {selectedSocialItem.body_excerpt}
+      </div>
+    {/if}
+
+    <DossierBlock
+      body={$socialDossierQ.data?.body}
+      meta={$socialDossierQ.data?.meta}
+      isLoading={$socialDossierQ.isLoading || $socialDossierQ.isFetching}
+      onRefresh={regenerateSocial}
+      refreshing={socialRefreshing}
+    />
+
+    <div class="mt-5">
+      <AskBox
+        placeholder="Ask a follow-up about this thread…"
+        onAsk={askAboutSocial}
+      />
+    </div>
   {/if}
 </Drawer>

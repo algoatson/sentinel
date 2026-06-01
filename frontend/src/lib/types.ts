@@ -411,11 +411,19 @@ export interface RedditMention {
   ticker: string | null;
   author: string;
   title: string;
+  body_excerpt: string;
   score: number;
   num_comments: number;
   ts: string;
   permalink: string;
   sentiment: number | null;
+  is_thesis: boolean | null;
+}
+
+export interface RedditDossier {
+  mention_id: number;
+  body: string;
+  meta: { created_at: string; model: string } | null;
 }
 
 export interface SocialTicker {

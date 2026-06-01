@@ -124,3 +124,71 @@ def test_ask_about_call_is_not_cached(monkeypatch):
 
 def test_call_summary_meta_returns_none_when_missing():
     assert dossier.call_summary_meta(987_654_321) is None
+
+
+# ── reddit + filing (Intel overhaul) ──────────────────────────────────────────
+
+
+def _seed_reddit(ticker="NVDA") -> int:
+    from sentinel.models import RedditMention
+    with session_scope() as s:
+        m = RedditMention(
+            subreddit="stocks", post_id="p1", ticker=ticker, author="someuser",
+            score=42, num_comments=7, created_at=datetime.now(timezone.utc),
+            title="Is NVDA a buy here?", body_excerpt="discussion body",
+            permalink="https://www.reddit.com/r/stocks/comments/p1/x/",
+        )
+        s.add(m)
+        s.flush()
+        return m.id
+
+
+def _seed_filing(ticker="NVDA") -> int:
+    from sentinel.models import Filing
+    with session_scope() as s:
+        f = Filing(
+            cik="0001045810", ticker=ticker, form_type="8-K",
+            accession_number="acc-1", filed_at=datetime.now(timezone.utc),
+            primary_doc_url="https://sec.gov/x", summary="a summary",
+            materiality_score=6, materiality_reason="why",
+        )
+        s.add(f)
+        s.flush()
+        return f.id
+
+
+def test_reddit_dossier_caches_after_first_generation(monkeypatch):
+    mid = _seed_reddit()
+    stub = _CountingLLM("**TL;DR**: noise.")
+    monkeypatch.setattr(dossier, "get_llm", lambda: stub)
+    # Don't hit the network for top comments in tests.
+    import sentinel.ingesters.reddit as _r
+    monkeypatch.setattr(_r, "fetch_top_comments", lambda *a, **k: [])
+
+    a = dossier.reddit_dossier(mid)
+    b = dossier.reddit_dossier(mid)
+    assert a == b and "TL;DR" in a
+    assert stub.calls == 1  # second served from cache
+
+
+def test_reddit_dossier_missing_returns_sentinel_without_llm(monkeypatch):
+    boom = _CountingLLM()
+    monkeypatch.setattr(dossier, "get_llm", lambda: boom)
+    out = dossier.reddit_dossier(999_999)
+    assert "not found" in out.lower() and boom.calls == 0
+
+
+def test_ask_about_reddit_and_filing_missing_are_clean(monkeypatch):
+    boom = _CountingLLM()
+    monkeypatch.setattr(dossier, "get_llm", lambda: boom)
+    assert "not found" in dossier.ask_about_reddit(999_999, "q").lower()
+    assert "not found" in dossier.ask_about_filing(999_999, "q").lower()
+    assert boom.calls == 0
+
+
+def test_ask_about_filing_hits_llm(monkeypatch):
+    fid = _seed_filing()
+    stub = _CountingLLM("Answer about the filing.")
+    monkeypatch.setattr(dossier, "get_llm", lambda: stub)
+    out = dossier.ask_about_filing(fid, "what does this mean?")
+    assert out == "Answer about the filing." and stub.calls == 1

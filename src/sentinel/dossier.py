@@ -39,6 +39,8 @@ from .models import (
     NewsItem,
     PaperTrade,
     PriceContext,
+    RedditAnalysis,
+    RedditMention,
     TradingCall,
 )
 
@@ -133,6 +135,72 @@ be answered from this, say so — don't invent.
 
 NEWS:
 $news_json
+
+CONTEXT:
+$context_json
+
+QUESTION:
+$question
+""")
+
+
+_REDDIT_DOSSIER_PROMPT = Template("""\
+You're triaging a single Reddit thread for a trading bot's user. Reddit is
+mostly noise — your job is to tell signal from hype. Use the post + its top
+comments in the context below.
+
+Write a tight markdown dossier covering, IN THIS ORDER:
+
+**TL;DR**: 1 line — what's the thread actually about, in plain language?
+
+**Signal vs noise**: is this a substantive take (data, a real catalyst, a
+specific thesis) or just hype / a meme / a vent? Say which, and why. Weigh
+the score + comment count as a popularity signal, not a correctness one.
+
+**Crowd read**: what's the prevailing sentiment in the post + comments
+toward the named ticker — and is the crowd early, late, or piling into a
+move that already happened? Contrarian flags welcome.
+
+**Tradeable angle**: is there anything here a disciplined paper-trader
+would act on, or is it purely sentiment? If tradeable, name the direction
+and rough timeframe; if not, say "no edge — sentiment only".
+
+Be skeptical and concrete. No finance filler. If the thread is thin (no
+comments, vague title), say so plainly and keep it to the TL;DR.
+
+REDDIT THREAD:
+$reddit_json
+
+CONTEXT:
+$context_json
+""")
+
+
+_REDDIT_CHAT_PROMPT = Template("""\
+The user is asking a follow-up question about a Reddit thread. Answer it
+directly using only the thread + context provided. Reddit is noisy — don't
+over-weight a single loud comment. If it can't be answered from this, say
+so — don't invent.
+
+REDDIT THREAD:
+$reddit_json
+
+CONTEXT:
+$context_json
+
+QUESTION:
+$question
+""")
+
+
+_FILING_CHAT_PROMPT = Template("""\
+The user is asking a follow-up question about an SEC filing. Answer it
+directly using only the filing metadata + summary + context provided. If
+the answer isn't in what you've been given (e.g. it's buried in the full
+document, which you don't have), say so plainly — don't invent figures.
+
+FILING:
+$filing_json
 
 CONTEXT:
 $context_json
@@ -275,6 +343,98 @@ def _news_to_dict(n: NewsItem) -> dict:
     }
 
 
+def _reddit_to_dict(m: RedditMention) -> dict:
+    return {
+        "subreddit": m.subreddit,
+        "ticker": m.ticker,
+        "author": (m.author or "").removeprefix("u/"),
+        "title": m.title,
+        "body_excerpt": (m.body_excerpt or "")[:500],
+        "score": m.score,
+        "num_comments": m.num_comments,
+        "sentiment": m.sentiment,
+        "created_at": m.created_at.isoformat(),
+        "permalink": m.permalink,
+    }
+
+
+def _ctx_reddit(session, mention: RedditMention) -> dict:
+    """Context for a Reddit dossier: the ticker's price snapshot, how loud
+    the wider crowd is on that name right now (sibling mentions in the last
+    48h), and the thread's live top comments so the LLM judges the actual
+    discussion, not just the title."""
+    from .ingesters.reddit import fetch_top_comments
+    pc = session.get(PriceContext, mention.ticker) if mention.ticker else None
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).replace(tzinfo=None)
+    siblings = session.exec(
+        select(RedditMention)
+        .where(RedditMention.ticker == mention.ticker)
+        .where(RedditMention.created_at >= cutoff)
+    ).all() if mention.ticker else []
+    sib_sent = [m.sentiment for m in siblings if m.sentiment is not None]
+    try:
+        comments = fetch_top_comments(mention.permalink)
+    except Exception as e:  # network/parse — degrade to title-only
+        logger.debug("reddit dossier comments({}): {}", mention.id, e)
+        comments = []
+    return {
+        "top_comments": comments[:8],
+        "crowd": {
+            "ticker": mention.ticker,
+            "mentions_48h": len(siblings),
+            "avg_sentiment_48h": (
+                round(sum(sib_sent) / len(sib_sent), 2) if sib_sent else None
+            ),
+        },
+        "price_context": (
+            {
+                "ticker": mention.ticker,
+                "last_price": pc.last_price,
+                "change_1d_pct": pc.change_1d_pct,
+                "change_5d_pct": pc.change_5d_pct,
+            } if pc else None
+        ),
+    }
+
+
+def _filing_to_dict(f: Filing) -> dict:
+    return {
+        "form_type": f.form_type,
+        "ticker": f.ticker,
+        "cik": f.cik,
+        "summary": (f.summary or "")[:1200],
+        "materiality_score": f.materiality_score,
+        "materiality_reason": (f.materiality_reason or "")[:600],
+        "filed_at": f.filed_at.isoformat(),
+        "primary_doc_url": f.primary_doc_url,
+    }
+
+
+def _ctx_filing(session, f: Filing) -> dict:
+    """Context for a filing follow-up: the issuer's price snapshot + any
+    open paper position on it, so 'what does this mean for my book' is
+    answerable."""
+    pc = session.get(PriceContext, f.ticker) if f.ticker else None
+    opens = session.exec(
+        select(PaperTrade).where(PaperTrade.status == "open")
+    ).all()
+    return {
+        "price_context": (
+            {
+                "ticker": f.ticker,
+                "last_price": pc.last_price,
+                "change_1d_pct": pc.change_1d_pct,
+                "change_5d_pct": pc.change_5d_pct,
+            } if pc else None
+        ),
+        "open_positions": [
+            {"ticker": p.ticker, "side": p.side, "qty": p.qty,
+             "entry": p.entry_price}
+            for p in opens if not f.ticker or p.ticker == f.ticker
+        ],
+    }
+
+
 # ── LLM glue ──────────────────────────────────────────────────────────────
 
 
@@ -379,6 +539,44 @@ def news_dossier(news_id: int, *, refresh: bool = False) -> str:
     return body
 
 
+def reddit_dossier(mention_id: int, *, refresh: bool = False) -> str:
+    """Cached LLM read on one Reddit thread — signal-vs-noise triage of the
+    post + its top comments. Same caching philosophy as `news_dossier`."""
+    with session_scope() as s:
+        if not refresh:
+            cached = s.get(RedditAnalysis, mention_id)
+            if cached:
+                return cached.summary
+        m = s.get(RedditMention, mention_id)
+        if m is None:
+            return "_Reddit thread not found._"
+        ctx = _ctx_reddit(s, m)
+        reddit_d = _reddit_to_dict(m)
+
+    rendered = _REDDIT_DOSSIER_PROMPT.safe_substitute(
+        reddit_json=json.dumps(reddit_d, default=str),
+        context_json=json.dumps(ctx, default=str),
+    )
+    body = _complete(rendered, max_tokens=900)
+    if not body:
+        return "_LLM unreachable — try again in a moment._"
+
+    now = datetime.now(timezone.utc)
+    model = _model_name()
+    with session_scope() as s:
+        row = s.get(RedditAnalysis, mention_id)
+        if row is None:
+            s.add(RedditAnalysis(
+                mention_id=mention_id, summary=body, created_at=now, model=model,
+            ))
+        else:
+            row.summary = body
+            row.created_at = now
+            row.model = model
+            s.add(row)
+    return body
+
+
 # ── public API: contextual chat (NOT cached) ──────────────────────────────
 
 
@@ -416,6 +614,48 @@ def ask_about_news(news_id: int, question: str) -> str:
         news_d = _news_to_dict(item)
     rendered = _NEWS_CHAT_PROMPT.safe_substitute(
         news_json=json.dumps(news_d, default=str),
+        context_json=json.dumps(ctx, default=str),
+        question=q[:600],
+    )
+    body = _complete(rendered, max_tokens=900)
+    return body or "_LLM unreachable — try again._"
+
+
+def ask_about_reddit(mention_id: int, question: str) -> str:
+    """Follow-up Q about a Reddit thread. Not cached."""
+    q = (question or "").strip()
+    if not q:
+        return ""
+    with session_scope() as s:
+        m = s.get(RedditMention, mention_id)
+        if m is None:
+            return "_Reddit thread not found._"
+        ctx = _ctx_reddit(s, m)
+        reddit_d = _reddit_to_dict(m)
+    rendered = _REDDIT_CHAT_PROMPT.safe_substitute(
+        reddit_json=json.dumps(reddit_d, default=str),
+        context_json=json.dumps(ctx, default=str),
+        question=q[:600],
+    )
+    body = _complete(rendered, max_tokens=900)
+    return body or "_LLM unreachable — try again._"
+
+
+def ask_about_filing(filing_id: int, question: str) -> str:
+    """Follow-up Q about an SEC filing. Not cached. Reasons from the
+    filing's stored summary + materiality read + price context — it does
+    NOT have the full document text, and the prompt tells it to say so."""
+    q = (question or "").strip()
+    if not q:
+        return ""
+    with session_scope() as s:
+        f = s.get(Filing, filing_id)
+        if f is None:
+            return "_Filing not found._"
+        ctx = _ctx_filing(s, f)
+        filing_d = _filing_to_dict(f)
+    rendered = _FILING_CHAT_PROMPT.safe_substitute(
+        filing_json=json.dumps(filing_d, default=str),
         context_json=json.dumps(ctx, default=str),
         question=q[:600],
     )
@@ -462,4 +702,22 @@ def news_analysis_meta(news_id: int) -> dict | None:
             }
     except Exception as e:
         logger.debug("news_analysis_meta({}): {}", news_id, e)
+        return None
+
+
+def reddit_analysis_meta(mention_id: int) -> dict | None:
+    try:
+        with session_scope() as s:
+            row = s.get(RedditAnalysis, mention_id)
+            if row is None:
+                return None
+            return {
+                "created_at": (
+                    row.created_at if row.created_at.tzinfo
+                    else row.created_at.replace(tzinfo=timezone.utc)
+                ).isoformat(),
+                "model": row.model,
+            }
+    except Exception as e:
+        logger.debug("reddit_analysis_meta({}): {}", mention_id, e)
         return None

@@ -1,16 +1,19 @@
 """Filing endpoints — list recent SEC filings with materiality scores.
 
-Filings have no LLM dossier yet (the bot summarises them at ingest
-time via `pipelines/filings.py`), so the API just exposes the cached
-`Filing.summary` + `materiality_score` directly."""
+The bot summarises filings at ingest time (`pipelines/filings.py`), so
+the list/detail endpoints serve the cached `Filing.summary` +
+`materiality_score` directly. `/ask` adds an on-demand follow-up Q&A on
+top of that stored read (no full-document text — the LLM is told so)."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlmodel import select
 
+from .. import dossier as _dossier
 from ..db import session_scope
 from ..models import Filing
 
@@ -83,3 +86,15 @@ def get_one(filing_id: int) -> dict:
             "materiality_score": f.materiality_score,
             "materiality_reason": f.materiality_reason,
         }
+
+
+class AskRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=600)
+
+
+@router.post("/filings/{filing_id}/ask")
+def ask_about_filing(filing_id: int, body: AskRequest) -> dict:
+    """Follow-up chat about a filing — reasons from the stored summary +
+    materiality read + price context (not the full document). NOT cached."""
+    answer = _dossier.ask_about_filing(filing_id, body.question)
+    return {"filing_id": filing_id, "answer": answer}

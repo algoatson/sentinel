@@ -306,6 +306,17 @@ class NewsAnalysis(SQLModel, table=True):
     model: str = Field(default="", max_length=120)
 
 
+class RedditAnalysis(SQLModel, table=True):
+    """Cached LLM read on one Reddit thread — same philosophy as
+    NewsAnalysis. Generated on first dashboard click (the Intel → Reddit
+    "AI take"); summarises the thread + top comments and what, if anything,
+    it means for the named ticker."""
+    mention_id: int = Field(primary_key=True, foreign_key="redditmention.id")
+    summary: str
+    created_at: datetime
+    model: str = Field(default="", max_length=120)
+
+
 class ResearchTask(SQLModel, table=True):
     """One Research Desk request — full audit trail from prompt to trade.
 

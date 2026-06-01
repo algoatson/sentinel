@@ -248,7 +248,12 @@ def _normalize(entry, *, via_gnews: bool) -> dict | None:
         elif entry.get("summary"):
             body_html = entry["summary"]
         body = _strip_html(body_html)
-        author = (entry.get("author") or "").lstrip("/").strip() or "unknown"
+        # RSS hands us `/u/name`; store the BARE handle so the UI owns the
+        # `u/` prefix (avoids the `u/u/name` double-prefix bug).
+        author = (entry.get("author") or "").strip().lstrip("/")
+        if author.lower().startswith("u/"):
+            author = author[2:]
+        author = author or "unknown"
 
     return {
         "post_id": post_id,
