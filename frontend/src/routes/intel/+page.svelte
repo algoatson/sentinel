@@ -10,7 +10,7 @@
   import Delta from '$components/Delta.svelte';
   import Drawer from '$components/Drawer.svelte';
   import EmptyState from '$components/EmptyState.svelte';
-  import Spinner from '$components/Spinner.svelte';
+  import SkeletonGrid from '$components/SkeletonGrid.svelte';
   import DossierBlock from '$components/DossierBlock.svelte';
   import AskBox from '$components/AskBox.svelte';
   import TickerLink from '$components/TickerLink.svelte';
@@ -415,7 +415,7 @@
 {#if mode === 'news'}
   <div class="mt-3">
     {#if $newsQ.isLoading}
-      <div class="flex justify-center py-12"><Spinner /></div>
+      <SkeletonGrid count={9} />
     {:else if !filteredNews.length}
       <EmptyState
         icon={Newspaper}
@@ -477,7 +477,7 @@
 {:else if mode === 'filings'}
   <div class="mt-3">
     {#if $filingsQ.isLoading}
-      <div class="flex justify-center py-12"><Spinner /></div>
+      <SkeletonGrid count={9} />
     {:else if !filteredFilings.length}
       <EmptyState
         icon={FileText}
@@ -522,7 +522,7 @@
   <div class="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_15rem]">
     <div>
       {#if $socialQ.isLoading}
-        <div class="flex justify-center py-12"><Spinner /></div>
+        <SkeletonGrid count={6} class="grid grid-cols-1 gap-2.5 xl:grid-cols-2" />
       {:else if !$socialQ.data?.length}
         <EmptyState
           icon={MessageCircle}

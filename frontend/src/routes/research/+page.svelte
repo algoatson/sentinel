@@ -14,6 +14,7 @@
   import Drawer from '$components/Drawer.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
+  import SkeletonGrid from '$components/SkeletonGrid.svelte';
   import Markdown from '$components/Markdown.svelte';
   import Pager from '$components/Pager.svelte';
   import { timeAgo } from '$lib/format';
@@ -165,7 +166,7 @@
     Recent tasks
   </div>
   {#if $tasksQ.isLoading}
-    <div class="flex justify-center py-12"><Spinner /></div>
+    <SkeletonGrid count={4} class="grid grid-cols-1 gap-2.5 md:grid-cols-2" />
   {:else if !$tasksQ.data?.length}
     <EmptyState
       icon={FlaskConical}

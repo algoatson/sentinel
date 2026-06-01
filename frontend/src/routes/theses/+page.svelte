@@ -17,6 +17,7 @@
   import Pill from '$components/Pill.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
+  import SkeletonGrid from '$components/SkeletonGrid.svelte';
   import StatTile from '$components/StatTile.svelte';
   import TickerLink from '$components/TickerLink.svelte';
   import Markdown from '$components/Markdown.svelte';
@@ -139,7 +140,7 @@
     </div>
   </div>
   {#if $activeQ.isLoading}
-    <div class="flex justify-center py-8"><Spinner /></div>
+    <SkeletonGrid count={6} />
   {:else if !$activeQ.data?.length}
     <EmptyState
       icon={Brain}

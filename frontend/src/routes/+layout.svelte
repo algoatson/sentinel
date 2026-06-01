@@ -4,7 +4,7 @@
   import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
   import { browser } from '$app/environment';
   import { page } from '$app/state';
-  import { goto } from '$app/navigation';
+  import { goto, onNavigate } from '$app/navigation';
   import { base } from '$app/paths';
   import { liveEvents } from '$lib/events.svelte';
   import { toast } from '$lib/toast.svelte';
@@ -15,6 +15,20 @@
   import ShortcutsHelp from '$components/ShortcutsHelp.svelte';
 
   let { children } = $props();
+
+  // Cross-fade between routes via the View Transitions API — a smooth,
+  // composited page swap with zero remount (SvelteKit swaps the DOM inside
+  // the transition). No-ops where unsupported; the duration + reduced-motion
+  // guard live in app.css (::view-transition-*).
+  onNavigate((navigation) => {
+    if (!document.startViewTransition) return;
+    return new Promise((resolve) => {
+      document.startViewTransition(async () => {
+        resolve();
+        await navigation.complete;
+      });
+    });
+  });
 
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -170,7 +184,7 @@
         onOpenMobileNav={() => (mobileNavOpen = true)}
         onOpenPalette={() => (paletteOpen = true)}
       />
-      <main class="px-4 py-4 md:px-6 md:py-6">
+      <main class="route-main px-4 py-4 md:px-6 md:py-6">
         {@render children?.()}
       </main>
     </div>

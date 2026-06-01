@@ -7,6 +7,7 @@
   import { Menu, Search } from 'lucide-svelte';
   import NotificationBell from './NotificationBell.svelte';
   import MarketStatusPill from './MarketStatusPill.svelte';
+  import CountUp from './CountUp.svelte';
 
   interface Props {
     onOpenMobileNav?: () => void;
@@ -98,7 +99,7 @@
         title="Go to Overview"
       >
         <span class="hidden text-[10px] uppercase tracking-wider text-faint sm:inline">Equity</span>
-        <span class="font-semibold tabular text-text">{usd(eq)}</span>
+        <CountUp value={eq} format={usd} class="font-semibold tabular text-text" />
         {#if ret !== null}
           <span class={['tabular text-xs', tone(ret) === 'pos' ? 'text-good' : tone(ret) === 'neg' ? 'text-bad' : 'text-muted'].join(' ')}>
             {pct(ret, 1)}

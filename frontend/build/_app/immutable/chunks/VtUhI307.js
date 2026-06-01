@@ -1,0 +1,6 @@
+import"./CWj6FrbW.js";import"./Dntq_4jR.js";import{W as e,af as h,G as m}from"./Dn_wtCGb.js";import{I as n,s as i}from"./D99cepCt.js";import{l as c,a as l}from"./RhT4jamH.js";function v(o,t){const p=c(t,["children","$$slots","$$events","$$legacy"]);/**
+ * @license lucide-svelte v0.460.1 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */const d=[["path",{d:"M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"}],["path",{d:"M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"}],["path",{d:"M12 2v2"}],["path",{d:"M12 22v-2"}],["path",{d:"m17 20.66-1-1.73"}],["path",{d:"M11 10.27 7 3.34"}],["path",{d:"m20.66 17-1.73-1"}],["path",{d:"m3.34 7 1.73 1"}],["path",{d:"M14 12h8"}],["path",{d:"M2 12h2"}],["path",{d:"m20.66 7-1.73 1"}],["path",{d:"m3.34 17 1.73-1"}],["path",{d:"m17 3.34-1 1.73"}],["path",{d:"m11 13.73-4 6.93"}]];n(o,l({name:"cog"},()=>p,{get iconNode(){return d},children:(s,$)=>{var a=e(),r=h(a);i(r,t,"default",{}),m(s,a)},$$slots:{default:!0}}))}export{v as C};

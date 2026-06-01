@@ -257,3 +257,46 @@ body {
   background-clip: padding-box;
 }
 *::-webkit-scrollbar-corner { background: transparent; }
+
+/* ── route transition (View Transitions API; see +layout onNavigate) ──────
+ * Only the main content region cross-fades + lifts; the sidebar/topbar stay
+ * fixed (root transition disabled) so navigation feels like content swapping
+ * inside a stable shell rather than the whole viewport flashing. */
+.route-main {
+  view-transition-name: page;
+}
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(page) {
+    animation: vt-out 0.12s ease both;
+  }
+  ::view-transition-new(page) {
+    animation: vt-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+@keyframes vt-out {
+  to { opacity: 0; }
+}
+@keyframes vt-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(page),
+  ::view-transition-new(page) { animation: none; }
+}
+
+/* ── focus-visible ring — consistent keyboard affordance app-wide.
+ * Mouse clicks don't trigger it (only :focus-visible), so it stays clean
+ * for pointer users while keyboard nav gets a clear, on-brand ring. */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+button:focus:not(:focus-visible),
+a:focus:not(:focus-visible) {
+  outline: none;
+}

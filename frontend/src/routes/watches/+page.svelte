@@ -7,6 +7,7 @@
   import Pill from '$components/Pill.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
+  import SkeletonGrid from '$components/SkeletonGrid.svelte';
   import Drawer from '$components/Drawer.svelte';
   import { timeAgo } from '$lib/format';
   import { Bell, Send, X } from 'lucide-svelte';
@@ -125,7 +126,7 @@
   </div>
 
   {#if $watchesQ.isLoading}
-    <div class="flex justify-center py-8"><Spinner /></div>
+    <SkeletonGrid count={4} class="grid grid-cols-1 gap-2.5 md:grid-cols-2" />
   {:else if !$watchesQ.data?.length}
     <EmptyState
       icon={Bell}
