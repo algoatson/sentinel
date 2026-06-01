@@ -7,6 +7,7 @@
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
   import Skeleton from '$components/Skeleton.svelte';
+  import CountUp from '$components/CountUp.svelte';
   import TickerLink from '$components/TickerLink.svelte';
   import EquityCurveChart from '$components/EquityCurveChart.svelte';
   import Sparkline from '$components/Sparkline.svelte';
@@ -138,7 +139,9 @@
 
   <div class="mt-1 flex flex-wrap items-end gap-x-4 gap-y-1.5">
     <span class="text-[2.6rem] font-semibold leading-none tracking-tight tabular text-text">
-      {$kpiQ.data ? usd($kpiQ.data.equity) : '—'}
+      {#if $kpiQ.data && $kpiQ.data.equity !== null}
+        <CountUp value={$kpiQ.data.equity} format={(n) => usd(n)} />
+      {:else}—{/if}
     </span>
     {#if $kpiQ.data && $kpiQ.data.return_pct !== null}
       {@const r = $kpiQ.data.return_pct}

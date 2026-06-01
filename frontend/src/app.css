@@ -235,3 +235,25 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .skel { animation: none; background: var(--color-surface-2); }
 }
+
+/* ── thin, theme-matched scrollbars ───────────────────────────────────────
+ * The OS default scrollbars (chunky light-grey) look cheap on a dark UI and
+ * show all over: tables, the crypto screener, the briefing pane, the sidebar.
+ * A slim track-less thumb that brightens on hover reads far more premium. */
+* {
+  scrollbar-width: thin;                                   /* Firefox */
+  scrollbar-color: rgb(255 255 255 / 0.14) transparent;
+}
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background-color: rgb(255 255 255 / 0.13);
+  border: 2px solid transparent;       /* inset the thumb so it looks slim */
+  border-radius: 9px;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(255 255 255 / 0.26);
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner { background: transparent; }
