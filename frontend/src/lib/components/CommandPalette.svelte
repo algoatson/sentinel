@@ -5,7 +5,8 @@
    * keyboard navigation, and dispatching the selection.
    *
    * Items are unified — pages and tickers compete on score, so typing
-   * "mar" jumps to Markets and typing "nvd" jumps to /markets?ticker=NVDA.
+   * "mar" jumps to Markets and typing "nvd" jumps to /symbol/NVDA. Pages
+   * also match on `keywords` synonyms ("funding" → Crypto, "pnl" → Analytics).
    */
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
@@ -15,7 +16,8 @@
   import { watchlist } from '$api';
   import {
     LayoutDashboard, Briefcase, LineChart, FlaskConical, Brain,
-    Satellite, Target, Bell, Search, Sparkles, Cog, ArrowRight
+    Satellite, Target, Bell, Search, Sparkles, Cog, ArrowRight,
+    Bitcoin, BookText, GitCompareArrows, Layers, BarChart3
   } from 'lucide-svelte';
 
   interface Props {
@@ -30,24 +32,28 @@
     sub?: string;
     href: string;
     icon: typeof Search;
+    keywords?: string;  // synonyms so search finds a page by what it does
   };
 
   const PAGES: Item[] = [
-    { kind: 'page', label: 'Overview', href: '/overview', icon: LayoutDashboard },
-    { kind: 'page', label: 'Portfolio', href: '/portfolio', icon: Briefcase },
-    { kind: 'page', label: 'Book (open positions)', href: '/book', icon: Briefcase },
-    { kind: 'page', label: 'Markets', href: '/markets', icon: LineChart },
-    { kind: 'page', label: 'Research', href: '/research', icon: FlaskConical },
-    { kind: 'page', label: 'Theses', href: '/theses', icon: Brain },
-    { kind: 'page', label: 'Intel', href: '/intel', icon: Satellite },
-    { kind: 'page', label: 'Calls', href: '/calls', icon: Target },
-    { kind: 'page', label: 'Analytics', href: '/analytics', icon: LineChart },
-    { kind: 'page', label: 'Live feed', href: '/feed', icon: Bell },
-    { kind: 'page', label: 'Watches', href: '/watches', icon: Bell },
-    { kind: 'page', label: 'Lookup', href: '/lookup', icon: Search },
-    { kind: 'page', label: 'Copilot', href: '/copilot', icon: Sparkles },
-    { kind: 'page', label: 'System', href: '/system', icon: Cog },
-    { kind: 'page', label: 'Settings', href: '/settings', icon: Cog }
+    { kind: 'page', label: 'Overview', href: '/overview', icon: LayoutDashboard, keywords: 'home dashboard equity briefing' },
+    { kind: 'page', label: 'Portfolio', href: '/portfolio', icon: Briefcase, keywords: 'wallets funds equity curve drawdown' },
+    { kind: 'page', label: 'Book (open positions)', href: '/book', icon: Layers, keywords: 'positions open holdings risk treemap notional' },
+    { kind: 'page', label: 'Journal (closed trades)', href: '/journal', icon: BookText, keywords: 'closed trades pnl history leaderboard winners losers' },
+    { kind: 'page', label: 'Markets', href: '/markets', icon: LineChart, keywords: 'screener watchlist price chart heatmap funding' },
+    { kind: 'page', label: 'Crypto', href: '/crypto', icon: Bitcoin, keywords: 'btc regime funding squeeze oi orderbook microstructure coins perp' },
+    { kind: 'page', label: 'Research', href: '/research', icon: FlaskConical, keywords: 'desk prompt investigate' },
+    { kind: 'page', label: 'Theses', href: '/theses', icon: Brain, keywords: 'thesis conviction active' },
+    { kind: 'page', label: 'Intel', href: '/intel', icon: Satellite, keywords: 'news filings reddit social sentiment' },
+    { kind: 'page', label: 'Calls', href: '/calls', icon: Target, keywords: 'track record hit rate conviction source' },
+    { kind: 'page', label: 'Analytics', href: '/analytics', icon: BarChart3, keywords: 'pnl attribution calibration distribution correlation month' },
+    { kind: 'page', label: 'Compare', href: '/compare', icon: GitCompareArrows, keywords: 'benchmark spy tickers chart overlay' },
+    { kind: 'page', label: 'Live feed', href: '/feed', icon: Bell, keywords: 'events stream sse' },
+    { kind: 'page', label: 'Watches', href: '/watches', icon: Bell, keywords: 'alerts triggers' },
+    { kind: 'page', label: 'Lookup', href: '/lookup', icon: Search, keywords: 'ticker news filing timeline catalysts' },
+    { kind: 'page', label: 'Copilot', href: '/copilot', icon: Sparkles, keywords: 'chat ask ai assistant' },
+    { kind: 'page', label: 'System', href: '/system', icon: Cog, keywords: 'health tokens llm prompts cost' },
+    { kind: 'page', label: 'Settings', href: '/settings', icon: Cog, keywords: 'config preferences' }
   ];
 
   // Cache watchlist for tickers; only fetched when the palette opens.
@@ -63,7 +69,7 @@
       kind: 'ticker' as const,
       label: r.ticker,
       sub: r.asset_class,
-      href: `/markets?ticker=${encodeURIComponent(r.ticker)}`,
+      href: `/symbol/${encodeURIComponent(r.ticker)}`,
       icon: LineChart
     }))
   );
@@ -81,6 +87,7 @@
     if (label === lo) return 1000;
     if (label.startsWith(lo)) return 600;
     if (label.includes(lo)) return 300;
+    if (item.keywords?.includes(lo)) return 250;
     if (item.sub?.toLowerCase().includes(lo)) return 100;
     return 0;
   }
