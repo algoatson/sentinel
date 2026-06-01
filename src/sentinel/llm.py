@@ -29,6 +29,18 @@ from .config import settings
 
 LLM_ERROR_SENTINEL = "[LLM_ERROR]"
 
+# When reasoning is ON, the model spends ~500–900 completion tokens on
+# hidden chain-of-thought BEFORE the visible answer (measured live on
+# deepseek-v4-flash; effort level barely moves it). Several pipelines
+# pass small caps (300–750) tuned for the reasoning-OFF era — with
+# reasoning on those truncate mid-answer. So whenever reasoning is
+# enabled we floor max_tokens to this, guaranteeing room for the
+# thinking PLUS a full answer. It's a cap, not a target: short answers
+# still stop early, so this prevents truncation without inflating spend
+# on calls that finish quickly. JSON classifiers never hit this — they
+# run reasoning-off (see `_resolve_reasoning`).
+_REASONING_MIN_TOKENS = 1500
+
 # Process-lifetime LLM health counter, read by the daily diagnostic. Coarse
 # by design (the GIL makes the increments good enough; a health metric does
 # not need exactness or a lock). "errors" = a caller got the sentinel back
@@ -212,6 +224,52 @@ def _provider_field(hint: str) -> dict | None:
     return prov
 
 
+def _reasoning_field(mode: str | None) -> dict:
+    """Build the OpenRouter `reasoning` control object for a given mode.
+
+    Why this matters (it's load-bearing, not a tuning nicety): DeepSeek
+    v4 Flash and most modern "flash"/hybrid models are REASONING models
+    — they emit hidden chain-of-thought tokens that count against
+    `max_tokens` BEFORE any visible content. Measured live, even a
+    trivial "reply OK" burns ~77 reasoning tokens; a real classifier
+    prompt burns 500+. At our 300–1000 caps the budget is exhausted
+    mid-think, so the API returns empty content (`finish_reason=length`)
+    or a JSON array truncated mid-element — the ~30% empty-completion
+    failure rate seen in prod.
+
+    Modes:
+      "low"/"medium"/"high" → effort-graded reasoning kept ON. Only
+        sensible when the caller also gives a generous `max_tokens` so
+        thinking AND the answer both fit.
+      anything else ("off"/"" /None) → `{"enabled": false}`: thinking
+        disabled, the full budget goes to the visible answer. Verified
+        to drop reasoning tokens to 0 on the live model. Models that
+        don't support the toggle ignore it (no error).
+
+    The bot's edge lives in the DATA it assembles + its structured
+    prompts, not the model's hidden CoT — so reasoning-off is a
+    reliability win here, not a lobotomy. Re-enable per-call (the
+    `reasoning=` arg on complete/chat) or globally (LLM_REASONING) when
+    a specific high-value read earns the extra tokens.
+    """
+    m = (mode or "off").strip().lower()
+    if m in ("low", "medium", "high"):
+        return {"effort": m}
+    return {"enabled": False}
+
+
+def _resolve_reasoning(reasoning: str | None, *, json_mode: bool) -> str:
+    """Effective reasoning mode for a call. JSON/structured calls ALWAYS
+    get 'off' — reasoning only truncates a JSON array and never improves
+    a classification. Otherwise an explicit per-call `reasoning` wins,
+    falling back to the global `LLM_REASONING` setting (default 'off')."""
+    if json_mode:
+        return "off"
+    if reasoning:
+        return reasoning
+    return settings.LLM_REASONING or "off"
+
+
 def _maybe_no_think(prompt: str, model_name: str, json_mode: bool) -> str:
     """Append Qwen's `/no_think` switch for structured (JSON) calls.
 
@@ -240,6 +298,7 @@ def _api_chat(
     tool_choice: str | dict = "auto",
     temperature: float = 0.6,
     json_mode: bool = False,
+    reasoning_mode: str = "off",
 ) -> dict:
     """OpenAI-compatible chat-completions call returning the raw assistant
     message dict. Lower-level than ``_api_complete``: lets callers pass
@@ -264,11 +323,18 @@ def _api_chat(
     branch. Never raises.
     """
     url = base.rstrip("/") + "/chat/completions"
+    rsn = _reasoning_field(reasoning_mode)
+    # Floor the budget when reasoning is on so think+answer both fit —
+    # matters most here: each tool-loop iteration reasons, and a
+    # truncated iteration aborts the whole loop.
+    reasoning_on = rsn.get("enabled") is not False
+    eff_max = max(max_tokens, _REASONING_MIN_TOKENS) if reasoning_on else max_tokens
     payload: dict[str, Any] = {
         "model": model_id,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": max_tokens,
+        "max_tokens": eff_max,
+        "reasoning": rsn,
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
@@ -339,15 +405,21 @@ def _api_chat(
 def _api_complete(
     prompt: str, *, base: str, key: str, model_id: str,
     json_mode: bool, max_tokens: int, provider: str = "",
+    reasoning_mode: str = "off",
 ) -> str:
     """OpenAI-compatible chat-completions call against any serverless
     provider (OpenRouter / Novita / Together / Groq / OpenAI / vLLM …)."""
     url = base.rstrip("/") + "/chat/completions"
+    rsn = _reasoning_field(reasoning_mode)
+    # Floor the budget when reasoning is on so think+answer both fit.
+    reasoning_on = rsn.get("enabled") is not False
+    eff_max = max(max_tokens, _REASONING_MIN_TOKENS) if reasoning_on else max_tokens
     payload: dict[str, Any] = {
         "model": model_id,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.7,
-        "max_tokens": max_tokens,
+        "max_tokens": eff_max,
+        "reasoning": rsn,
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
@@ -465,6 +537,7 @@ class LLM:
         max_tokens: int = 800,
         fallback_light: bool = False,
         grounded: bool = True,
+        reasoning: str | None = None,
     ) -> str:
         """Run a completion. With `fallback_light=True`, a failed *heavy* call
         (timeout / empty / API error) retries once on the local light model
@@ -477,11 +550,17 @@ class LLM:
         `grounded=False` for prompts where the preamble would only add
         noise (self-tests, pure structural extraction without world
         context).
+
+        `reasoning` overrides the global LLM_REASONING for this call
+        ("low"/"medium"/"high" to think, anything else off). JSON calls
+        are always forced off (see `_resolve_reasoning`). Default None →
+        global setting.
         """
         if grounded:
             prompt = grounding.prepend(prompt)
         out = self._complete_once(
-            prompt, model=model, json_mode=json_mode, max_tokens=max_tokens
+            prompt, model=model, json_mode=json_mode, max_tokens=max_tokens,
+            reasoning=reasoning,
         )
         if out == LLM_ERROR_SENTINEL and model == "heavy" and fallback_light:
             logger.warning("heavy LLM failed — falling back to light model")
@@ -489,7 +568,8 @@ class LLM:
             # re-prepend here or `prepend` (which is idempotent) would
             # still spend a few CPU cycles re-checking. Skip cleanly.
             out = self._complete_once(
-                prompt, model="light", json_mode=json_mode, max_tokens=max_tokens
+                prompt, model="light", json_mode=json_mode, max_tokens=max_tokens,
+                reasoning=reasoning,
             )
         _STATS["calls"] += 1
         if out == LLM_ERROR_SENTINEL:
@@ -503,6 +583,7 @@ class LLM:
         model: Literal["light", "heavy"],
         json_mode: bool = False,
         max_tokens: int = 800,
+        reasoning: str | None = None,
     ) -> str:
         model_tag = (
             settings.LLM_MODEL_LIGHT if model == "light" else settings.LLM_MODEL_HEAVY
@@ -521,6 +602,7 @@ class LLM:
                 prompt, base=base, key=key, model_id=model_id,
                 json_mode=json_mode, max_tokens=max_tokens,
                 provider=_api_provider(model),
+                reasoning_mode=_resolve_reasoning(reasoning, json_mode=json_mode),
             )
             if text == LLM_ERROR_SENTINEL:
                 return LLM_ERROR_SENTINEL
@@ -579,6 +661,7 @@ class LLM:
         tool_choice: str | dict = "auto",
         temperature: float = 0.6,
         grounded: bool = True,
+        reasoning: str | None = None,
     ) -> dict:
         """Lower-level chat interface that accepts a full messages array
         and optional ``tools``. Used by the tool-call loop. Returns the
@@ -588,6 +671,10 @@ class LLM:
         Only the serverless route supports tools today; Ollama path
         ignores ``tools`` and just returns content. Grounded preamble
         injected as a system message when requested.
+
+        `reasoning` overrides the global LLM_REASONING for this call
+        (default None → global, which defaults off so the model doesn't
+        burn the token budget on hidden thinking — see `_reasoning_field`).
         """
         if grounded and messages:
             preamble = grounding.prepend("").strip()
@@ -618,6 +705,7 @@ class LLM:
                 base=base, key=key, model_id=model_id,
                 max_tokens=max_tokens,
                 provider=_api_provider(model),
+                reasoning_mode=_resolve_reasoning(reasoning, json_mode=False),
                 tools=tools,
                 tool_choice=tool_choice,
                 temperature=temperature,

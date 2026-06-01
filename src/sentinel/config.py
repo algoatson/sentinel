@@ -91,6 +91,21 @@ class Settings(BaseSettings):
     LLM_API_PROVIDER_LIGHT: str = ""
     LLM_API_PROVIDER_HEAVY: str = ""
 
+    # Reasoning-model control for the OpenRouter chat payload.
+    #   "low"/"medium"/"high" → keep chain-of-thought ON for analytical
+    #     calls (the trade/data brain + tool-selection). Default "low".
+    #   "off" → disable thinking entirely (fastest/cheapest, but the bot
+    #     loses the reasoning that improves reads and tool use).
+    # Reasoning is the bot's edge on the decision calls, so it's ON by
+    # default. Economy comes from two things the engine enforces, not
+    # from this knob: JSON classifiers (sentiment/materiality/triage —
+    # the high-frequency calls) are ALWAYS reasoning-off since CoT does
+    # nothing for a mechanical tag, and a max_tokens floor (see
+    # llm._REASONING_MIN_TOKENS) guarantees think+answer fit so a call
+    # never truncates (a truncated reasoning call is the worst waste —
+    # you pay for the thinking and get nothing).
+    LLM_REASONING: str = "low"
+
     # Per-tier provider overrides — set these to put a tier on a DIFFERENT
     # provider than the shared one above (e.g. light on a free Google AI
     # Studio endpoint, heavy on Novita). An override wins over the shared
