@@ -278,6 +278,8 @@ export const walletDetail = (name: string) =>
   get<WalletHistory>(`/wallets/${encodeURIComponent(name)}`);
 export const walletHistory = (name: string, days = 90) =>
   get<WalletHistory>(`/wallets/${encodeURIComponent(name)}/history?days=${days}`);
+export const resetWallet = (name: string) =>
+  post<Wallet>(`/wallets/${encodeURIComponent(name)}/reset`);
 
 /* ─── calls ─── */
 export const calls = (days = 7) => get<CallItem[]>(`/calls?days=${days}`);

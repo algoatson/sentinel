@@ -177,3 +177,17 @@ def update_wallet_policy(name: str, body: PolicyPatch) -> dict:
         s.flush()
         s.refresh(fund)
         return _policy_payload(fund)
+
+
+@router.post("/wallets/{name}/reset")
+def reset_wallet(name: str) -> dict:
+    """Wipe a wallet's track record back to its seeded baseline — clears all
+    trades + equity history, restores starting cash, and advances the call
+    cursor so it trades forward. Keeps the wallet's policy + active flag.
+
+    Destructive; the UI guards it behind a confirm. Returns the wallet's
+    fresh standing."""
+    st = _funds.reset_wallet(name)
+    if st is None:
+        raise HTTPException(404, f"wallet {name!r} not found")
+    return st

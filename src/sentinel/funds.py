@@ -1517,6 +1517,56 @@ def fund_detail_text(name: str) -> str:
     return "\n".join(body)[:4000]
 
 
+def reset_wallet(name: str) -> dict | None:
+    """Wipe a wallet's *performance* back to its freshly-seeded baseline:
+    delete every trade (open + closed) and equity tick, restore cash to the
+    starting balance, and advance the call cursor to the latest call so it
+    trades FORWARD from now (no history backfill). Then drop a single
+    baseline equity tick so the /portfolio sparkline has a point to draw.
+
+    Deliberately KEEPS the Fund row, its mandate, its `active` flag and any
+    policy-knob overrides — this resets the track record, not the config
+    (per-knob reset already lives in the policy drawer). Returns the wallet's
+    fresh standing, or None if the wallet doesn't exist.
+
+    The main use: after a strategy change (e.g. contrarian→leaders) a wallet
+    carries an inherited record that no longer reflects how it now trades —
+    reset gives it a clean slate to prove the new mandate."""
+    name = (name or "").strip().lower()
+    now = datetime.now(timezone.utc)
+    with session_scope() as s:
+        fund = s.exec(select(Fund).where(Fund.name == name)).first()
+        if fund is None:
+            return None
+        n_trades = 0
+        for t in s.exec(
+            select(FundTrade).where(FundTrade.fund_id == fund.id)
+        ).all():
+            s.delete(t)
+            n_trades += 1
+        for e in s.exec(
+            select(FundEquity).where(FundEquity.fund_id == fund.id)
+        ).all():
+            s.delete(e)
+        latest = s.exec(
+            select(TradingCall.id).order_by(TradingCall.id.desc()).limit(1)
+        ).first()
+        fund.cash = fund.starting_cash
+        fund.last_call_id = latest or 0
+        s.add(fund)
+        s.flush()
+        # Baseline tick so the equity curve starts at the starting balance
+        # instead of rendering "no history yet".
+        s.add(FundEquity(
+            fund_id=fund.id, ts=now, equity=round(fund.starting_cash, 2),
+        ))
+        logger.info(
+            "wallet reset: {} — cleared {} trades, cash→{:.0f}, cursor→{}",
+            name, n_trades, fund.starting_cash, fund.last_call_id,
+        )
+    return next((r for r in fund_standings() if r["name"] == name), None)
+
+
 def trade_history(name: str, days: int = 90) -> dict | None:
     """All trades (open + closed within `days`) on a wallet, with
     open_reason / close_reason populated — the audit surface for

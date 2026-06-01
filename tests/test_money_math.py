@@ -753,3 +753,60 @@ def test_macro_desk_usable_gate():
     assert _usable("") is False
     assert _usable(LLM_ERROR_SENTINEL) is False
     assert _usable("too short, no structure") is False
+
+
+# ── wallet reset ──────────────────────────────────────────────────────────────
+
+
+def test_reset_wallet_wipes_to_baseline_keeps_config():
+    """reset_wallet clears trades + equity, restores cash, advances the cursor
+    forward, and KEEPS the wallet's policy-knob overrides. Scoped to one
+    wallet — a sibling's state is untouched."""
+    funds.seed_funds()
+    with session_scope() as s:
+        d = s.exec(select(Fund).where(Fund.name == "degen")).first()
+        d.cash, d.last_call_id, d.size_pct = 4321.0, 0, 0.5   # cash drift + override
+        s.add(d); s.flush()
+        did = d.id
+        s.add(FundTrade(fund_id=did, ticker="AAA", side="long", qty=1,
+                        entry_price=10, entry_at=_now(), status="open"))
+        s.add(FundTrade(fund_id=did, ticker="BBB", side="long", qty=1,
+                        entry_price=10, entry_at=_now(), exit_price=12,
+                        exit_at=_now(), status="closed", realized_pnl=2.0,
+                        close_reason="take"))
+        s.add(FundEquity(fund_id=did, ts=_now(), equity=4321.0))
+        # a sibling wallet with its own open position — must survive
+        cat = s.exec(select(Fund).where(Fund.name == "catalyst")).first()
+        s.add(FundTrade(fund_id=cat.id, ticker="CCC", side="long", qty=1,
+                        entry_price=5, entry_at=_now(), status="open"))
+        # a fresh call so the cursor advances onto it
+        s.add(TradingCall(ticker="ZZ", direction="long", conviction=4,
+                          source="why_moved", thesis="t", price_at_call=1,
+                          created_at=_now()))
+
+    st = funds.reset_wallet("degen")
+    assert st is not None and st["open"] == 0 and st["closed"] == 0
+    assert st["ret_pct"] == 0.0
+
+    with session_scope() as s:
+        d = s.exec(select(Fund).where(Fund.name == "degen")).first()
+        assert d.cash == d.starting_cash
+        assert d.size_pct == 0.5                       # config override kept
+        assert funds._open_trades(s, d.id) == []
+        all_trades = s.exec(
+            select(FundTrade).where(FundTrade.fund_id == d.id)).all()
+        assert all_trades == []                        # closed ones gone too
+        eqs = s.exec(
+            select(FundEquity).where(FundEquity.fund_id == d.id)).all()
+        assert len(eqs) == 1 and eqs[0].equity == d.starting_cash  # baseline tick
+        latest = s.exec(
+            select(TradingCall.id).order_by(TradingCall.id.desc()).limit(1)
+        ).first()
+        assert d.last_call_id == latest                # trades forward, no backfill
+        # sibling untouched
+        cat = s.exec(select(Fund).where(Fund.name == "catalyst")).first()
+        assert len(funds._open_trades(s, cat.id)) == 1
+
+
+def test_reset_wallet_unknown_returns_none():
+    assert funds.reset_wallet("nope") is None

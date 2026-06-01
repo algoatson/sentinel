@@ -16,13 +16,13 @@
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
   import {
-    walletPolicy, updateWalletPolicy, walletHistory,
+    walletPolicy, updateWalletPolicy, walletHistory, resetWallet,
     type WalletKnobKey, type WalletPolicy,
   } from '$api';
   import Drawer from './Drawer.svelte';
   import Spinner from './Spinner.svelte';
   import { toast } from '$lib/toast.svelte';
-  import { Save, RotateCcw, PauseCircle, PlayCircle } from 'lucide-svelte';
+  import { Save, RotateCcw, PauseCircle, PlayCircle, Trash2 } from 'lucide-svelte';
   import { usd } from '$lib/format';
 
   interface Props {
@@ -75,6 +75,8 @@
 
   // Mark a clean (no-edit) state until the user touches a field.
   let initialised = $state(false);
+  // Two-click guard on the destructive wallet reset.
+  let confirmReset = $state(false);
 
   $effect(() => {
     const d = $q.data;
@@ -89,7 +91,10 @@
       dMaxOpens= d.knobs.max_opens_per_day.value != null ? String(d.knobs.max_opens_per_day.value) : '';
       initialised = true;
     }
-    if (!open) initialised = false;
+    if (!open) {
+      initialised = false;
+      confirmReset = false;
+    }
   });
 
   const m = createMutation({
@@ -98,6 +103,19 @@
     onSuccess: () => {
       toast.success(`Policy saved · ${name}`);
       qc.invalidateQueries({ queryKey: ['wallet-policy', name] });
+      qc.invalidateQueries({ queryKey: ['wallets'] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
+  });
+
+  const resetM = createMutation({
+    mutationFn: () => resetWallet(name!),
+    onSuccess: () => {
+      toast.success(`${name} reset — clean slate`);
+      confirmReset = false;
+      initialised = false; // re-hydrate drafts + stats from the wiped wallet
+      qc.invalidateQueries({ queryKey: ['wallet-policy', name] });
+      qc.invalidateQueries({ queryKey: ['wallet-policy-history', name] });
       qc.invalidateQueries({ queryKey: ['wallets'] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
@@ -348,6 +366,49 @@
         {#if $m.isPending}<Spinner size={12} />{:else}<Save class="h-3.5 w-3.5" />{/if}
         Save policy
       </button>
+
+      <!-- Danger zone — wipe the track record back to a clean slate -->
+      <div class="mt-1 rounded-md border border-bad/25 bg-bad/[0.04] px-3 py-2.5">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="text-[11px] font-semibold text-bad">Reset wallet</div>
+            <div class="mt-0.5 text-[10.5px] leading-snug text-faint">
+              Wipes all trades + equity history, restores {usd(d.starting_cash)} cash,
+              and trades forward from now. Keeps the policy above.
+            </div>
+          </div>
+          {#if !confirmReset}
+            <button
+              type="button"
+              onclick={() => (confirmReset = true)}
+              class="inline-flex shrink-0 items-center gap-1 rounded-md border border-bad/40 bg-bad/10 px-2 py-1 text-[11px] font-medium text-bad transition-colors hover:bg-bad/20"
+            >
+              <Trash2 class="h-3.5 w-3.5" /> Reset
+            </button>
+          {/if}
+        </div>
+        {#if confirmReset}
+          <div class="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onclick={() => $resetM.mutate()}
+              disabled={$resetM.isPending}
+              class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md border border-bad/50 bg-bad/15 px-2 py-1.5 text-[11.5px] font-semibold text-bad transition-colors hover:bg-bad/25 disabled:opacity-50"
+            >
+              {#if $resetM.isPending}<Spinner size={12} />{:else}<Trash2 class="h-3.5 w-3.5" />{/if}
+              Yes, wipe {name}
+            </button>
+            <button
+              type="button"
+              onclick={() => (confirmReset = false)}
+              disabled={$resetM.isPending}
+              class="rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[11.5px] text-muted transition-colors hover:bg-surface-2/70"
+            >
+              Cancel
+            </button>
+          </div>
+        {/if}
+      </div>
     </div>
   {/if}
 </Drawer>
