@@ -20,6 +20,12 @@ export interface KpiSnapshot {
   llm_calls: number | null;
   llm_errors: number | null;
   llm_reliability_pct: number | null;
+  crypto_regime: {
+    state: 'risk_on' | 'neutral' | 'risk_off';
+    btc_1d_pct: number | null;
+    btc_5d_pct: number | null;
+    reason: string;
+  } | null;
 }
 
 export interface EquityCurvePoint {

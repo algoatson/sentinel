@@ -208,6 +208,24 @@
         </span>
       </span>
     {/if}
+    {#if $kpiQ.data?.crypto_regime}
+      {@const cr = $kpiQ.data.crypto_regime}
+      <span
+        class={[
+          'inline-flex items-baseline gap-1 rounded border px-2 py-0.5',
+          cr.state === 'risk_on' ? 'border-good/40 bg-good-soft text-good' :
+          cr.state === 'risk_off' ? 'border-bad/40 bg-bad-soft text-bad' :
+          'border-border bg-surface-2 text-muted'
+        ].join(' ')}
+        title={`Crypto tape (gates the autonomous crypto leg) — ${cr.reason}`}
+      >
+        <span class="text-[9.5px] uppercase tracking-wider opacity-80">tape</span>
+        <span class="font-semibold">{cr.state === 'risk_on' ? 'risk-on' : cr.state === 'risk_off' ? 'risk-off' : 'neutral'}</span>
+        {#if cr.btc_1d_pct !== null && cr.btc_1d_pct !== undefined}
+          <span class="text-[9.5px] opacity-70">· ₿ {cr.btc_1d_pct > 0 ? '+' : ''}{cr.btc_1d_pct.toFixed(1)}%</span>
+        {/if}
+      </span>
+    {/if}
   </div>
   </div>
 </div>

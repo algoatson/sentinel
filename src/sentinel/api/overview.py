@@ -76,6 +76,22 @@ def kpi_snapshot() -> dict[str, Any]:
         )
     except Exception:
         out["llm_calls"] = out["llm_errors"] = out["llm_reliability_pct"] = None
+    try:
+        # BTC-derived crypto tape regime — the same signal that gates the
+        # autonomous crypto leg's entries (no new longs in risk-off, no new
+        # shorts in risk-on). Surfacing it gives market context and explains
+        # the bot's crypto behaviour.
+        from ..crypto_regime import market_regime
+        with session_scope() as s:
+            reg = market_regime(s)
+        out["crypto_regime"] = {
+            "state": reg.state,
+            "btc_1d_pct": reg.btc_1d_pct,
+            "btc_5d_pct": reg.btc_5d_pct,
+            "reason": reg.reason,
+        }
+    except Exception:
+        out["crypto_regime"] = None
     return out
 
 
