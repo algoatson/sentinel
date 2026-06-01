@@ -29,6 +29,7 @@
   import Pill from '$components/Pill.svelte';
   import TickerLink from '$components/TickerLink.svelte';
   import Spinner from '$components/Spinner.svelte';
+  import Skeleton from '$components/Skeleton.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import Drawer from '$components/Drawer.svelte';
   import { toast } from '$lib/toast.svelte';
@@ -582,7 +583,7 @@
 {#if viewMode === 'heatmap'}
   <Card class="mt-3 px-3 py-3">
     {#if $positionsQ.isLoading}
-      <div class="flex items-center justify-center py-12"><Spinner /></div>
+      <div class="space-y-2 py-3"><Skeleton class="h-6 w-full rounded" lines={8} /></div>
     {:else}
       <div class="mb-2 flex items-baseline gap-3">
         <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
@@ -600,7 +601,7 @@
 <!-- ── table ───────────────────────────────── -->
 <Card class={['mt-3 overflow-hidden', viewMode === 'heatmap' ? 'hidden' : ''].join(' ')}>
   {#if $positionsQ.isLoading}
-    <div class="flex items-center justify-center py-12"><Spinner /></div>
+    <div class="space-y-2 py-3"><Skeleton class="h-6 w-full rounded" lines={10} /></div>
   {:else if !$positionsQ.data?.length}
     <EmptyState
       title="No open positions"

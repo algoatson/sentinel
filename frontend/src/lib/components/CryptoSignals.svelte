@@ -11,6 +11,7 @@
   import { base } from '$app/paths';
   import Card from './Card.svelte';
   import EmptyState from './EmptyState.svelte';
+  import Skeleton from './Skeleton.svelte';
   import TickerLink from './TickerLink.svelte';
   import { Activity, ArrowUpRight, ArrowDownRight } from 'lucide-svelte';
   import { timeAgo } from '$lib/format';
@@ -48,7 +49,11 @@
   </div>
 
   {#if !$q.data}
-    <div class="py-4 text-center text-[12px] text-faint">Loading…</div>
+    <div class="space-y-1.5 py-1">
+      {#each Array(3) as _, i (i)}
+        <Skeleton class="h-9 w-full rounded" />
+      {/each}
+    </div>
   {:else if $q.data.signals.length === 0}
     <EmptyState
       title="No funding/OI setups firing"

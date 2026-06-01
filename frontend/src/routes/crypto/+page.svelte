@@ -13,7 +13,7 @@
   import TickerLink from '$components/TickerLink.svelte';
   import Delta from '$components/Delta.svelte';
   import EmptyState from '$components/EmptyState.svelte';
-  import Spinner from '$components/Spinner.svelte';
+  import Skeleton from '$components/Skeleton.svelte';
   import { base } from '$app/paths';
   import { usd, price, timeAgo } from '$lib/format';
   import { Bitcoin, ArrowUpRight, ArrowDownRight } from 'lucide-svelte';
@@ -139,7 +139,9 @@
     <span class="text-[10.5px] text-faint">{cryptoPos.length}</span>
   </div>
   {#if $posQ.isLoading}
-    <div class="py-4 text-center"><Spinner /></div>
+    <div class="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+      {#each Array(3) as _, i (i)}<Skeleton class="h-10 w-full rounded" />{/each}
+    </div>
   {:else if !cryptoPos.length}
     <EmptyState title="No open crypto positions" description="The crypto wallet opens positions off funding-squeeze, why-moved and convergence calls — gated by the BTC regime above." />
   {:else}
@@ -179,7 +181,9 @@
     <span class="ml-auto text-[10px] text-faint">sorted by {sortKey.replace('_pct', '').replace('_24h', '')}{arrow(sortKey)}</span>
   </div>
   {#if $scrQ.isLoading}
-    <div class="flex items-center justify-center py-12"><Spinner /></div>
+    <div class="space-y-2 p-3">
+      {#each Array(10) as _, i (i)}<Skeleton class="h-6 w-full rounded" />{/each}
+    </div>
   {:else if !coins.length}
     <EmptyState title="No crypto microstructure yet" description="The crypto_micro ingester polls Binance/OKX every 20 min." />
   {:else}

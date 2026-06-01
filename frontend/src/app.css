@@ -215,3 +215,23 @@ body {
     transition: border-color 0.12s ease, background-color 0.12s ease;
   }
 }
+
+/* ── skeleton shimmer (loading placeholders) ──────────────────────────── */
+@keyframes skel-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skel {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-2) 25%,
+    rgb(255 255 255 / 0.06) 37%,
+    var(--color-surface-2) 63%
+  );
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.4s ease-in-out infinite;
+  border-radius: 4px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel { animation: none; background: var(--color-surface-2); }
+}

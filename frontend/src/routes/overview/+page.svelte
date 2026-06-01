@@ -6,6 +6,7 @@
   import Pill from '$components/Pill.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
+  import Skeleton from '$components/Skeleton.svelte';
   import TickerLink from '$components/TickerLink.svelte';
   import EquityCurveChart from '$components/EquityCurveChart.svelte';
   import Sparkline from '$components/Sparkline.svelte';
@@ -342,7 +343,7 @@
       </div>
     </div>
     {#if $equityQ.isLoading}
-      <div class="flex h-[340px] items-center justify-center"><Spinner /></div>
+      <Skeleton class="h-[340px] w-full rounded-lg" />
     {:else}
       <EquityCurveChart series={$equityQ.data ?? []} height={340} />
     {/if}
