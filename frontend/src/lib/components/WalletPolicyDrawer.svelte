@@ -14,14 +14,16 @@
    * funds._POLICIES.
    */
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import { reactiveQueryOptions } from '$lib/reactive-query.svelte';
   import {
-    walletPolicy, updateWalletPolicy,
+    walletPolicy, updateWalletPolicy, walletHistory,
     type WalletKnobKey, type WalletPolicy,
   } from '$api';
   import Drawer from './Drawer.svelte';
   import Spinner from './Spinner.svelte';
   import { toast } from '$lib/toast.svelte';
   import { Save, RotateCcw, PauseCircle, PlayCircle } from 'lucide-svelte';
+  import { usd } from '$lib/format';
 
   interface Props {
     name: string | null;
@@ -31,13 +33,33 @@
   let { name, open, onClose }: Props = $props();
 
   const qc = useQueryClient();
-  const q = createQuery({
+  // reactiveQueryOptions so `enabled`/`queryKey` track name+open — a plain
+  // object evaluates `enabled` once at mount (name=null → false) and the
+  // fetch never fires, which is why the drawer read "No policy loaded".
+  const q = createQuery(reactiveQueryOptions(() => ({
     queryKey: ['wallet-policy', name],
     queryFn: () => walletPolicy(name!),
     enabled: !!name && open,
-    // No background polling — we open the drawer, edit, save, close.
     refetchInterval: false,
     staleTime: 30_000,
+  })));
+
+  // Recent closed trades — turns the drawer into a wallet cockpit. Separate
+  // query (same enable gate) so the policy editor renders instantly while
+  // the trade tape streams in behind it.
+  const hist = createQuery(reactiveQueryOptions(() => ({
+    queryKey: ['wallet-policy-history', name],
+    queryFn: () => walletHistory(name!, 90),
+    enabled: !!name && open,
+    refetchInterval: false,
+    staleTime: 60_000,
+  })));
+  const recentCloses = $derived.by(() => {
+    const c = $hist.data?.closed ?? [];
+    return [...c]
+      .filter((t) => t.exit_at)
+      .sort((a, b) => (a.exit_at! < b.exit_at! ? 1 : -1))
+      .slice(0, 5);
   });
 
   // Draft fields — populated when the policy loads. Strings so the
@@ -158,6 +180,70 @@
   {:else}
     {@const d = $q.data}
     <div class="space-y-3">
+      <!-- Live stats — the drawer doubles as a wallet cockpit -->
+      {#if d.stats}
+        {@const s = d.stats}
+        {#snippet stat(label: string, val: string, cls = 'text-text')}
+          <div class="rounded-md border border-border bg-surface-2/40 px-2 py-1.5">
+            <div class="text-[9px] uppercase tracking-wider text-faint">{label}</div>
+            <div class={['mt-0.5 text-[13.5px] font-semibold tabular leading-tight', cls].join(' ')}>{val}</div>
+          </div>
+        {/snippet}
+        <div class="grid grid-cols-3 gap-2">
+          {@render stat('Return', `${s.return_pct > 0 ? '+' : ''}${s.return_pct.toFixed(2)}%`, s.return_pct >= 0 ? 'text-good' : 'text-bad')}
+          {@render stat('Equity', usd(s.equity))}
+          {@render stat('uPnL', usd(s.upnl, true), s.upnl > 0 ? 'text-good' : s.upnl < 0 ? 'text-bad' : 'text-muted')}
+          {@render stat('Open', String(s.open))}
+          {@render stat('Closed', String(s.closed))}
+          {@render stat('Win rate', s.win_rate_pct != null ? `${s.win_rate_pct.toFixed(0)}%` : '—')}
+        </div>
+      {/if}
+
+      <!-- What this wallet listens to (read-only) -->
+      <div class="flex flex-wrap items-center gap-1 text-[10.5px]">
+        <span class="uppercase tracking-wider text-faint">listens</span>
+        {#if d.sources.length}
+          {#each d.sources as src (src)}
+            <span class="rounded border border-border bg-surface-2 px-1.5 py-0.5 text-muted">{src}</span>
+          {/each}
+        {:else}
+          <span class="rounded border border-border bg-surface-2 px-1.5 py-0.5 text-faint">user-driven</span>
+        {/if}
+        {#if d.asset_classes}
+          {#each d.asset_classes as ac (ac)}
+            <span class="rounded border border-primary/30 bg-primary-soft px-1.5 py-0.5 capitalize text-primary">{ac}</span>
+          {/each}
+        {:else}
+          <span class="rounded border border-primary/20 bg-primary-soft/50 px-1.5 py-0.5 text-primary/70">any asset</span>
+        {/if}
+      </div>
+
+      <!-- Recent closes — the wallet's live trade tape -->
+      {#if recentCloses.length}
+        <div class="rounded-md border border-border bg-surface-2/40 px-2.5 py-2">
+          <div class="mb-1.5 flex items-center justify-between">
+            <span class="text-[9.5px] uppercase tracking-wider text-faint">Recent closes</span>
+            {#if d.stats}
+              <span class="text-[9.5px] tabular text-faint">{d.stats.closed} total</span>
+            {/if}
+          </div>
+          <div class="space-y-1">
+            {#each recentCloses as t (t.id)}
+              <div class="flex items-center gap-2 text-[11px]">
+                <span class={['h-1.5 w-1.5 shrink-0 rounded-full', t.side === 'long' ? 'bg-good' : 'bg-bad'].join(' ')}></span>
+                <span class="font-mono font-medium text-text">{t.ticker}</span>
+                {#if t.close_reason}
+                  <span class="truncate text-faint">{t.close_reason}</span>
+                {/if}
+                <span class={['ml-auto shrink-0 tabular font-semibold', t.realized_pct >= 0 ? 'text-good' : 'text-bad'].join(' ')}>
+                  {t.realized_pct > 0 ? '+' : ''}{t.realized_pct.toFixed(1)}%
+                </span>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
       <!-- Active toggle -->
       <div class="flex items-center gap-2 rounded-md border border-border bg-surface-2/40 px-3 py-2">
         <span class="flex-1 text-[12px] text-muted">
@@ -251,38 +337,6 @@
           'Max opens / day', 'max_opens_per_day', dMaxOpens, (v) => (dMaxOpens = v),
           'caps news-cascade churn',
         )}
-      </div>
-
-      <!-- Read-only metadata -->
-      <div class="grid grid-cols-2 gap-2 text-[11px]">
-        <div class="rounded-md border border-border bg-surface-2/40 px-2 py-1.5">
-          <div class="text-[9.5px] uppercase tracking-wider text-faint">Sources</div>
-          <div class="mt-0.5 flex flex-wrap gap-1">
-            {#if d.sources.length}
-              {#each d.sources as src (src)}
-                <span class="rounded border border-border bg-surface px-1.5 py-0.5 font-mono text-[10px] text-muted">
-                  {src}
-                </span>
-              {/each}
-            {:else}
-              <span class="text-faint">— (user-driven only)</span>
-            {/if}
-          </div>
-        </div>
-        <div class="rounded-md border border-border bg-surface-2/40 px-2 py-1.5">
-          <div class="text-[9.5px] uppercase tracking-wider text-faint">Asset classes</div>
-          <div class="mt-0.5 flex flex-wrap gap-1">
-            {#if d.asset_classes && d.asset_classes.length}
-              {#each d.asset_classes as a (a)}
-                <span class="rounded border border-border bg-surface px-1.5 py-0.5 font-mono text-[10px] text-muted">
-                  {a}
-                </span>
-              {/each}
-            {:else}
-              <span class="text-faint">any</span>
-            {/if}
-          </div>
-        </div>
       </div>
 
       <button

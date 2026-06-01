@@ -87,12 +87,33 @@ def _policy_payload(fund: Fund) -> dict:
 @router.get("/wallets/{name}/policy")
 def wallet_policy(name: str) -> dict:
     """Resolved policy for a wallet — code defaults overlaid with DB
-    overrides. UI calls this to populate the edit drawer."""
+    overrides — plus live performance stats so the drawer doubles as a
+    wallet cockpit. UI calls this to populate the edit drawer."""
     with session_scope() as s:
         fund = s.exec(select(Fund).where(Fund.name == name)).first()
         if fund is None:
             raise HTTPException(404, f"wallet {name!r} not found")
-        return _policy_payload(fund)
+        payload = _policy_payload(fund)
+    # Live stats (equity / return / open / closed / win-rate / uPnL) from the
+    # same standings the portfolio cards use — its own session, post-payload.
+    try:
+        st = next(
+            (r for r in _funds.fund_standings() if r["name"] == name), None
+        )
+        if st is not None:
+            payload["stats"] = {
+                "equity": st["equity"],
+                "start": st["start"],
+                "return_pct": st["ret_pct"],
+                "open": st["open"],
+                "closed": st["closed"],
+                "wins": st["wins"],
+                "win_rate_pct": round(st["wins"] / st["closed"] * 100, 1) if st["closed"] else None,
+                "upnl": st["upnl"],
+            }
+    except Exception:
+        payload["stats"] = None
+    return payload
 
 
 class PolicyPatch(BaseModel):

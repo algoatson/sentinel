@@ -181,6 +181,16 @@ export interface WalletPolicy {
   };
   sources: string[];
   asset_classes: string[] | null;
+  stats?: {
+    equity: number;
+    start: number;
+    return_pct: number;
+    open: number;
+    closed: number;
+    wins: number;
+    win_rate_pct: number | null;
+    upnl: number;
+  } | null;
 }
 export type WalletKnobKey = keyof WalletPolicy['knobs'];
 
