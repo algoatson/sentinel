@@ -231,16 +231,21 @@ def test_answer_question_blank_short_circuits_without_llm(monkeypatch):
     assert asyncio.run(chat.answer_question("   ")) == ""
 
 
+# `use_tools=False` exercises the one-shot `complete` chokepoint these
+# fakes mock. The default (use_tools=True) routes through the tool loop,
+# which calls the API via llm_tools — bypassing a `chat.get_llm` patch and
+# hitting the network. These tests target the success/sentinel/empty
+# mapping, which lives in the one-shot path.
 def test_answer_question_returns_text_on_success(monkeypatch):
     fake = _FakeLLM("Here's the read: $SPY looks heavy.")
     monkeypatch.setattr(chat, "get_llm", lambda: fake)
-    out = asyncio.run(chat.answer_question("what looks good today"))
+    out = asyncio.run(chat.answer_question("what looks good today", use_tools=False))
     assert out == "Here's the read: $SPY looks heavy."
     assert fake.seen and "what looks good today" in fake.seen[0]
 
 
 def test_answer_question_maps_failure_to_sentinel(monkeypatch):
     monkeypatch.setattr(chat, "get_llm", lambda: _FakeLLM("[LLM_ERROR] down"))
-    assert asyncio.run(chat.answer_question("anything")) == "[LLM_ERROR]"
+    assert asyncio.run(chat.answer_question("anything", use_tools=False)) == "[LLM_ERROR]"
     monkeypatch.setattr(chat, "get_llm", lambda: _FakeLLM(""))
-    assert asyncio.run(chat.answer_question("anything")) == "[LLM_ERROR]"
+    assert asyncio.run(chat.answer_question("anything", use_tools=False)) == "[LLM_ERROR]"

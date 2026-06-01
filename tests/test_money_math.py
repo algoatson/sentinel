@@ -375,9 +375,16 @@ def test_fund_run_opens_long_with_correct_cash_then_marks_up():
         assert len(trades) == 1
         t = trades[0]
         assert t.ticker == "ZZ" and t.side == "long"
-        # degen size = equity * 0.20 * (5/5) = start*0.20 notional
-        notional = start * 0.20
-        assert abs(t.qty * t.entry_price - notional) < 1e-6
+        # Sizing is fixed-risk (not flat notional): qty risks
+        # _BASE_RISK_PCT × equity between entry and stop. Conviction 5 →
+        # conv_bias 1.0; no drawdown + no attribution history → dd_scale and
+        # edge_mult both 1.0; degen size_pct 0.20 → notional-scale 1.0. So
+        # qty = (start × 0.008) / |entry − stop|, derived here from the
+        # trade's own stop so the assertion tracks the formula, not a literal.
+        per_share_risk = abs(t.entry_price - t.stop_price)
+        expected_qty = (start * funds._BASE_RISK_PCT) / per_share_risk
+        assert abs(t.qty - expected_qty) < 1e-6
+        notional = t.qty * t.entry_price  # well under the 0.20 notional ceiling
         assert abs(degen.cash - (start - notional)) < 1e-6
         eq_rows = s.exec(
             select(FundEquity).where(FundEquity.fund_id == degen.id)

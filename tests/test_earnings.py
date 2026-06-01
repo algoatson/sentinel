@@ -65,7 +65,10 @@ def test_synthesis_snapshot_surfaces_earnings_window():
     """The brain must actually receive the dates (focus-name in window)."""
     from sentinel.pipelines import synthesis
 
-    today = date.today()
+    # Anchor on the SAME clock the snapshot uses — synthesis._build_snapshot
+    # computes in_days off datetime.now(UTC).date(). Using local date.today()
+    # here drifts by a day in the evening, once UTC has rolled over.
+    today = datetime.now(UTC).date()
     with session_scope() as s:
         s.add(Holding(ticker="ERN", quantity=1, added_at=datetime.now(UTC)))
         s.add(EarningsDate(ticker="ERN",

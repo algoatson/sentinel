@@ -159,7 +159,8 @@ def test_llm_complete_prepends_grounding_by_default(monkeypatch):
 
     seen: list[str] = []
 
-    def _fake_once(self, prompt, *, model, json_mode=False, max_tokens=800):
+    def _fake_once(self, prompt, *, model, json_mode=False, max_tokens=800,
+                   reasoning=None):
         seen.append(prompt)
         return "ok"
 
@@ -184,7 +185,8 @@ def test_llm_complete_grounded_false_skips_preamble(monkeypatch):
 
     seen: list[str] = []
 
-    def _fake_once(self, prompt, *, model, json_mode=False, max_tokens=800):
+    def _fake_once(self, prompt, *, model, json_mode=False, max_tokens=800,
+                   reasoning=None):
         seen.append(prompt)
         return "ok"
 
