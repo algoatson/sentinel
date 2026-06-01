@@ -360,7 +360,7 @@
             {@const isExpanded = expanded.has(t.id)}
             {@const isEditing = drafts[t.id] !== undefined}
             {@const win = (t.realized_pnl ?? 0) > 0}
-            <div class="px-3 py-2">
+            <div class="px-3 py-2 transition-colors even:bg-white/[0.015] hover:bg-white/[0.03]">
               <!-- Row header -->
               <button
                 type="button"
