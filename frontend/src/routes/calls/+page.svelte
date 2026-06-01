@@ -111,6 +111,8 @@
       }))
       .sort((a, b) => b.n - a.n)
   );
+  // Keyed by the backend's low/med/high buckets; the template renders them
+  // in a fixed order, so no sort needed here.
   const convictionRows = $derived(
     Object.entries($scorecardQ.data?.by_conviction ?? {})
       .map(([k, v]) => ({
@@ -119,7 +121,6 @@
         hits: v.hits,
         rate: v.n ? (v.hits / v.n) * 100 : 0
       }))
-      .sort((a, b) => Number(b.bucket) - Number(a.bucket))
   );
 
   function rateColor(rate: number, n: number): string {
@@ -177,12 +178,16 @@
       {#if !convictionRows.length}
         <div class="text-[11px] text-faint">No data yet.</div>
       {:else}
-        <div class="grid grid-cols-5 gap-2 text-center text-[11.5px] tabular">
-          {#each [5, 4, 3, 2, 1] as bucket (bucket)}
-            {@const r = convictionRows.find((x) => Number(x.bucket) === bucket)}
+        <!-- Backend buckets conviction into low (≤2) / med (3) / high (≥4)
+             — same split _calibration_note uses. Render those three, not
+             five levels (the old 5-tile grid matched on Number("low")=NaN,
+             so every tile read 0/0 no matter the data). -->
+        <div class="grid grid-cols-3 gap-2 text-center text-[11.5px] tabular">
+          {#each [['low', '≤2'], ['med', '3'], ['high', '≥4']] as [key, lbl] (key)}
+            {@const r = convictionRows.find((x) => x.bucket === key)}
             <div class="rounded-md border border-border bg-surface-2 px-2 py-1.5">
-              <div class="text-[10px] uppercase tracking-wider text-faint">{bucket}/5</div>
-              {#if r}
+              <div class="text-[10px] uppercase tracking-wider text-faint">conv {lbl}</div>
+              {#if r && r.n}
                 <div class={['mt-0.5 text-[14px] font-semibold', rateColor(r.rate, r.n)].join(' ')}>
                   {r.rate.toFixed(0)}%
                 </div>
