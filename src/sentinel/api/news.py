@@ -13,7 +13,7 @@ from .. import dossier as _dossier
 from ..analytics import dedupe as _dedupe
 from ..db import session_scope
 from ..models import ArticleBody, NewsItem
-from ..utils import parse_tickers_csv
+from ..utils import is_routine_payout_headline, parse_tickers_csv
 
 
 router = APIRouter()
@@ -69,8 +69,13 @@ def list_recent(
                 | NewsItem.tickers_csv.contains(f",{sym},")
             )
         rows = s.exec(
-            q.order_by(NewsItem.published_at.desc()).limit(limit)
+            q.order_by(NewsItem.published_at.desc()).limit(limit * 2)
         ).all()
+    # Drop routine fund/ETF payout boilerplate ("… declares monthly
+    # distribution of $0.36") — zero trading signal, ~25% of the raw feed.
+    # Over-fetched above so the feed still fills to `limit` after the cut.
+    # (The ingester now skips these too; this also clears the backlog.)
+    rows = [r for r in rows if not is_routine_payout_headline(r.title)][:limit]
 
     # Cluster overlay (uses the same `hours` window so we don't miss
     # the canonical when it's older but the dup is fresh).

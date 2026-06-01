@@ -4,6 +4,43 @@ import re
 from typing import Iterable, Optional
 
 
+# ── low-value headline filter ────────────────────────────────────────────
+# Income-ETF / closed-end-fund payout notices ("X declares monthly
+# distribution of $0.36", "PGIM … Fund declares $0.108 dividend") are pure
+# PR-wire boilerplate — zero signal for a trading desk, but they syndicate in
+# huge volume and were drowning the /intel feed (~25% of items on the live
+# Pi). High-precision match: a declaration verb + a *payout* phrasing, gated
+# so material company dividends (no fund/ETF marker) and editorial dividend
+# articles (no "declares/announces") survive.
+_PAYOUT_DECL_RE = re.compile(r"\b(declares?|announces?)\b", re.IGNORECASE)
+_PAYOUT_DIST_RE = re.compile(
+    r"\b(monthly|quarterly|semi-?annual|weekly|special|cash)\s+distribution\b"
+    r"|\bdistribution of \$",
+    re.IGNORECASE,
+)
+_PAYOUT_DIV_RE = re.compile(r"\bdividend\b", re.IGNORECASE)
+_FUND_VEHICLE_RE = re.compile(
+    r"\b(fund|etf|trust|portfolio|closed-end)\b", re.IGNORECASE
+)
+
+
+def is_routine_payout_headline(title: Optional[str]) -> bool:
+    """True for routine fund/ETF distribution + closed-end-fund dividend
+    declarations — the high-volume PR-wire boilerplate that adds no trading
+    signal. Conservative: a real company dividend ("Apple declares a
+    dividend…") has no fund/ETF marker and is kept; a dividend *article*
+    ("2 ETFs Paying Reliable Dividends") has no declaration verb and is kept.
+    """
+    t = title or ""
+    if not _PAYOUT_DECL_RE.search(t):
+        return False
+    if _PAYOUT_DIST_RE.search(t):
+        return True
+    if _PAYOUT_DIV_RE.search(t) and _FUND_VEHICLE_RE.search(t):
+        return True
+    return False
+
+
 # Common English / finance-jargon words that look like tickers — reject these
 # even when they appear as cashtags. Exact list from SPEC §7.
 TICKER_BLOCKLIST: frozenset[str] = frozenset({

@@ -29,7 +29,7 @@ from ..config import CONFIG_DIR
 from ..db import session_scope
 from ..models import NewsItem, Watchlist
 from ..news_tickers import resolve_article_tickers
-from ..utils import format_tickers_csv
+from ..utils import format_tickers_csv, is_routine_payout_headline
 
 
 _FEEDS_PATH = CONFIG_DIR / "news_feeds.yaml"
@@ -217,6 +217,10 @@ def _poll_rss() -> None:
             link = (entry.get("link") or "").strip()
             if not title or not link:
                 continue
+            # Drop income-fund/ETF payout boilerplate before it costs a tag
+            # call or a DB row (it was ~25% of the live feed).
+            if is_routine_payout_headline(title):
+                continue
             summary = (entry.get("summary") or "")[:1000]
             published_at = _parse_published(entry)
             ext_id = _stable_id(source, entry.get("id") or link)
@@ -332,6 +336,8 @@ def _poll_yfinance() -> None:
                 external_id = item.get("uuid") or item.get("id") or url
 
             if not title or not url:
+                continue
+            if is_routine_payout_headline(title):
                 continue
             try:
                 if isinstance(pub, (int, float)):
