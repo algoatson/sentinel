@@ -12,6 +12,7 @@
     Brain,
     Satellite,
     Target,
+    Bitcoin,
     Bell,
     Search,
     Sparkles,
@@ -61,6 +62,7 @@
         { href: '/research', label: 'Research', icon: FlaskConical },
         { href: '/theses', label: 'Theses', icon: Brain },
         { href: '/intel', label: 'Intel', icon: Satellite },
+        { href: '/crypto', label: 'Crypto', icon: Bitcoin },
         { href: '/calls', label: 'Calls', icon: Target },
         { href: '/analytics', label: 'Analytics', icon: BarChart3 }
       ]

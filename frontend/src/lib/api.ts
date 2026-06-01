@@ -480,6 +480,7 @@ export interface OpenPositionRow {
   fund: string;
   fund_mandate: string;
   ticker: string;
+  asset_class: string | null;
   side: 'long' | 'short';
   qty: number;
   entry: number;
@@ -860,6 +861,29 @@ export interface CryptoSignalsPayload {
 }
 export const cryptoSignals = (hours = 72, limit = 8) =>
   get<CryptoSignalsPayload>(`/crypto/signals?hours=${hours}&limit=${limit}`);
+
+export interface CryptoCoin {
+  ticker: string;
+  last_price: number | null;
+  change_1d_pct: number | null;
+  change_5d_pct: number | null;
+  funding_pct: number | null;
+  oi_change_24h_pct: number | null;
+  orderbook_imbalance: number | null;
+  venue: string | null;
+  updated_at: string | null;
+}
+export interface CryptoScreenerPayload {
+  regime: {
+    state: 'risk_on' | 'neutral' | 'risk_off';
+    btc_1d_pct: number | null;
+    btc_5d_pct: number | null;
+    reason: string;
+  };
+  coins: CryptoCoin[];
+}
+export const cryptoScreener = () =>
+  get<CryptoScreenerPayload>('/crypto/screener');
 
 export interface SymbolNote {
   ticker: string;

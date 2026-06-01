@@ -1580,6 +1580,7 @@ def open_positions_all() -> list[dict]:
                 "fund": fund.name,
                 "fund_mandate": fund.mandate,
                 "ticker": t.ticker,
+                "asset_class": asset_class_of(t.ticker),
                 "side": t.side,
                 "qty": t.qty,
                 "entry": t.entry_price,
