@@ -92,6 +92,13 @@
   let sortKey: SortKey = $state('change_1d_pct');
   let sortDir: 'asc' | 'desc' = $state('desc');
   let filter = $state('');
+  let classFilter: string | null = $state(null);  // null = all classes
+
+  // Asset classes actually present in the watchlist, for the filter pills.
+  const assetClasses = $derived(
+    [...new Set(($wlQ.data ?? []).map((r) => r.asset_class).filter(Boolean))]
+      .sort() as string[]
+  );
 
   function setSort(k: SortKey) {
     if (sortKey === k) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
@@ -104,6 +111,7 @@
   const sortedRows = $derived(
     [...($wlQ.data ?? [])]
       .filter((r) => {
+        if (classFilter && r.asset_class !== classFilter) return false;
         const f = filter.trim().toLowerCase();
         if (!f) return true;
         return (
@@ -300,6 +308,31 @@
       placeholder="Filter…"
       class="w-48 rounded-md border border-border bg-surface-2 px-2 py-1 text-[12px] text-text placeholder:text-faint/50 focus:border-primary/60 focus:outline-none"
     />
+
+    {#if assetClasses.length > 1}
+      <div class="flex items-center gap-1">
+        <button
+          onclick={() => (classFilter = null)}
+          class={[
+            'rounded-md border px-2 py-0.5 text-[10.5px] capitalize transition-colors',
+            classFilter === null
+              ? 'border-primary/50 bg-primary-soft text-primary'
+              : 'border-border bg-surface-2 text-muted hover:text-text'
+          ].join(' ')}
+        >All</button>
+        {#each assetClasses as c (c)}
+          <button
+            onclick={() => (classFilter = classFilter === c ? null : c)}
+            class={[
+              'rounded-md border px-2 py-0.5 text-[10.5px] capitalize transition-colors',
+              classFilter === c
+                ? 'border-primary/50 bg-primary-soft text-primary'
+                : 'border-border bg-surface-2 text-muted hover:text-text'
+            ].join(' ')}
+          >{c}</button>
+        {/each}
+      </div>
+    {/if}
 
     <div class="ml-auto flex items-center gap-1">
       <button
