@@ -353,6 +353,18 @@ export interface HealthReport {
   faded: string[];
 }
 
+export interface LlmTokens {
+  prompt: number;
+  completion: number;
+  reasoning: number;
+  total: number;
+  per_hour: number;
+  uptime_hours: number;
+  cost_usd: number;
+  cost_per_hour_usd: number;
+  cost_per_day_usd: number;
+  priced: boolean;
+}
 export interface SystemMetrics {
   cpu_pct: number | null;
   rss_mb: number | null;
@@ -362,6 +374,7 @@ export interface SystemMetrics {
   db_human: string;
   llm_calls: number;
   llm_errors: number;
+  llm_tokens: LlmTokens | null;
 }
 
 export interface Watch {

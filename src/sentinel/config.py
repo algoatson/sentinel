@@ -111,6 +111,14 @@ class Settings(BaseSettings):
     # thinking and get nothing back).
     LLM_REASONING: str = "medium"
 
+    # Per-million-token prices for the $ estimate on /system. Token COUNTS
+    # are exact (from each response's usage block); these just turn them
+    # into dollars. Defaults are a rough deepseek-v4-flash placeholder —
+    # set them to your provider's actual rates for an accurate readout.
+    # 0 disables the $ figure (tokens still shown).
+    LLM_PRICE_IN_PER_M: float = 0.25
+    LLM_PRICE_OUT_PER_M: float = 0.85
+
     # Per-tier provider overrides — set these to put a tier on a DIFFERENT
     # provider than the shared one above (e.g. light on a free Google AI
     # Studio endpoint, heavy on Novita). An override wins over the shared

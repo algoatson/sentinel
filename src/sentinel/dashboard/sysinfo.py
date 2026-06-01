@@ -87,8 +87,23 @@ def snapshot() -> dict:
         ls = llm_stats()
         out["llm_calls"] = ls.get("calls", 0)
         out["llm_errors"] = ls.get("errors", 0)
+        # Token spend — exact counts from provider usage blocks; the $
+        # figures use the configured per-million prices (estimate).
+        out["llm_tokens"] = {
+            "prompt": ls.get("prompt_tokens", 0),
+            "completion": ls.get("completion_tokens", 0),
+            "reasoning": ls.get("reasoning_tokens", 0),
+            "total": ls.get("total_tokens", 0),
+            "per_hour": ls.get("tokens_per_hour", 0),
+            "uptime_hours": ls.get("uptime_hours", 0.0),
+            "cost_usd": ls.get("est_cost_usd", 0.0),
+            "cost_per_hour_usd": ls.get("est_cost_per_hour_usd", 0.0),
+            "cost_per_day_usd": ls.get("est_cost_per_day_usd", 0.0),
+            "priced": ls.get("priced", False),
+        }
     except Exception:
         out["llm_calls"] = out["llm_errors"] = 0
+        out["llm_tokens"] = None
 
     return out
 

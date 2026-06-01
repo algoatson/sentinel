@@ -212,6 +212,59 @@
         </div>
       </div>
 
+      <!-- ── token spend ──────────────────────────────
+           Exact token counts (from provider usage); the $/day is those
+           counts × configured prices. Rate + projection are gated on
+           ≥15min uptime so a fresh boot doesn't show a nonsense rate. -->
+      {#if $sysQ.data?.llm_tokens}
+        {@const t = $sysQ.data.llm_tokens}
+        {@const warm = t.uptime_hours >= 0.25}
+        <div class="mt-3 border-t border-border-soft pt-2.5">
+          <div class="flex items-baseline gap-2">
+            <div class="text-[10px] font-semibold uppercase tracking-wider text-faint">
+              Token spend
+            </div>
+            <span class="text-[10px] tabular text-faint">since boot · {t.uptime_hours.toFixed(1)}h</span>
+            {#if t.priced}
+              <span class={[
+                'ml-auto tabular text-[13px] font-semibold',
+                t.cost_per_day_usd >= 5 ? 'text-warn' : 'text-good'
+              ].join(' ')}
+                title="Estimated from configured per-million prices (LLM_PRICE_*)"
+              >
+                {warm ? `~$${t.cost_per_day_usd.toFixed(2)}/day` : '—'}
+              </span>
+            {/if}
+          </div>
+          <div class="mt-1.5 grid grid-cols-2 gap-2 text-[11.5px] tabular sm:grid-cols-4">
+            <div class="rounded-md border border-border bg-surface-2 px-2 py-1.5">
+              <div class="text-[9.5px] uppercase tracking-wider text-faint">Total</div>
+              <div class="mt-0.5 text-[14px] font-semibold">{compact(t.total)}</div>
+            </div>
+            <div class="rounded-md border border-border bg-surface-2 px-2 py-1.5">
+              <div class="text-[9.5px] uppercase tracking-wider text-faint">Per hour</div>
+              <div class="mt-0.5 text-[14px] font-semibold">{warm ? compact(t.per_hour) : '—'}</div>
+            </div>
+            <div class="rounded-md border border-border bg-surface-2 px-2 py-1.5">
+              <div class="text-[9.5px] uppercase tracking-wider text-faint">Prompt</div>
+              <div class="mt-0.5 text-[14px] font-semibold text-muted">{compact(t.prompt)}</div>
+            </div>
+            <div class="rounded-md border border-border bg-surface-2 px-2 py-1.5">
+              <div class="text-[9.5px] uppercase tracking-wider text-faint">
+                Output{#if t.reasoning > 0}<span class="text-faint"> · {Math.round((t.reasoning / Math.max(t.completion, 1)) * 100)}% think</span>{/if}
+              </div>
+              <div class="mt-0.5 text-[14px] font-semibold text-muted">{compact(t.completion)}</div>
+            </div>
+          </div>
+          {#if t.priced}
+            <div class="mt-1 text-[10px] text-faint">
+              ~${t.cost_usd.toFixed(4)} so far{warm ? ` · ~$${t.cost_per_hour_usd.toFixed(3)}/hr` : ' · rate warming up'}
+              · est. from configured prices
+            </div>
+          {/if}
+        </div>
+      {/if}
+
       {#if $healthQ.data.faded.length}
         <div class="mt-3 border-t border-border-soft pt-2">
           <div class="text-[10px] font-semibold uppercase tracking-wider text-warn">

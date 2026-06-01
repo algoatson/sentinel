@@ -11,6 +11,7 @@ rely on Ollama's native `format="json"` enforcement.
 
 import json
 import re
+import time
 from typing import Any, Literal
 
 import httpx
@@ -44,16 +45,67 @@ LLM_ERROR_SENTINEL = "[LLM_ERROR]"
 # classifiers never add it — they run reasoning-off.
 _REASONING_HEADROOM_TOKENS = 1200
 
-# Process-lifetime LLM health counter, read by the daily diagnostic. Coarse
-# by design (the GIL makes the increments good enough; a health metric does
-# not need exactness or a lock). "errors" = a caller got the sentinel back
-# even after any light-model fallback — i.e. a genuinely failed completion.
-_STATS = {"calls": 0, "errors": 0}
+# Process-lifetime LLM health + spend counters, read by the daily
+# diagnostic and the /system panel. Coarse by design (the GIL makes the
+# increments good enough; a health metric does not need exactness or a
+# lock). "errors" = a caller got the sentinel back even after any
+# light-model fallback. Token counts come straight from each provider
+# response's `usage` block (exact); the $ figures are those counts ×
+# the configured per-million prices (an estimate only as good as the
+# prices in LLM_PRICE_*).
+_STATS = {
+    "calls": 0,
+    "errors": 0,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "reasoning_tokens": 0,  # subset of completion, when the provider reports it
+    "total_tokens": 0,
+}
+_BOOT_TS = time.monotonic()
+
+
+def _record_usage(data: dict | None) -> None:
+    """Fold one provider response's `usage` block into the running totals.
+    Best-effort + GIL-coarse — never raises out of the hot path."""
+    if not isinstance(data, dict):
+        return
+    try:
+        u = data.get("usage") or {}
+        pt = int(u.get("prompt_tokens") or 0)
+        ct = int(u.get("completion_tokens") or 0)
+        tt = int(u.get("total_tokens") or (pt + ct))
+        _STATS["prompt_tokens"] += pt
+        _STATS["completion_tokens"] += ct
+        _STATS["total_tokens"] += tt
+        details = u.get("completion_tokens_details") or {}
+        _STATS["reasoning_tokens"] += int(details.get("reasoning_tokens") or 0)
+    except Exception:
+        pass
 
 
 def llm_stats() -> dict:
-    """{'calls', 'errors'} since process start — for the health digest."""
-    return dict(_STATS)
+    """Health + spend snapshot since process start.
+
+    Returns the raw counters plus derived rate/cost so the daily digest
+    and the /system panel don't each re-derive them. `$` figures use
+    settings.LLM_PRICE_IN_PER_M / LLM_PRICE_OUT_PER_M (per-million-token
+    prices) — exact token counts, estimated dollars.
+    """
+    s = dict(_STATS)
+    hours = max((time.monotonic() - _BOOT_TS) / 3600.0, 1e-6)
+    in_price = settings.LLM_PRICE_IN_PER_M or 0.0
+    out_price = settings.LLM_PRICE_OUT_PER_M or 0.0
+    cost = (
+        s["prompt_tokens"] / 1_000_000 * in_price
+        + s["completion_tokens"] / 1_000_000 * out_price
+    )
+    s["uptime_hours"] = round(hours, 3)
+    s["tokens_per_hour"] = int(s["total_tokens"] / hours)
+    s["est_cost_usd"] = round(cost, 4)
+    s["est_cost_per_hour_usd"] = round(cost / hours, 4)
+    s["est_cost_per_day_usd"] = round(cost / hours * 24, 3)
+    s["priced"] = bool(in_price or out_price)
+    return s
 
 
 def parse_json_response(raw: str, *, expect: type = dict) -> Any | None:
@@ -365,6 +417,7 @@ def _api_chat(
         )
         r.raise_for_status()
         data = r.json()
+        _record_usage(data)
     except Exception as e:
         logger.error("LLM API chat call failed ({}): {}", model_id, e)
         return {"ok": False, "error": str(e), "raw": None}
@@ -447,6 +500,7 @@ def _api_complete(
         )
         r.raise_for_status()
         data = r.json()
+        _record_usage(data)
         choice = (data.get("choices") or [{}])[0]
         msg = choice.get("message") or {}
         content = (msg.get("content") or "").strip()
