@@ -368,6 +368,7 @@
       <div class="flex justify-center py-12"><Spinner /></div>
     {:else if !filteredNews.length}
       <EmptyState
+        icon={Newspaper}
         title="No matching news"
         description={$newsQ.data?.length ? 'Try widening the time window or clearing filters.' : 'Ingesters run every 5min. New items will appear here.'}
       />
@@ -429,6 +430,7 @@
       <div class="flex justify-center py-12"><Spinner /></div>
     {:else if !filteredFilings.length}
       <EmptyState
+        icon={FileText}
         title="No matching filings"
         description={$filingsQ.data?.length ? 'Try widening the time window, lowering materiality, or clearing filters.' : 'EDGAR poll runs every 10min. New filings will appear here.'}
       />
@@ -473,6 +475,7 @@
         <div class="flex justify-center py-12"><Spinner /></div>
       {:else if !$socialQ.data?.length}
         <EmptyState
+          icon={MessageCircle}
           title="No Reddit mentions in window"
           description="The reddit poll runs every 30min across the tracked subreddits."
         />

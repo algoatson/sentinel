@@ -296,6 +296,7 @@
     <div class="flex justify-center py-12"><Spinner /></div>
   {:else if !filtered.length}
     <EmptyState
+      icon={Target}
       title="No matching calls"
       description={$callsQ.data?.length ? 'Try widening the time window or clearing filters.' : 'The bot produces calls from filings, news and synthesis cycles.'}
     />

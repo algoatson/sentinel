@@ -335,6 +335,7 @@
 {:else if !rows.length}
   <Card class="mt-4">
     <EmptyState
+      icon={BookText}
       title="No closed trades yet"
       description="As soon as a position closes, it'll appear here for reflection."
     />
@@ -342,6 +343,7 @@
 {:else if !filtered.length}
   <Card class="mt-4">
     <EmptyState
+      icon={BookText}
       title="No trades match this filter"
       description="Try widening the filter or clearing the search."
     />

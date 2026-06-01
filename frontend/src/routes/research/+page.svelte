@@ -168,6 +168,7 @@
     <div class="flex justify-center py-12"><Spinner /></div>
   {:else if !$tasksQ.data?.length}
     <EmptyState
+      icon={FlaskConical}
       title="No research tasks yet"
       description="Use the box above to ask the bot to look into something. The task list is your audit trail."
     />

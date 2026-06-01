@@ -128,6 +128,7 @@
     <div class="flex justify-center py-8"><Spinner /></div>
   {:else if !$watchesQ.data?.length}
     <EmptyState
+      icon={Bell}
       title="No watches set"
       description="Use the box above to describe what you want to know about. The bot will compile it into a checkable rule."
     />

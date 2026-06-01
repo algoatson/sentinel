@@ -142,6 +142,7 @@
     <div class="flex justify-center py-8"><Spinner /></div>
   {:else if !$activeQ.data?.length}
     <EmptyState
+      icon={Brain}
       title="No active theses yet"
       description="The generator runs daily at 08:15 ET — or hit “Generate now” above to trigger it."
     />
