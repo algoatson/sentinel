@@ -20,6 +20,7 @@
   import WalletAllocation from '$components/WalletAllocation.svelte';
   import HealthPill from '$components/HealthPill.svelte';
   import ConvergingNow from '$components/ConvergingNow.svelte';
+  import CryptoSignals from '$components/CryptoSignals.svelte';
   import { base } from '$app/paths';
   import { usd, compact, timeAgo, pct, tone, stripMd } from '$lib/format';
   import {
@@ -374,6 +375,11 @@
 <!-- ── CONVERGING NOW (full width) ──────────────────── -->
 <div class="mt-4">
   <ConvergingNow />
+</div>
+
+<!-- ── CRYPTO FUNDING/OI SETUPS (full width) ────────── -->
+<div class="mt-4">
+  <CryptoSignals />
 </div>
 
 <!-- ── HOT NOW ──────────────────────────────────────── -->

@@ -19,6 +19,7 @@ from . import (
     calls,
     catalysts,
     copilot,
+    crypto,
     events as _events,
     filings,
     health as _health,
@@ -47,6 +48,7 @@ router.include_router(analytics.router)
 router.include_router(calls.router)
 router.include_router(catalysts.router)
 router.include_router(copilot.router)
+router.include_router(crypto.router)
 router.include_router(_events.router)
 router.include_router(filings.router)
 router.include_router(_health.router)

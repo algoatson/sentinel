@@ -833,6 +833,34 @@ export interface ConvergingPayload {
 export const convergingNow = (hours = 6, limit = 8) =>
   get<ConvergingPayload>(`/analytics/converging?hours=${hours}&limit=${limit}`);
 
+export interface CryptoSignal {
+  id: number;
+  ticker: string;
+  direction: 'long' | 'short';
+  conviction: number;
+  headline: string;
+  evidence: string;
+  ts: string | null;
+  ret_1d_pct: number | null;
+  settled: boolean;
+  micro: {
+    funding_rate_pct: number | null;
+    oi_change_24h_pct: number | null;
+    orderbook_imbalance: number | null;
+  } | null;
+}
+export interface CryptoSignalsPayload {
+  regime: {
+    state: 'risk_on' | 'neutral' | 'risk_off';
+    btc_1d_pct: number | null;
+    btc_5d_pct: number | null;
+    reason: string;
+  };
+  signals: CryptoSignal[];
+}
+export const cryptoSignals = (hours = 72, limit = 8) =>
+  get<CryptoSignalsPayload>(`/crypto/signals?hours=${hours}&limit=${limit}`);
+
 export interface SymbolNote {
   ticker: string;
   body: string;
