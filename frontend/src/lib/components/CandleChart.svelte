@@ -98,7 +98,7 @@
   // so the user reads "degen blue" the same everywhere.
   const FUND_COLOURS: Record<string, string> = {
     catalyst:   '#6699ff',
-    contrarian: '#a78bfa',
+    leaders:    '#a78bfa',
     crypto:     '#fbbf24',
     degen:      '#ff6b6b',
     hype:       '#f2c0ff',

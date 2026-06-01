@@ -450,14 +450,20 @@ def test_policy_dict_integrity():
         "size_pct", "max_positions", "stop_pct", "take_pct", "max_hold_days",
     }
     assert set(funds._POLICIES) == {
-        "degen", "catalyst", "macro", "crypto", "sniper", "contrarian",
+        "degen", "catalyst", "macro", "crypto", "sniper", "leaders",
         "hype",
     }
     for name, pol in funds._POLICIES.items():
         assert required <= set(pol), f"{name} missing {required - set(pol)}"
         assert isinstance(pol["sources"], set) and pol["sources"]
+    # No shipped wallet fades the bot anymore (contrarian was retired); the
+    # invert machinery is kept generic but unused.
     inverted = {n for n, p in funds._POLICIES.items() if p.get("invert")}
-    assert inverted == {"contrarian"}
+    assert inverted == set()
+    trend_gated = {
+        n for n, p in funds._POLICIES.items() if p.get("require_trend_align")
+    }
+    assert trend_gated == {"leaders"}
     surge = {n for n, p in funds._POLICIES.items() if p.get("require_social_surge")}
     assert surge == {"hype"}
 
@@ -518,8 +524,15 @@ def test_hype_wallet_requires_social_corroboration():
     assert {"QUIET", "LOUD"} <= degen_held    # degen ungated
 
 
-def test_contrarian_fades_a_long_call_into_a_short():
-    """A why_moved LONG → degen goes long (control), contrarian goes SHORT."""
+def test_invert_machinery_still_fades(monkeypatch):
+    """The `invert` mechanism is retired from shipped wallets but kept
+    generic — pin it with a synthetic fading wallet so it can't rot."""
+    monkeypatch.setitem(funds._POLICIES, "fader", {
+        "mandate": "test fader", "sources": {"why_moved"}, "min_conviction": 3,
+        "asset_classes": None, "invert": True, "size_pct": 0.15,
+        "max_positions": 5, "stop_pct": -0.15, "take_pct": 0.40,
+        "max_hold_days": 5,
+    })
     funds.seed_funds()
     with session_scope() as s:
         s.add(_pc("QQ", 100))
@@ -531,61 +544,59 @@ def test_contrarian_fades_a_long_call_into_a_short():
 
     with session_scope() as s:
         degen = s.exec(select(Fund).where(Fund.name == "degen")).first()
-        contra = s.exec(select(Fund).where(Fund.name == "contrarian")).first()
+        fader = s.exec(select(Fund).where(Fund.name == "fader")).first()
         dt = s.exec(select(FundTrade).where(FundTrade.fund_id == degen.id)).first()
-        ct = s.exec(
-            select(FundTrade).where(FundTrade.fund_id == contra.id)
-        ).first()
+        ft = s.exec(select(FundTrade).where(FundTrade.fund_id == fader.id)).first()
     assert dt.side == "long"                       # control: normal fund
-    assert ct.side == "short"                      # contrarian faded it
-    assert ct.open_reason.startswith("fade why_moved")
-    # the return surfaces the reasoning, including the verbatim thesis
+    assert ft.side == "short"                      # fader faded the long
+    assert ft.open_reason.startswith("fade why_moved")
     opens = {m["fund"]: m for m in moves if m["kind"] == "open"}
-    assert opens["contrarian"]["side"] == "short"
-    assert opens["contrarian"]["invert"] is True
-    assert opens["contrarian"]["thesis"] == "fade test thesis"
+    assert opens["fader"]["invert"] is True and opens["fader"]["side"] == "short"
+    assert opens["fader"]["thesis"] == "fade test thesis"
     assert opens["degen"]["invert"] is False
 
 
-def test_inverted_flip_alignment_and_no_pyramiding():
+def _uptrend_bars(s, ticker: str, n: int = 40) -> None:
+    """Seed `n` steadily-rising daily bars so the leaders trend gate confirms
+    a long; mirror for a fall by reversing."""
+    for i in range(n):
+        c = 100.0 + i
+        ts = _now() - timedelta(days=n - 1 - i)
+        s.add(PriceBar(ticker=ticker, ts=ts, open=c - 1, high=c + 0.5,
+                       low=c - 1.5, close=c, volume=1000))
+
+
+def _downtrend_bars(s, ticker: str, n: int = 40) -> None:
+    for i in range(n):
+        c = 140.0 - i
+        ts = _now() - timedelta(days=n - 1 - i)
+        s.add(PriceBar(ticker=ticker, ts=ts, open=c + 1, high=c + 1.5,
+                       low=c - 0.5, close=c, volume=1000))
+
+
+def test_leaders_trades_with_trend_not_against_it():
+    """The whole point of the leaders wallet: it takes a momentum LONG only
+    when the name is itself trending UP, and skips the same call on a name
+    in a downtrend. degen (ungated momentum) takes both as the control."""
     funds.seed_funds()
     with session_scope() as s:
-        s.add(_pc("QQ", 100))
-        s.add(TradingCall(
-            ticker="QQ", direction="long", conviction=4, source="why_moved",
-            thesis="t1", price_at_call=100, created_at=_now(),
-        ))
-    funds._run()  # contrarian now SHORT QQ
-
-    # Another LONG call → contrarian still wants SHORT == held → no pyramid.
-    with session_scope() as s:
-        s.add(TradingCall(
-            ticker="QQ", direction="long", conviction=4, source="why_moved",
-            thesis="t2", price_at_call=100, created_at=_now(),
-        ))
+        s.add(_pc("UPNAME", 139))
+        s.add(_pc("DNNAME", 101))
+        _uptrend_bars(s, "UPNAME")
+        _downtrend_bars(s, "DNNAME")
+        for tk in ("UPNAME", "DNNAME"):
+            s.add(TradingCall(
+                ticker=tk, direction="long", conviction=4, source="why_moved",
+                thesis="momentum long", price_at_call=100, created_at=_now(),
+            ))
     funds._run()
     with session_scope() as s:
-        contra = s.exec(select(Fund).where(Fund.name == "contrarian")).first()
-        opens = funds._open_trades(s, contra.id)
-        assert len(opens) == 1 and opens[0].side == "short"
-
-    # A SHORT call → contrarian wants LONG ≠ held short → flip.
-    with session_scope() as s:
-        s.add(TradingCall(
-            ticker="QQ", direction="short", conviction=4, source="why_moved",
-            thesis="t3", price_at_call=100, created_at=_now(),
-        ))
-    funds._run()
-    with session_scope() as s:
-        contra = s.exec(select(Fund).where(Fund.name == "contrarian")).first()
-        opens = funds._open_trades(s, contra.id)
-        flipped = s.exec(
-            select(FundTrade)
-            .where(FundTrade.fund_id == contra.id)
-            .where(FundTrade.status == "closed")
-        ).all()
-    assert len(opens) == 1 and opens[0].side == "long"   # faded the short
-    assert any(t.close_reason == "flip" for t in flipped)
+        leaders = s.exec(select(Fund).where(Fund.name == "leaders")).first()
+        degen = s.exec(select(Fund).where(Fund.name == "degen")).first()
+        leaders_held = {t.ticker for t in funds._open_trades(s, leaders.id)}
+        degen_held = {t.ticker for t in funds._open_trades(s, degen.id)}
+    assert leaders_held == {"UPNAME"}             # only the confirmed uptrend
+    assert {"UPNAME", "DNNAME"} <= degen_held     # ungated control took both
 
 
 def test_moves_embed_renders_reasoning_and_handles_empty():

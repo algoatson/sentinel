@@ -1,8 +1,8 @@
 """Wallet drawdown circuit breaker.
 
 A wallet that's bleeding badly should stop opening new positions
-until the user reviews it — otherwise a momentum/contrarian
-mismatch can chew through the starting cash unchecked. This
+until the user reviews it — otherwise a run of losing trades
+can chew through the starting cash unchecked. This
 pipeline computes peak-to-current drawdown for every active wallet
 each tick and flips a wallet ``active=False`` when its drawdown
 exceeds the configured floor (default 15%).

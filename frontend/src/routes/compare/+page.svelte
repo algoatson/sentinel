@@ -135,7 +135,7 @@
   // Fund → colour so the entry markers match the rest of the dashboard.
   const FUND_COLOURS: Record<string, string> = {
     catalyst:   '#6699ff',
-    contrarian: '#a78bfa',
+    leaders:    '#a78bfa',
     crypto:     '#fbbf24',
     degen:      '#ff6b6b',
     hype:       '#f2c0ff',

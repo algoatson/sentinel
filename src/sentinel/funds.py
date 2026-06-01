@@ -114,18 +114,25 @@ _POLICIES: dict[str, dict] = {
         "take_pct": 0.35,
         "max_hold_days": 12,
     },
-    "contrarian": {
-        "mandate": "🪞 Contrarian — FADES the bot's own momentum calls. If "
-        "this outruns degen, the momentum edge is a mirage.",
-        "sources": {"why_moved", "convergence"},
+    "leaders": {
+        "mandate": "📈 Leaders — trend-aligned momentum: rides names already "
+        "trending its way & leading the tape. Never fades strength.",
+        # Same momentum/conviction calls degen takes, but only acted on when
+        # the name's OWN price structure confirms the direction — the exact
+        # inverse of the retired `contrarian` wallet, which faded trends and
+        # bled. The `require_trend_align` gate (see _trend_aligned) is what
+        # makes this "leaders": buy strength, short weakness, never catch a
+        # falling knife. Patient risk profile (wider stop, longer hold,
+        # higher take) so a confirmed leadership trend can actually run.
+        "sources": {"why_moved", "convergence", "synthesis"},
         "min_conviction": 3,
         "asset_classes": None,
-        "invert": True,
-        "size_pct": 0.15,
-        "max_positions": 5,
-        "stop_pct": -0.15,
-        "take_pct": 0.40,
-        "max_hold_days": 5,
+        "require_trend_align": True,
+        "size_pct": 0.18,
+        "max_positions": 6,
+        "stop_pct": -0.12,
+        "take_pct": 0.55,
+        "max_hold_days": 12,
     },
     "hype": {
         "mandate": "🚀 Hype — only takes momentum calls the crowd is ALSO "
@@ -191,6 +198,29 @@ def seed_funds() -> None:
             select(TradingCall.id).order_by(TradingCall.id.desc()).limit(1)
         ).first()
         cursor = latest or 0
+
+        # One-time migration: the old `contrarian` wallet faded the bot's own
+        # momentum calls and just bled (it did the opposite of the winning
+        # wallets, capping aggregate profits). It's retired in favour of
+        # `leaders` (trend-aligned relative-strength momentum). Rename in
+        # place so the wallet's equity curve, cash and open positions all
+        # carry over — the new policy simply risk-manages the inherited
+        # positions out via their stored stops. Runs before the seed loop so
+        # the loop sees `leaders` already present and doesn't double-seed it.
+        if "leaders" in _POLICIES:
+            old = s.exec(select(Fund).where(Fund.name == "contrarian")).first()
+            leaders_exists = s.exec(
+                select(Fund).where(Fund.name == "leaders")
+            ).first()
+            if old is not None and leaders_exists is None:
+                old.name = "leaders"
+                old.mandate = _POLICIES["leaders"]["mandate"]
+                s.add(old)
+                logger.info(
+                    "fund renamed: contrarian → leaders "
+                    "(kept equity/cash/positions)"
+                )
+
         for name, pol in _POLICIES.items():
             if s.exec(select(Fund).where(Fund.name == name)).first():
                 continue
@@ -604,6 +634,113 @@ def _atr_in_session(session, ticker: str, period: int = 14) -> float | None:
     return sum(trs) / len(trs)
 
 
+# ── Leaders wallet: trend / relative-strength gate ─────────────────────
+# The `leaders` wallet trades momentum calls only WHEN the name's own
+# price structure confirms the call direction. These are the knobs.
+_TREND_FAST = 10           # fast SMA window (daily bars)
+_TREND_SLOW = 30           # slow SMA window (daily bars)
+_TREND_MOM_LOOKBACK = 20   # momentum window (daily bars)
+_TREND_MIN_BARS = 32       # daily bars needed to trust the structure
+_TREND_MAX_EXT_ATR = 5.0   # skip entries this many ATRs past the fast SMA
+
+# Per-asset-class benchmark for the optional relative-strength overlay.
+# Mirrors why_moved._BENCHMARKS; only the most-liquid proxy is used. The
+# overlay is a no-op when the proxy isn't tracked (e.g. SPY absent), so the
+# gate degrades cleanly to absolute trend.
+_RS_BENCHMARK = {
+    "equity": "SPY",
+    "crypto": "BTC-USD",
+    "future": "ES=F",
+    "rate": "^TNX",
+}
+
+
+def _daily_closes(session, ticker: str, lookback_days: int) -> list[float]:
+    """Daily close series (one bar per UTC day, oldest→newest) for `ticker`
+    over the last `lookback_days`. Collapses intraday bars to the day's last
+    close — the same daily concept `_atr_in_session` uses."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+    bars = session.exec(
+        select(PriceBar)
+        .where(PriceBar.ticker == ticker)
+        .where(PriceBar.ts >= cutoff)
+        .order_by(PriceBar.ts)
+    ).all()
+    by_day: dict[str, float] = {}
+    for b in bars:
+        by_day[b.ts.strftime("%Y-%m-%d")] = b.close  # last write wins = close
+    return [by_day[d] for d in sorted(by_day)]
+
+
+def _benchmark_5d_pct(session, asset_class: str | None) -> float | None:
+    """5-day % change of the asset class's benchmark (SPY/BTC-USD/…) from
+    the PriceContext snapshot. None when the proxy isn't tracked or has no
+    5d datapoint — callers then skip the relative-strength overlay."""
+    bm = _RS_BENCHMARK.get(asset_class or "")
+    if not bm:
+        return None
+    pc = session.get(PriceContext, bm)
+    if pc is None or pc.change_5d_pct is None:
+        return None
+    return pc.change_5d_pct * 100.0
+
+
+def _trend_aligned(
+    session, ticker: str, side: str, *,
+    asset_class: str | None = None, atr: float | None = None,
+) -> tuple[bool, str]:
+    """Is `side` confirmed by the name's own trend? The `leaders` wallet's
+    quality gate — buy strength, short weakness, never fade an established
+    move (the mistake the retired `contrarian` wallet was built on).
+
+    A long is confirmed when price > fast SMA > slow SMA AND 20-day momentum
+    is positive; a short is the mirror. When the asset class has a tracked
+    benchmark, the name must ALSO be out-performing it over 5d (longs) /
+    under-performing (shorts) — relative strength is where momentum's edge
+    concentrates. Entries more than `_TREND_MAX_EXT_ATR` ATRs past the fast
+    SMA are skipped to avoid chasing blow-off tops / capitulation lows.
+
+    Returns (ok, reason). Fails *closed* on thin history — a name without an
+    established trend isn't a leader yet.
+    """
+    closes = _daily_closes(session, ticker, _TREND_SLOW * 4 + 14)
+    if len(closes) < _TREND_MIN_BARS:
+        return False, "thin history (no established trend)"
+    last = closes[-1]
+    sma_fast = sum(closes[-_TREND_FAST:]) / _TREND_FAST
+    sma_slow = sum(closes[-_TREND_SLOW:]) / _TREND_SLOW
+    base = closes[-_TREND_MOM_LOOKBACK - 1]
+    if last <= 0 or sma_fast <= 0 or sma_slow <= 0 or base <= 0:
+        return False, "bad price data"
+    mom = last / base - 1.0  # 20-day return
+    up = last > sma_fast > sma_slow and mom > 0
+    down = last < sma_fast < sma_slow and mom < 0
+
+    if side == "long" and not up:
+        return False, "no uptrend (price/MA/momentum not aligned)"
+    if side == "short" and not down:
+        return False, "no downtrend (price/MA/momentum not aligned)"
+
+    # Over-extension guard — don't chase a parabolic move into a likely snapback.
+    if atr and atr > 0:
+        ext = (last - sma_fast) / atr  # signed: + above MA, − below
+        if side == "long" and ext > _TREND_MAX_EXT_ATR:
+            return False, f"over-extended (+{ext:.1f} ATR above MA)"
+        if side == "short" and ext < -_TREND_MAX_EXT_ATR:
+            return False, f"over-extended ({ext:.1f} ATR below MA)"
+
+    # Relative-strength overlay — only when the benchmark is tracked.
+    bench_5d = _benchmark_5d_pct(session, asset_class)
+    if bench_5d is not None and len(closes) > 5 and closes[-6] > 0:
+        name_5d = (last / closes[-6] - 1.0) * 100.0
+        if side == "long" and name_5d < bench_5d:
+            return False, f"lagging benchmark (5d {name_5d:+.1f}% < {bench_5d:+.1f}%)"
+        if side == "short" and name_5d > bench_5d:
+            return False, f"outperforming benchmark (5d {name_5d:+.1f}% > {bench_5d:+.1f}%)"
+
+    return True, "trend-confirmed"
+
+
 def _compute_stop_target(
     *, side: str, mark: float, atr: float | None, pol: dict,
     asset_class: str | None = None,
@@ -926,9 +1063,11 @@ def _run() -> list[dict]:
                 if need and _social_surge(s, call.ticker, now) < need:
                     continue
 
-                # A `contrarian`-style fund FADES the call: it wants the
-                # opposite side. Compute the desired side once and use it for
-                # alignment, sizing, cash and the open — long/short are
+                # A fund with `invert: True` FADES the call — it wants the
+                # opposite side. No shipped wallet sets this today (the old
+                # `contrarian` was retired for `leaders`), but the machinery
+                # is kept generic: compute the desired side once and use it
+                # for alignment, sizing, cash and the open — long/short are
                 # already symmetric everywhere, so this is the only change.
                 invert = pol.get("invert", False)
                 want = call.direction
@@ -938,9 +1077,9 @@ def _run() -> list[dict]:
                 # Market-regime gate (crypto only): no new LONGS when the
                 # complex is risk-off, no new SHORTS when it's risk-on. Alts
                 # are ~80% BTC beta, so a counter-trend per-coin entry is the
-                # classic way the crypto leg bleeds. Evaluated on `want` so a
-                # contrarian fund's inverted side is judged correctly; BTC
-                # itself is never gated against its own regime.
+                # classic way the crypto leg bleeds. Evaluated on `want` so an
+                # inverted (fade) side would be judged correctly; BTC itself
+                # is never gated against its own regime.
                 if acls == "crypto" and blocks_entry(crypto_regime, want, call.ticker):
                     logger.debug(
                         "funds[{}]: skip ${} {} — counter-regime ({})",
@@ -949,9 +1088,30 @@ def _run() -> list[dict]:
                     continue
 
                 held = by_ticker.get(call.ticker)
-                if held is not None:
-                    if held.side == want:
-                        continue  # already aligned — no pyramiding
+                if held is not None and held.side == want:
+                    continue  # already aligned — no pyramiding
+
+                # ATR — used by the leaders trend gate (over-extension) and
+                # reused for stop/target sizing below. Computed once here.
+                atr = _atr_in_session(s, call.ticker)
+
+                # Leaders-style trend gate: only trade WITH the name's own
+                # established trend (and, when a benchmark is tracked, only
+                # relative-strength leaders). Runs before any flip so an
+                # unconfirmed counter-call can't flip us out of a good aligned
+                # position — we'd rather hold the winner than chase the fade.
+                if pol.get("require_trend_align"):
+                    ok, why = _trend_aligned(
+                        s, call.ticker, want, asset_class=acls, atr=atr,
+                    )
+                    if not ok:
+                        logger.debug(
+                            "funds[{}]: skip ${} {} — {}",
+                            fund.name, call.ticker, want, why,
+                        )
+                        continue
+
+                if held is not None:  # opposite side, gate passed → flip
                     age = (now - held.entry_at.replace(tzinfo=timezone.utc)).days
                     _close(s, fund, held, mark, "flip")
                     moves.append(_move_close(fund, held, age))
@@ -968,8 +1128,8 @@ def _run() -> list[dict]:
                     continue
 
                 # ── sizing & risk bands ─────────────────────────────────
+                # `atr` was computed above (shared with the trend gate).
                 equity = _equity(s, fund, opens)
-                atr = _atr_in_session(s, call.ticker)
                 stop, target = _compute_stop_target(
                     side=want, mark=mark, atr=atr, pol=pol,
                     asset_class=acls,
@@ -2395,10 +2555,11 @@ def wallet_meta() -> dict:
         spread = round(ra - rb, 2)
         if n < _MIN_EDGE_SAMPLE:
             verdict = f"too early — {n} closed trades, need ≥{_MIN_EDGE_SAMPLE}"
-        elif kind == "momentum":
+        elif kind == "trend_filter":
+            # a=leaders, b=degen: does confirming the trend beat raw momentum?
             verdict = (
-                f"momentum edge holds (+{spread}%)" if spread > 0
-                else f"⚠️ MIRAGE — {b} beats {a} by {-spread}%" if spread < 0
+                f"trend filter adds edge (+{spread}%)" if spread > 0
+                else f"⚠️ trend filter costs {-spread}% vs raw momentum" if spread < 0
                 else "dead heat"
             )
         else:
@@ -2417,7 +2578,7 @@ def wallet_meta() -> dict:
         "by_conviction": by_conv,
         "by_asset": by_asset,
         "experiments": {
-            "momentum": _exp("degen", "contrarian", "momentum"),
+            "trend": _exp("leaders", "degen", "trend_filter"),
             "crowd": _exp("hype", "degen", "crowd"),
         },
         # Live per-source risk multipliers — the active control loop
@@ -2436,7 +2597,7 @@ def wallet_edge_brief() -> str:
         return "wallets not started"
     e = m["experiments"]
     return (
-        f"momentum (degen vs contrarian): {e['momentum']['verdict']}; "
+        f"trend filter (leaders vs degen): {e['trend']['verdict']}; "
         f"crowd (hype vs degen): {e['crowd']['verdict']}"
     )
 
@@ -2459,8 +2620,8 @@ def meta_text(m: dict | None = None) -> str:
         f"_as of {m['as_of'][:16]}Z_",
         "",
         "**Experiments**",
-        f"• Momentum (degen vs contrarian): {em['momentum']['a_ret']:+.1f}% "
-        f"vs {em['momentum']['b_ret']:+.1f}% — {em['momentum']['verdict']}",
+        f"• Trend filter (leaders vs degen): {em['trend']['a_ret']:+.1f}% "
+        f"vs {em['trend']['b_ret']:+.1f}% — {em['trend']['verdict']}",
         f"• Crowd (hype vs degen): {em['crowd']['a_ret']:+.1f}% "
         f"vs {em['crowd']['b_ret']:+.1f}% — {em['crowd']['verdict']}",
         "",

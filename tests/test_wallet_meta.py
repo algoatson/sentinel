@@ -125,37 +125,37 @@ def test_cross_cut_by_source_conviction_asset():
 # ── the headline experiment + sample gating ─────────────────────────────────
 
 
-def test_momentum_verdict_is_sample_gated():
-    # degen +5%, contrarian +2%, but only 4 closed trades combined → too early
-    _fund("degen", cash=1050.0)
-    cid = _fund("contrarian", cash=1020.0)
+def test_trend_filter_verdict_is_sample_gated():
+    # leaders +5%, degen +2% → spread +3, but only 4 closed trades → too early
+    _fund("leaders", cash=1050.0)
+    dg = _fund("degen", cash=1020.0)
     for _ in range(4):
-        _closed(cid, pnl=1.0)
-    exp = funds.wallet_meta()["experiments"]["momentum"]
+        _closed(dg, pnl=1.0)
+    exp = funds.wallet_meta()["experiments"]["trend"]
     assert "too early" in exp["verdict"] and exp["spread"] == 3.0
 
 
-def test_momentum_edge_real_vs_mirage_once_enough_samples():
-    dg = _fund("degen", cash=1050.0)        # +5%
-    _fund("contrarian", cash=1020.0)        # +2% (id unused)
-    for _ in range(16):                     # ≥ _MIN_EDGE_SAMPLE combined
+def test_trend_filter_edge_real_vs_costly_once_enough_samples():
+    _fund("leaders", cash=1050.0)           # +5% (a)
+    dg = _fund("degen", cash=1020.0)         # +2% (b)
+    for _ in range(16):                      # ≥ _MIN_EDGE_SAMPLE combined
         _closed(dg, pnl=1.0)
-    exp = funds.wallet_meta()["experiments"]["momentum"]
-    assert exp["spread"] == 3.0 and "edge holds" in exp["verdict"]
+    exp = funds.wallet_meta()["experiments"]["trend"]
+    assert exp["spread"] == 3.0 and "adds edge" in exp["verdict"]
 
-    # flip it: contrarian now beats degen → MIRAGE
+    # flip it: raw degen now beats leaders → the trend filter is costing us
     with session_scope() as s:
+        lead = s.exec(select(Fund).where(Fund.name == "leaders")).first()
         d = s.exec(select(Fund).where(Fund.name == "degen")).first()
-        c = s.exec(select(Fund).where(Fund.name == "contrarian")).first()
-        d.cash, c.cash = 1010.0, 1080.0
+        lead.cash, d.cash = 1010.0, 1080.0
+        s.add(lead)
         s.add(d)
-        s.add(c)
-    exp = funds.wallet_meta()["experiments"]["momentum"]
-    assert "MIRAGE" in exp["verdict"] and exp["spread"] < 0
+    exp = funds.wallet_meta()["experiments"]["trend"]
+    assert "costs" in exp["verdict"] and exp["spread"] < 0
 
 
 def test_wallet_edge_brief_is_compact_string():
-    _fund("degen", cash=1100.0)
-    _fund("contrarian", cash=1000.0)
+    _fund("leaders", cash=1100.0)
+    _fund("degen", cash=1000.0)
     b = funds.wallet_edge_brief()
-    assert isinstance(b, str) and ";" in b and "momentum" in b.lower()
+    assert isinstance(b, str) and ";" in b and "trend" in b.lower()

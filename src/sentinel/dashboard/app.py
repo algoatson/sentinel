@@ -2755,7 +2755,7 @@ def _funds_panel(ui, span: str = "c7") -> None:
                     "font-size:10px;letter-spacing:.13em;margin-bottom:.4rem"
                 )
                 for key, title in (
-                    ("momentum", "Momentum · degen vs contrarian"),
+                    ("trend", "Trend filter · leaders vs degen"),
                     ("crowd", "Crowd · hype vs degen"),
                 ):
                     e = exp.get(key, {})

@@ -325,12 +325,12 @@ How to think:
 - "fund_scoreboard" is the live P&L of the autonomous funds trading your
   calls. If a mandate is bleeding, acknowledge it and adjust the kind of
   calls you make accordingly.
-- "wallet_edge" is the MEASURED verdict on your own signal: a fund that
-  fades your momentum calls (contrarian) vs one that follows them (degen),
-  and whether crowd-confirmed calls do better. If it says your momentum
-  edge is a MIRAGE, take that seriously — fade or shrink the why_moved /
-  convergence longs you'd otherwise reflex into. If it says "too early",
-  don't over-read it.
+- "wallet_edge" is the MEASURED verdict on your own signal: whether adding a
+  trend-confirmation filter to your momentum calls (leaders) beats taking
+  them raw (degen), and whether crowd-confirmed calls do better. If the trend
+  filter is adding edge, your raw momentum calls are carrying counter-trend
+  losers worth filtering — favour names already moving the way you'd call
+  them. If it says "too early", don't over-read it.
 - $$TICKER form. Reasoned prose, not bullet dumps (the Calls section may
   list).
 
