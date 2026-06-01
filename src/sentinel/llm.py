@@ -29,17 +29,20 @@ from .config import settings
 
 LLM_ERROR_SENTINEL = "[LLM_ERROR]"
 
-# When reasoning is ON, the model spends ~500–900 completion tokens on
-# hidden chain-of-thought BEFORE the visible answer (measured live on
-# deepseek-v4-flash; effort level barely moves it). Several pipelines
-# pass small caps (300–750) tuned for the reasoning-OFF era — with
-# reasoning on those truncate mid-answer. So whenever reasoning is
-# enabled we floor max_tokens to this, guaranteeing room for the
-# thinking PLUS a full answer. It's a cap, not a target: short answers
-# still stop early, so this prevents truncation without inflating spend
-# on calls that finish quickly. JSON classifiers never hit this — they
-# run reasoning-off (see `_resolve_reasoning`).
-_REASONING_MIN_TOKENS = 1500
+# When reasoning is ON, the model spends hidden chain-of-thought tokens
+# BEFORE the visible answer, and they count against max_tokens. Measured
+# live on deepseek-v4-flash: ~500 typical, spiking to ~900 on some runs.
+# Every caller's max_tokens is its intended ANSWER budget (tuned per
+# pipeline — 360 for a lounge quip, 2000 for a thesis). So when reasoning
+# is on we ADD this headroom on TOP of the caller's budget rather than
+# flooring to a flat value — a flat floor would silently starve the
+# long-form calls (a 1300-token synthesis answer + 600 reasoning needs
+# 1900, not 1500). Additive headroom preserves each call's answer length
+# AND fits the thinking. It's a ceiling, not a target: short answers
+# still stop early, so no wasted spend. Generous (1200) to absorb the
+# worst-case reasoning spike + margin so nothing truncates. JSON
+# classifiers never add it — they run reasoning-off.
+_REASONING_HEADROOM_TOKENS = 1200
 
 # Process-lifetime LLM health counter, read by the daily diagnostic. Coarse
 # by design (the GIL makes the increments good enough; a health metric does
@@ -328,7 +331,7 @@ def _api_chat(
     # matters most here: each tool-loop iteration reasons, and a
     # truncated iteration aborts the whole loop.
     reasoning_on = rsn.get("enabled") is not False
-    eff_max = max(max_tokens, _REASONING_MIN_TOKENS) if reasoning_on else max_tokens
+    eff_max = max_tokens + _REASONING_HEADROOM_TOKENS if reasoning_on else max_tokens
     payload: dict[str, Any] = {
         "model": model_id,
         "messages": messages,
@@ -422,7 +425,7 @@ def _api_complete(
     rsn = _reasoning_field(reasoning_mode)
     # Floor the budget when reasoning is on so think+answer both fit.
     reasoning_on = rsn.get("enabled") is not False
-    eff_max = max(max_tokens, _REASONING_MIN_TOKENS) if reasoning_on else max_tokens
+    eff_max = max_tokens + _REASONING_HEADROOM_TOKENS if reasoning_on else max_tokens
     payload: dict[str, Any] = {
         "model": model_id,
         "messages": [{"role": "user", "content": prompt}],
