@@ -222,14 +222,25 @@ def tool_loop(
 
     while iterations < max_iterations:
         iterations += 1
+        # Reasoning ON for tool-selection turns (smart tool choices); OFF
+        # on the forced-answer turn. deepseek-v4-flash intermittently
+        # returns an EMPTY completion when reasoning is on AND it's being
+        # made to write a final answer over tool results — that was the
+        # "tool_loop empty → falling back" failure. The model already did
+        # its thinking when it chose the tools, so the synthesis turn
+        # doesn't need CoT; reasoning-off there is 100% reliable (and
+        # cheaper). `tool_choice="none"` also drops the tools array (see
+        # llm._api_chat) so the answer turn is the clean, reliable shape.
+        forced_answer = iterations >= max_iterations
         res = llm.chat(
             messages,
             model=model,
             max_tokens=max_tokens,
             tools=schemas,
-            tool_choice="auto" if iterations < max_iterations else "none",
+            tool_choice="auto" if not forced_answer else "none",
             temperature=temperature,
             grounded=grounded,
+            reasoning="off" if forced_answer else None,
         )
         if not res.get("ok"):
             # First-iteration failure → graceful one-shot fallback so a
@@ -379,6 +390,7 @@ def tool_loop(
         tool_choice="none",
         temperature=temperature,
         grounded=False,  # already in the chain
+        reasoning="off",  # forced-answer turn — reliable, see loop above
     )
     text = (res.get("content") or "") if res.get("ok") else ""
     return LoopResult(

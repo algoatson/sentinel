@@ -338,7 +338,16 @@ def _api_chat(
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
-    if tools:
+    # Only advertise tools when the model may actually call them. On the
+    # tool-loop's forced-ANSWER turn (tool_choice="none") we MUST drop
+    # the tools array entirely: deepseek-v4-flash returns an EMPTY
+    # completion when reasoning is on AND tool schemas are present but
+    # uncallable — the root cause of the "tool_loop empty → falling
+    # back" failures. With tools omitted on the answer turn the model
+    # returns a full read (verified live). Sending tools with
+    # tool_choice="none" is pointless anyway — "none" already forbids
+    # calling them.
+    if tools and tool_choice != "none":
         payload["tools"] = tools
         payload["tool_choice"] = tool_choice
     prov = _provider_field(provider)
