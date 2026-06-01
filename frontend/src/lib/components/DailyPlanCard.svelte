@@ -158,7 +158,11 @@
           {/if}
         </span>
       </div>
-      <div class="px-4 pb-3 text-[12.5px] leading-relaxed text-text">
+      <!-- Cap the briefing height: the pre-market read can run many
+           paragraphs, and ungated it shoved the equity chart + positions
+           far down the page. Bounded + scroll keeps the hero compact while
+           every word stays accessible. -->
+      <div class="max-h-72 overflow-y-auto px-4 pb-3 text-[12.5px] leading-relaxed text-text">
         {#if $briefingQ.isLoading}
           <div class="py-2 text-center text-[12px] text-faint">Loading…</div>
         {:else if $briefingQ.data?.body}
