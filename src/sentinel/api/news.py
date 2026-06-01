@@ -45,11 +45,23 @@ def list_recent(
     in `tickers_csv` (LIKE substring) OR equals the legacy single
     `ticker` column. That way a "$NVDA and $AMD" story shows up under
     both AMD and NVDA filters."""
+    # Window on EITHER clock. yfinance/RSS routinely hand us articles whose
+    # original `published_at` is days old (re-syndication, per-ticker feed
+    # backfill), yet we ingest them now — and the Overview live feed fires on
+    # INGESTION, so they flash by there. Keying this list on `published_at`
+    # alone (the old behaviour) silently dropped the freshly-arrived-but-old
+    # items, so news the user just saw in the live feed never appeared under
+    # /intel. Union the two clocks: anything recently PUBLISHED *or* recently
+    # FETCHED. Still ordered by publish date below, so displayed timestamps
+    # stay monotonic and genuinely-fresh stories lead.
     cutoff_naive = (
         datetime.now(timezone.utc) - timedelta(hours=hours)
     ).replace(tzinfo=None)
     with session_scope() as s:
-        q = select(NewsItem).where(NewsItem.published_at >= cutoff_naive)
+        q = select(NewsItem).where(
+            (NewsItem.published_at >= cutoff_naive)
+            | (NewsItem.fetched_at >= cutoff_naive)
+        )
         if ticker:
             sym = ticker.upper()
             q = q.where(
