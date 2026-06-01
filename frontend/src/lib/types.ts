@@ -84,6 +84,7 @@ export interface WatchlistRow {
   high_52w: number | null;
   low_52w: number | null;
   spark_30d?: number[];
+  funding_pct?: number | null;  // 8h perp funding, crypto only
 }
 
 export interface OHLC {

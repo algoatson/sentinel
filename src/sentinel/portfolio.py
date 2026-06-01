@@ -176,6 +176,13 @@ def watchlist_returns() -> list[dict]:
             pc.ticker: pc
             for pc in s.exec(select(PriceContext)).all()
         }
+        # Funding rate for the crypto rows — turns the watchlist into a
+        # funding screener. One batch read; equities simply have no row.
+        from .models import CryptoMicro
+        micro = {
+            cm.ticker: cm
+            for cm in s.exec(select(CryptoMicro)).all()
+        }
 
     by_ticker: dict[str, list] = defaultdict(list)
     for b in bars_rows:
@@ -247,6 +254,13 @@ def watchlist_returns() -> list[dict]:
             "day_low": day_low, "day_high": day_high,
             "high_52w": high_52w, "low_52w": low_52w,
             "spark_30d": spark,
+            # 8h perp funding (%), crypto only — None for equities.
+            "funding_pct": (
+                round(cm.funding_rate * 100, 4)
+                if (cm := micro.get(w.ticker)) is not None
+                and cm.funding_rate is not None
+                else None
+            ),
         })
     return out
 

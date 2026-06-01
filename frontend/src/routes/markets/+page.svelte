@@ -88,7 +88,8 @@
     | 'change_1w_pct'
     | 'change_1m_pct'
     | 'change_1y_pct'
-    | 'volume_vs_avg';
+    | 'volume_vs_avg'
+    | 'funding_pct';
   let sortKey: SortKey = $state('change_1d_pct');
   let sortDir: 'asc' | 'desc' = $state('desc');
   let filter = $state('');
@@ -397,6 +398,7 @@
             {@render th('1y %', 'change_1y_pct')}
             <th class="hidden px-3 py-2 text-center font-semibold lg:table-cell">30d</th>
             {@render th('Vol×', 'volume_vs_avg')}
+            {@render th('Fund 8h', 'funding_pct')}
           </tr>
         </thead>
         <tbody>
@@ -430,6 +432,15 @@
                 ].join(' ')}
               >
                 {r.volume_vs_avg !== null ? `×${r.volume_vs_avg.toFixed(2)}` : '—'}
+              </td>
+              <td class="px-3 py-1.5 text-right tabular">
+                {#if r.funding_pct !== null && r.funding_pct !== undefined}
+                  <span class={r.funding_pct < 0 ? 'text-good' : r.funding_pct >= 0.05 ? 'text-bad' : 'text-muted'}>
+                    {r.funding_pct > 0 ? '+' : ''}{r.funding_pct.toFixed(3)}%
+                  </span>
+                {:else}
+                  <span class="text-faint">—</span>
+                {/if}
               </td>
             </tr>
           {/each}
