@@ -93,18 +93,23 @@ class Settings(BaseSettings):
 
     # Reasoning-model control for the OpenRouter chat payload.
     #   "low"/"medium"/"high" → keep chain-of-thought ON for analytical
-    #     calls (the trade/data brain + tool-selection). Default "low".
-    #   "off" → disable thinking entirely (fastest/cheapest, but the bot
-    #     loses the reasoning that improves reads and tool use).
-    # Reasoning is the bot's edge on the decision calls, so it's ON by
-    # default. Economy comes from two things the engine enforces, not
-    # from this knob: JSON classifiers (sentiment/materiality/triage —
-    # the high-frequency calls) are ALWAYS reasoning-off since CoT does
-    # nothing for a mechanical tag, and a max_tokens floor (see
-    # llm._REASONING_MIN_TOKENS) guarantees think+answer fit so a call
-    # never truncates (a truncated reasoning call is the worst waste —
-    # you pay for the thinking and get nothing).
-    LLM_REASONING: str = "low"
+    #     calls (the trade/data brain + tool-selection).
+    #   "off" → disable thinking entirely (loses the reasoning edge).
+    # Default "medium" — and that's the empirically-measured sweet spot
+    # on deepseek-v4-flash, not a guess. Across repeated live runs:
+    #   low    → ~582 completion tok avg (noisy, spiked to 865)
+    #   medium → ~446 tok avg (CHEAPEST + most stable + full answers)
+    #   high   → ~523 tok avg
+    # On this model "low" paradoxically rambles more, so medium is
+    # cheaper AND a better reasoner — best on every axis.
+    # Economy is enforced structurally, not via this knob: JSON
+    # classifiers (sentiment/materiality/triage — the high-frequency
+    # calls) are ALWAYS reasoning-off since CoT does nothing for a
+    # mechanical tag, and a max_tokens floor (llm._REASONING_MIN_TOKENS)
+    # guarantees think+answer fit so a reasoning call never truncates
+    # (a truncated reasoning call is the worst waste — you pay for the
+    # thinking and get nothing back).
+    LLM_REASONING: str = "medium"
 
     # Per-tier provider overrides — set these to put a tier on a DIFFERENT
     # provider than the shared one above (e.g. light on a free Google AI
