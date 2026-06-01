@@ -1,30 +1,25 @@
 """Resolve which tickers a news article is actually ABOUT.
 
-The keyword extractor (`utils.extract_tickers`) is generous by design — it
-tags any watchlist name/cashtag it sees so headline-grade news written
-without cashtags ("Nvidia announced…") still gets linked. That generosity,
-plus yfinance's per-ticker feed (which surfaces loosely-related / syndicated
-stories under a ticker the article barely mentions), produces the wrong
-*primary* ticker: e.g. "Snowflake's Partnership With Amazon" arriving in
-NVDA's yfinance feed and getting stamped ``ticker=NVDA`` even though the body
-never names Nvidia.
+The keyword extractor (`utils.extract_tickers`) is fast but mid-tier: it
+misses companies named in plain prose whose name isn't in its alias map
+("Coinbase launched…" → no $COIN), and it false-positives when a word
+collides with a ticker (Nvidia's "RTX" PC brand → Raytheon $RTX). It also
+can't tell the subject of a story from a passing mention. yfinance's
+per-ticker feed compounds this by handing us a feed-ticker the article
+barely concerns.
 
-`resolve_article_tickers` is the precision layer on top of the heuristic. It:
+`resolve_article_tickers` makes a cheap LLM call the AUTHORITY on tagging:
+the model identifies the real subject companies from the headline + summary
+using its own world knowledge — so it recovers names the keyword matcher
+missed AND drops false matches it flagged — and we VALIDATE its output
+against the watchlist (the allowlist), which both prevents hallucination and
+keeps tagging scoped to names we actually track. The keyword extractor is
+kept as a noisy hint to the model and as the deterministic FALLBACK when the
+LLM is unavailable or over the per-poll budget.
 
-1. Generates CANDIDATES heuristically (free, deterministic — the existing
-   `extract_tickers_ranked`).
-2. Treats a yfinance feed-ticker the *content* doesn't support as a SUSPECT
-   candidate rather than a guaranteed primary, and demotes it.
-3. For genuinely ambiguous items (≥2 candidates, or a suspect feed-ticker)
-   asks the light model — CONSTRAINED to the candidate set, so it can never
-   invent a ticker — which one is the subject and which mentions are real.
-   Clear single-subject items skip the LLM entirely (the cheap common path).
-4. Falls back to the heuristic ranking whenever the LLM is unavailable, over
-   budget, or returns nothing usable.
-
-Cost is bounded by the caller via `allow_ai` (a per-cycle budget) plus the
-ambiguity gate, so steady-state news polling stays cheap. The call is a
-reasoning-off JSON classifier (`json_mode=True`), ~tens of tokens out.
+The call is a reasoning-off JSON classifier (`json_mode=True`), ~tens of
+tokens out, run once per ingested article after dedup. Cost is bounded by
+the caller's `allow_ai` budget.
 """
 
 from __future__ import annotations
@@ -42,57 +37,52 @@ from .utils import extract_tickers_ranked
 @dataclass
 class ResolvedTickers:
     """Outcome of resolution. `ranked` is primary-first and is what goes into
-    `tickers_csv`; `primary` is the single-`ticker` column (may be None for a
-    macro / unattributable story). `used_ai` lets the caller decrement its
-    per-cycle LLM budget."""
+    `tickers_csv`; `primary` is the single-`ticker` column (None for a macro /
+    private-company / unattributable story). `used_ai` lets the caller
+    decrement its per-cycle LLM budget."""
 
     primary: Optional[str]
     ranked: list[str]
     used_ai: bool = False
 
 
-def _heuristic(
-    title: str, summary: str, watchlist: Iterable[str], feed_ticker: Optional[str]
-) -> tuple[list[str], bool]:
-    """Candidate generation + feed-ticker reconciliation.
-
-    Returns ``(candidates_primary_first, feed_suspect)``. `feed_suspect` is
-    True when a yfinance feed-ticker is present but the article's own text
-    points at *other* tickers instead — the case that produced the wrong
-    primary before.
-    """
-    cand = extract_tickers_ranked(f"{title} {summary}", watchlist, title=title)
+def _fallback(
+    content_cand: list[str], feed_ticker: Optional[str]
+) -> tuple[Optional[str], list[str]]:
+    """Deterministic resolution when the LLM isn't used. Heuristic content
+    candidates, with a yfinance feed-ticker the content doesn't support demoted
+    so it never silently wins as primary."""
+    cand = content_cand
     feed_suspect = False
     if feed_ticker:
         fu = feed_ticker.upper()
         if fu in cand:
-            pass  # content backs the feed ticker — trust it, no suspicion
+            pass                       # content backs the feed ticker
         elif not cand:
-            cand = [fu]  # nothing else to go on — trust the feed
+            cand = [fu]                # nothing else — trust the feed
         else:
-            # The feed says `fu`, but the content is about other names. Keep
-            # `fu` as a last-resort candidate so the LLM can still vindicate
-            # it, but flag the conflict so the feed never silently wins.
-            cand = cand + [fu]
+            cand = cand + [fu]         # feed says fu, content says other
             feed_suspect = True
-    return cand, feed_suspect
+    if not cand:
+        return None, []
+    ranked = cand[:-1] if feed_suspect and len(cand) > 1 else cand
+    return ranked[0], ranked
 
 
 def _ai_resolve(
     title: str, summary: str, candidates: list[str]
 ) -> Optional[tuple[Optional[str], list[str]]]:
-    """One constrained light-model JSON call. Returns ``(primary, ranked)`` or
-    None on any failure. The result is intersected with `candidates` so the
-    model can never introduce a ticker that wasn't already detected."""
-    cand_set = {c.upper() for c in candidates}
+    """One light-model JSON call. Returns ``(primary, tickers)`` — uppercased,
+    primary-first — or None on any failure. NOT constrained to `candidates`
+    (the model may add a subject the keyword matcher missed); the caller
+    validates against the watchlist. `candidates` is passed only as a hint."""
     try:
         tmpl = get_prompt("tag_article_tickers")
         rendered = tmpl.safe_substitute(
             title=title[:300],
             summary=summary[:800],
-            candidates=", ".join(candidates),
+            candidates=", ".join(candidates) if candidates else "(none detected)",
         )
-        # Pure classifier: no date/world grounding needed, tiny output.
         raw = get_llm().complete(
             rendered, model="light", json_mode=True, max_tokens=120,
             grounded=False,
@@ -104,27 +94,23 @@ def _ai_resolve(
     if parsed is None:
         return None
 
-    ranked: list[str] = []
+    tickers: list[str] = []
     for t in parsed.get("tickers") or []:
         if not isinstance(t, str):
             continue
         tu = t.strip().upper()
-        if tu in cand_set and tu not in ranked:
-            ranked.append(tu)
-
+        if tu and tu not in tickers:
+            tickers.append(tu)
     primary = parsed.get("primary")
     primary = primary.strip().upper() if isinstance(primary, str) else None
-    if primary is not None and primary not in cand_set:
-        primary = None  # hallucinated / out-of-set primary → discard
 
-    # Reconcile: primary must lead `ranked`.
     if primary:
-        if primary in ranked:
-            ranked.remove(primary)
-        ranked.insert(0, primary)
-    elif ranked:
-        primary = ranked[0]
-    return primary, ranked
+        if primary in tickers:
+            tickers.remove(primary)
+        tickers.insert(0, primary)
+    elif tickers:
+        primary = tickers[0]
+    return primary, tickers
 
 
 def resolve_article_tickers(
@@ -138,31 +124,38 @@ def resolve_article_tickers(
     """Decide the primary + relevant tickers for one article.
 
     `feed_ticker` is the symbol whose yfinance feed surfaced the article (None
-    for RSS). `allow_ai` is the caller's per-cycle LLM budget gate — when
-    False, resolution is purely heuristic (still applying the feed-trust fix).
+    for RSS) — used only in the heuristic fallback, since the LLM judges the
+    subject from content directly. `allow_ai` is the caller's per-cycle LLM
+    budget gate; when False, resolution is purely heuristic.
     """
     title = (title or "").strip()
     summary = (summary or "").strip()
-    cand, feed_suspect = _heuristic(title, summary, watchlist, feed_ticker)
+    watch_set = {t.upper() for t in watchlist}
+    content_cand = extract_tickers_ranked(
+        f"{title} {summary}", watch_set, title=title
+    )
 
-    if not cand:
-        return ResolvedTickers(primary=None, ranked=[])
+    if allow_ai:
+        ai = _ai_resolve(title, summary, content_cand)
+        if ai is not None:
+            primary, tickers = ai
+            # Validate against the watchlist allowlist: drops anything we
+            # don't track (and any hallucinated / malformed symbol), keeping
+            # tagging scoped and safe. Order (primary-first) preserved.
+            ranked = [t for t in tickers if t in watch_set]
+            if primary and primary in watch_set:
+                if primary in ranked:
+                    ranked.remove(primary)
+                ranked.insert(0, primary)
+            else:
+                primary = ranked[0] if ranked else None
+            return ResolvedTickers(primary=primary, ranked=ranked, used_ai=True)
+        # AI attempted but failed — fall back to the heuristic, and still count
+        # the attempt against the caller's budget so an LLM outage can't make
+        # us retry (and re-bill) every article in the cycle.
+        primary, ranked = _fallback(content_cand, feed_ticker)
+        return ResolvedTickers(primary=primary, ranked=ranked, used_ai=True)
 
-    # Only spend an LLM call when the answer is genuinely ambiguous: several
-    # candidates, or a feed-ticker the body doesn't support. A lone, clearly
-    # supported candidate is taken as-is (the cheap steady-state path).
-    ambiguous = len(cand) >= 2 or feed_suspect
-    if not (allow_ai and ambiguous):
-        # Heuristic-only. Still demote an unsupported feed ticker — content
-        # beats the feed even when we don't pay for the LLM.
-        ranked = cand[:-1] if feed_suspect and len(cand) > 1 else cand
-        return ResolvedTickers(primary=ranked[0], ranked=ranked)
-
-    ai = _ai_resolve(title, summary, cand)
-    if ai is None:
-        # LLM unavailable / unparseable — fall back to the demoted heuristic.
-        ranked = cand[:-1] if feed_suspect and len(cand) > 1 else cand
-        return ResolvedTickers(primary=ranked[0], ranked=ranked, used_ai=True)
-
-    primary, ranked = ai
-    return ResolvedTickers(primary=primary, ranked=ranked, used_ai=True)
+    # No AI (over budget / disabled) — pure heuristic.
+    primary, ranked = _fallback(content_cand, feed_ticker)
+    return ResolvedTickers(primary=primary, ranked=ranked, used_ai=False)

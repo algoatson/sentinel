@@ -511,18 +511,22 @@ Headlines (JSON array):
 $headlines_json""")
 
 
-TAG_ARTICLE_TICKERS = Template("""You decide which stock tickers a news item is actually ABOUT.
+TAG_ARTICLE_TICKERS = Template("""You identify which publicly-traded companies a news item is actually about, and return their stock tickers.
 
-You get a headline, a short summary, and CANDIDATES: tickers a keyword matcher already flagged. Candidates are noisy — some are the real subject of the story, others are only mentioned in passing, sit in a "related stocks" footer, or got attached merely because the article surfaced in that ticker's news feed.
+You get a headline, a short summary, and CANDIDATES — tickers a keyword matcher flagged. Candidates are NOISY in both directions:
+- FALSE matches, where a word collides with a ticker symbol. e.g. Nvidia's "RTX" graphics/PC brand is NOT Raytheon ($$RTX); "ARM" the architecture vs Arm Holdings; a coin name vs an equity.
+- MISSES, where a company is named in plain prose ("Coinbase launched…", "Arm's stock") but wasn't flagged — so the real ticker may not be in CANDIDATES at all.
 
 Return:
-- "primary": the single ticker the story centers on — its main subject. Use null for a macro / general story with no one company at its core.
-- "tickers": every candidate the story genuinely concerns, primary first. Drop any candidate that is only mentioned in passing or isn't really what the story is about.
+- "primary": the ticker of the one company the story centers on — its main subject. null when no single public company is at the core (macro, industry-wide, or about PRIVATE companies like OpenAI / Anthropic / Stripe).
+- "tickers": the tickers of every public company the story genuinely concerns, primary first.
 
 Rules:
-- Pick ONLY from CANDIDATES. Never output a ticker that is not in that list.
-- When unsure whether a candidate is a real subject, leave it out — precision over recall.
-- "primary" must appear in "tickers", unless it is null (then "tickers" lists any real subjects, or is empty).
+- Use the correct official US stock ticker from your own knowledge (Coinbase→COIN, Arm Holdings→ARM, Nvidia→NVDA). INCLUDE companies you recognize even if they're absent from CANDIDATES.
+- DROP a candidate you believe is a false match (a product/brand name, a passing mention) — don't echo it just because it was flagged.
+- Exclude private companies (no ticker) and anything only mentioned in passing.
+- When unsure whether a company is a genuine subject, leave it out.
+- "primary" must appear in "tickers", unless it is null.
 
 Headline: $title
 Summary: $summary

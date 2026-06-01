@@ -553,7 +553,11 @@
               ? (selectedNewsItem.sentiment > 0.15 ? '↑ bullish' : selectedNewsItem.sentiment < -0.15 ? '↓ bearish' : '· neutral')
               : 'neutral'}
           </Pill>
-          {#if selectedNewsItem.ticker}
+          {#if selectedNewsItem.tickers && selectedNewsItem.tickers.length > 0}
+            {#each selectedNewsItem.tickers as t, i (t)}
+              <TickerLink ticker={t} class={i === 0 ? 'text-sm font-bold' : 'text-sm'} />
+            {/each}
+          {:else if selectedNewsItem.ticker}
             <TickerLink ticker={selectedNewsItem.ticker} class="text-sm font-bold" />
           {/if}
           <span class="text-[11px] text-faint">·</span>

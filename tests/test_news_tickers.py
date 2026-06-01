@@ -1,8 +1,10 @@
-"""Tests for sentinel.news_tickers.resolve_article_tickers — the precision
-layer that decides which ticker a news item is actually ABOUT.
+"""Tests for sentinel.news_tickers.resolve_article_tickers — the LLM-authority
+ticker tagger with watchlist validation and a heuristic fallback.
 
-The LLM is stubbed throughout; these pin the heuristic gating, the
-feed-ticker demotion, and the candidate-constraint on the model's output.
+The LLM is stubbed throughout; these pin that the model can recover subjects
+the keyword matcher missed AND drop false matches it flagged, that its output
+is validated against the watchlist (no hallucination, scoped to tracked
+names), and that the deterministic fallback still demotes a bad feed-ticker.
 """
 
 import pytest
@@ -10,12 +12,10 @@ import pytest
 from sentinel import news_tickers
 from sentinel.news_tickers import resolve_article_tickers
 
-WATCHLIST = {"NVDA", "SNOW", "AMZN", "AMD", "AAPL", "MSFT"}
+WATCHLIST = {"NVDA", "ARM", "RTX", "COIN", "SNOW", "AMZN", "AMD", "AAPL"}
 
 
 class _StubLLM:
-    """Returns a canned `complete()` payload; raises if `boom` is set."""
-
     def __init__(self, payload="", *, boom=False):
         self._payload = payload
         self._boom = boom
@@ -28,172 +28,119 @@ class _StubLLM:
 
 @pytest.fixture
 def stub_llm(monkeypatch):
-    """Patch news_tickers.get_llm to return a configurable stub."""
-
     def _install(payload="", *, boom=False):
         monkeypatch.setattr(
             news_tickers, "get_llm", lambda: _StubLLM(payload, boom=boom)
         )
-
     return _install
 
 
-# ── the reported bug: yfinance NVDA feed carries a SNOW/AMZN story ───────
+# ── the reported failures ────────────────────────────────────────────────
 
 
-def test_yfinance_feed_ticker_demoted_without_ai(stub_llm):
-    """allow_ai=False: even with no LLM, an unsupported feed-ticker must NOT
-    win. Content says Snowflake + Amazon; NVDA came only from the feed."""
+def test_ai_recovers_missed_subject_and_drops_false_match(stub_llm):
+    """The Arm/Nvidia/RTX case: the keyword matcher misses ARM (named in
+    prose) and false-flags RTX (Nvidia's product brand → Raytheon). The model
+    returns the real subjects; RTX is excluded, ARM is recovered as primary."""
+    stub_llm('{"primary": "ARM", "tickers": ["ARM", "NVDA"]}')
     r = resolve_article_tickers(
-        "What to Know About Snowflake's Partnership With Amazon",
-        "",
+        "Arm's stock may be the biggest beneficiary of Nvidia's new AI effort",
+        "Nvidia's new RTX Spark PC chip uses Arm technology.",
         WATCHLIST,
-        feed_ticker="NVDA",
-        allow_ai=False,
-    )
-    assert "NVDA" not in r.ranked
-    assert r.primary in {"SNOW", "AMZN"}
-    assert set(r.ranked) == {"SNOW", "AMZN"}
-    assert r.used_ai is False
-
-
-def test_yfinance_feed_ticker_resolved_by_ai(stub_llm):
-    """allow_ai=True + ambiguous: the model picks the real subject and the
-    spurious feed-ticker is dropped."""
-    stub_llm('{"primary": "SNOW", "tickers": ["SNOW", "AMZN"]}')
-    r = resolve_article_tickers(
-        "What to Know About Snowflake's Partnership With Amazon",
-        "Snowflake deepens its tie-up with Amazon's AWS.",
-        WATCHLIST,
-        feed_ticker="NVDA",
+        feed_ticker=None,
         allow_ai=True,
     )
-    assert r.primary == "SNOW"
-    assert r.ranked == ["SNOW", "AMZN"]
-    assert "NVDA" not in r.ranked
+    assert r.primary == "ARM"
+    assert "ARM" in r.ranked and "NVDA" in r.ranked
+    assert "RTX" not in r.ranked
     assert r.used_ai is True
 
 
-# ── feed-ticker that the content DOES back is kept, no LLM spent ─────────
-
-
-def test_supported_feed_ticker_kept_without_ai(stub_llm):
-    stub_llm('{"primary": "WRONG", "tickers": ["WRONG"]}')  # must be ignored
+def test_ai_recovers_subject_with_zero_keyword_candidates(stub_llm):
+    """The Coinbase case: even if the keyword matcher found nothing, the model
+    names the subject and (being watchlisted) it gets tagged."""
+    stub_llm('{"primary": "COIN", "tickers": ["COIN"]}')
     r = resolve_article_tickers(
-        "Nvidia earnings beat expectations",
-        "",
+        "Some Exchange Launches Direct Rupee Rails",
+        "The U.S. exchange established direct rupee trading for Indian users.",
         WATCHLIST,
-        feed_ticker="NVDA",
         allow_ai=True,
     )
-    # Single supported candidate → not ambiguous → no LLM call.
+    assert r.primary == "COIN"
+    assert r.ranked == ["COIN"]
+    assert r.used_ai is True
+
+
+# ── watchlist validation (anti-hallucination + scope) ────────────────────
+
+
+def test_ai_output_validated_against_watchlist(stub_llm):
+    stub_llm('{"primary": "COIN", "tickers": ["COIN", "ZZZZ"]}')
+    r = resolve_article_tickers("Coinbase news", "", {"COIN", "NVDA"}, allow_ai=True)
+    assert r.primary == "COIN"
+    assert r.ranked == ["COIN"]  # ZZZZ not tracked → dropped
+
+
+def test_ai_primary_outside_watchlist_falls_back_to_first_valid(stub_llm):
+    stub_llm('{"primary": "TSLA", "tickers": ["TSLA", "NVDA"]}')
+    r = resolve_article_tickers("x", "", {"NVDA"}, allow_ai=True)
     assert r.primary == "NVDA"
     assert r.ranked == ["NVDA"]
-    assert r.used_ai is False
 
 
-# ── candidate constraint: the model can never introduce a new ticker ─────
-
-
-def test_ai_output_constrained_to_candidates(stub_llm):
-    """Model hallucinates TSLA (not a candidate) — it must be dropped, and a
-    primary outside the candidate set falls back to the surviving subject."""
-    stub_llm('{"primary": "TSLA", "tickers": ["TSLA", "SNOW"]}')
+def test_ai_null_primary_yields_no_tag(stub_llm):
+    """Private-company / macro story (OpenAI + Anthropic) → no ticker."""
+    stub_llm('{"primary": null, "tickers": []}')
     r = resolve_article_tickers(
-        "Snowflake and Amazon expand partnership",
-        "",
+        "AI is crushing a generation of startups built before ChatGPT",
+        "More than $250B has funneled into OpenAI and Anthropic.",
         WATCHLIST,
-        feed_ticker="NVDA",
-        allow_ai=True,
-    )
-    assert "TSLA" not in r.ranked
-    assert r.primary == "SNOW"
-    assert r.ranked == ["SNOW"]
-
-
-def test_ai_failure_falls_back_to_demoted_heuristic(stub_llm):
-    """LLM raises → heuristic fallback, still demoting the feed-ticker."""
-    stub_llm(boom=True)
-    r = resolve_article_tickers(
-        "Snowflake teams up with Amazon",
-        "",
-        WATCHLIST,
-        feed_ticker="NVDA",
-        allow_ai=True,
-    )
-    assert "NVDA" not in r.ranked
-    assert set(r.ranked) == {"SNOW", "AMZN"}
-    assert r.used_ai is True  # we attempted it; budget should be charged
-
-
-def test_ai_garbage_output_falls_back(stub_llm):
-    """Unparseable model output → heuristic fallback."""
-    stub_llm("not json at all")
-    r = resolve_article_tickers(
-        "Snowflake teams up with Amazon",
-        "",
-        WATCHLIST,
-        feed_ticker="NVDA",
-        allow_ai=True,
-    )
-    assert set(r.ranked) == {"SNOW", "AMZN"}
-
-
-# ── degenerate / macro cases ─────────────────────────────────────────────
-
-
-def test_no_candidates_returns_empty(stub_llm):
-    r = resolve_article_tickers(
-        "Fed holds interest rates steady amid inflation watch",
-        "",
-        WATCHLIST,
-        feed_ticker=None,
         allow_ai=True,
     )
     assert r.primary is None
     assert r.ranked == []
+    assert r.used_ai is True
+
+
+# ── heuristic fallback (no AI / AI failure) ──────────────────────────────
+
+
+def test_fallback_demotes_unsupported_feed_ticker(stub_llm):
+    """allow_ai=False: the deterministic path still keeps a yfinance
+    feed-ticker (NVDA) from winning on a Snowflake/Amazon story."""
+    r = resolve_article_tickers(
+        "Snowflake's Partnership With Amazon", "",
+        WATCHLIST, feed_ticker="NVDA", allow_ai=False,
+    )
+    assert "NVDA" not in r.ranked
+    assert set(r.ranked) == {"SNOW", "AMZN"}
     assert r.used_ai is False
 
 
-def test_feed_ticker_only_signal_is_trusted(stub_llm):
-    """yfinance feed-ticker with NO content match and nothing else to go on —
-    trust the feed rather than drop the article entirely."""
+def test_fallback_trusts_feed_when_no_content(stub_llm):
     r = resolve_article_tickers(
-        "An opaque headline with no recognizable company",
-        "",
-        WATCHLIST,
-        feed_ticker="AMD",
-        allow_ai=True,
+        "An opaque headline with no recognizable company", "",
+        WATCHLIST, feed_ticker="AMD", allow_ai=False,
     )
     assert r.primary == "AMD"
     assert r.ranked == ["AMD"]
-    assert r.used_ai is False  # single candidate, not ambiguous
-
-
-def test_rss_single_cashtag_no_ai(stub_llm):
-    """RSS path (no feed-ticker): one clear cashtag subject, no LLM spent."""
-    stub_llm('{"primary": "WRONG", "tickers": ["WRONG"]}')
-    r = resolve_article_tickers(
-        "$TSLA recalls 2 million vehicles over autopilot",
-        "",
-        WATCHLIST | {"TSLA"},
-        feed_ticker=None,
-        allow_ai=True,
-    )
-    assert r.primary == "TSLA"
     assert r.used_ai is False
 
 
-def test_multi_ticker_rss_uses_ai(stub_llm):
-    """Two genuine subjects in an RSS item → ambiguous → LLM picks primary."""
-    stub_llm('{"primary": "AMD", "tickers": ["AMD", "NVDA"]}')
+def test_ai_failure_falls_back_to_heuristic_and_charges_budget(stub_llm):
+    stub_llm(boom=True)
     r = resolve_article_tickers(
-        "AMD launches MI400 to challenge Nvidia in AI accelerators",
-        "",
-        WATCHLIST,
-        feed_ticker=None,
-        allow_ai=True,
+        "Nvidia and AMD both report earnings tonight", "",
+        WATCHLIST, allow_ai=True,
     )
-    assert r.primary == "AMD"
-    assert r.ranked == ["AMD", "NVDA"]
-    assert r.used_ai is True
+    assert r.ranked and set(r.ranked) <= {"NVDA", "AMD"}
+    assert r.used_ai is True  # attempted → budget charged even on failure
+
+
+def test_ai_garbage_output_falls_back(stub_llm):
+    stub_llm("not json at all")
+    r = resolve_article_tickers(
+        "Nvidia and AMD both report earnings tonight", "",
+        WATCHLIST, allow_ai=True,
+    )
+    assert set(r.ranked) <= {"NVDA", "AMD"} and r.ranked

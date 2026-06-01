@@ -92,6 +92,10 @@ COMPANY_NAME_ALIASES: dict[str, str] = {
     "boeing": "BA",
     "ford": "F",
     "general motors": "GM",
+    # ── fintech / crypto-equity (frequent in news, distinctive names) ──
+    "coinbase": "COIN",
+    "robinhood": "HOOD",
+    "microstrategy": "MSTR",
     # ── quantum (the user's example) ──
     "ionq": "IONQ",
     "rigetti": "RGTI",

@@ -34,11 +34,13 @@ from ..utils import format_tickers_csv
 
 _FEEDS_PATH = CONFIG_DIR / "news_feeds.yaml"
 
-# Per-poll budget of LLM ticker-disambiguation calls. The ambiguity gate in
-# `resolve_article_tickers` means most articles never spend one; this is a
-# hard backstop so a flood of multi-ticker stories in a single cycle can't
-# run up the token bill. Each call is a tiny reasoning-off JSON classifier.
-_AI_TAG_BUDGET_PER_POLL = 20
+# Per-poll budget of LLM ticker-tagging calls. `resolve_article_tickers` runs
+# one per NEW (post-dedup) article — the model is the authority on which
+# tickers a story is about. Each call is a tiny reasoning-off JSON classifier
+# (~300 in / ~40 out tokens ≈ $0.00004 at deepseek-v4-flash rates), so even a
+# full budget is fractions of a cent; this cap just bounds a cold-start
+# backfill flood. Beyond it, tagging falls back to the heuristic for the cycle.
+_AI_TAG_BUDGET_PER_POLL = 40
 
 
 def _safe_link_news(news_id: int) -> None:
