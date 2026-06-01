@@ -17,6 +17,7 @@ from .. import portfolio as _portfolio
 from .. import thesis as _thesis
 from ..db import session_scope
 from ..models import (
+    CryptoMicro,
     Filing,
     NewsItem,
     PriceContext,
@@ -54,6 +55,10 @@ def profile(
     with session_scope() as s:
         wl = s.exec(select(Watchlist).where(Watchlist.ticker == sym)).first()
         pc = s.get(PriceContext, sym)
+        # Perp microstructure — only crypto carries it. Drives the
+        # funding-squeeze detector + crypto regime; surfacing it here gives
+        # the per-coin "why" (funding extreme, OI surge, book skew).
+        cm = s.get(CryptoMicro, sym)
 
         calls = s.exec(
             select(TradingCall)
@@ -130,6 +135,20 @@ def profile(
                     round(pc.volume_vs_20d_avg, 2) if pc else None
                 ),
             } if pc else None,
+            "micro": {
+                "venue": cm.venue,
+                "funding_rate_pct": (
+                    round(cm.funding_rate * 100, 4)
+                    if cm.funding_rate is not None else None
+                ),
+                "oi_change_24h_pct": (
+                    round(cm.oi_change_24h_pct * 100, 2)
+                    if cm.oi_change_24h_pct is not None else None
+                ),
+                "orderbook_imbalance": cm.orderbook_imbalance,
+                "open_interest": cm.open_interest,
+                "updated_at": _aware_iso(cm.updated_at),
+            } if cm is not None else None,
             "calls": [
                 {
                     "id": c.id,

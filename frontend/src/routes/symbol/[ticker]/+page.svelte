@@ -143,6 +143,36 @@
           <span class="ml-1">52w range</span>
         </div>
       {/if}
+      {#if d.micro}
+        {@const m = d.micro}
+        <!-- Perp microstructure (crypto only): the same funding / OI / book
+             skew that drives the funding-squeeze detector + crypto regime. -->
+        <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] tabular text-faint">
+          {#if m.funding_rate_pct !== null}
+            <span class="inline-flex items-baseline gap-1">
+              <span class="uppercase tracking-wide opacity-70">funding</span>
+              <span class={m.funding_rate_pct < 0 ? 'font-semibold text-good' : m.funding_rate_pct >= 0.05 ? 'font-semibold text-bad' : 'text-muted'}>
+                {m.funding_rate_pct > 0 ? '+' : ''}{m.funding_rate_pct.toFixed(3)}%/8h
+              </span>
+            </span>
+          {/if}
+          {#if m.oi_change_24h_pct !== null}
+            <span class="inline-flex items-baseline gap-1">
+              <span class="uppercase tracking-wide opacity-70">OI 24h</span>
+              <span class="text-muted">{m.oi_change_24h_pct > 0 ? '+' : ''}{m.oi_change_24h_pct.toFixed(1)}%</span>
+            </span>
+          {/if}
+          {#if m.orderbook_imbalance !== null}
+            <span class="inline-flex items-baseline gap-1">
+              <span class="uppercase tracking-wide opacity-70">book</span>
+              <span class={m.orderbook_imbalance > 0.1 ? 'text-good' : m.orderbook_imbalance < -0.1 ? 'text-bad' : 'text-muted'}>
+                {m.orderbook_imbalance > 0 ? '+' : ''}{m.orderbook_imbalance.toFixed(2)}
+              </span>
+            </span>
+          {/if}
+          {#if m.venue}<span class="opacity-60">· {m.venue}</span>{/if}
+        </div>
+      {/if}
     </div>
 
     <div class="flex items-center gap-2">

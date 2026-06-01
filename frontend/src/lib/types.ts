@@ -436,6 +436,14 @@ export interface SymbolProfile {
     change_5d_pct: number | null;
     volume_vs_20d_avg: number | null;
   } | null;
+  micro: {
+    venue: string;
+    funding_rate_pct: number | null;
+    oi_change_24h_pct: number | null;
+    orderbook_imbalance: number | null;
+    open_interest: number | null;
+    updated_at: string | null;
+  } | null;
   calls: Array<{
     id: number;
     direction: 'long' | 'short';
