@@ -511,6 +511,27 @@ Headlines (JSON array):
 $headlines_json""")
 
 
+TAG_ARTICLE_TICKERS = Template("""You decide which stock tickers a news item is actually ABOUT.
+
+You get a headline, a short summary, and CANDIDATES: tickers a keyword matcher already flagged. Candidates are noisy — some are the real subject of the story, others are only mentioned in passing, sit in a "related stocks" footer, or got attached merely because the article surfaced in that ticker's news feed.
+
+Return:
+- "primary": the single ticker the story centers on — its main subject. Use null for a macro / general story with no one company at its core.
+- "tickers": every candidate the story genuinely concerns, primary first. Drop any candidate that is only mentioned in passing or isn't really what the story is about.
+
+Rules:
+- Pick ONLY from CANDIDATES. Never output a ticker that is not in that list.
+- When unsure whether a candidate is a real subject, leave it out — precision over recall.
+- "primary" must appear in "tickers", unless it is null (then "tickers" lists any real subjects, or is empty).
+
+Headline: $title
+Summary: $summary
+CANDIDATES: $candidates
+
+Output strict JSON only, nothing else:
+{"primary": "TICKER" or null, "tickers": ["TICKER", ...]}""")
+
+
 ALL_PROMPTS: dict[str, Template] = {
     "summarize_8k": SUMMARIZE_8K,
     "summarize_form4": SUMMARIZE_FORM4,
@@ -530,6 +551,7 @@ ALL_PROMPTS: dict[str, Template] = {
     "reddit_curate": REDDIT_CURATE,
     "book_risk": BOOK_RISK,
     "macro_themes": MACRO_THEMES,
+    "tag_article_tickers": TAG_ARTICLE_TICKERS,
 }
 
 

@@ -28,10 +28,17 @@ from .. import discord_client
 from ..config import CONFIG_DIR
 from ..db import session_scope
 from ..models import NewsItem, Watchlist
-from ..utils import extract_tickers_ranked, format_tickers_csv
+from ..news_tickers import resolve_article_tickers
+from ..utils import format_tickers_csv
 
 
 _FEEDS_PATH = CONFIG_DIR / "news_feeds.yaml"
+
+# Per-poll budget of LLM ticker-disambiguation calls. The ambiguity gate in
+# `resolve_article_tickers` means most articles never spend one; this is a
+# hard backstop so a flood of multi-ticker stories in a single cycle can't
+# run up the token bill. Each call is a tiny reasoning-off JSON classifier.
+_AI_TAG_BUDGET_PER_POLL = 20
 
 
 def _safe_link_news(news_id: int) -> None:
@@ -189,6 +196,7 @@ def _poll_rss() -> None:
         })
 
     new_count = 0
+    ai_budget = _AI_TAG_BUDGET_PER_POLL
     for feed_cfg in feeds:
         name = feed_cfg.get("name") or "rss"
         url = feed_cfg.get("url")
@@ -211,25 +219,16 @@ def _poll_rss() -> None:
             published_at = _parse_published(entry)
             ext_id = _stable_id(source, entry.get("id") or link)
 
-            ranked = extract_tickers_ranked(
-                f"{title} {summary}", watch_tickers, title=title
-            )
-            ticker = ranked[0] if ranked else None
-            tickers_csv = format_tickers_csv(ranked)
-
-            new_id = None
+            # Dedup FIRST — never spend an LLM ticker-tag call on an item
+            # we're about to drop as already-seen or a cross-source dup.
+            # yfinance + RSS both republish the same underlying Reuters/CNBC
+            # URL under different `external_id`s; `_recent_canonicals` is
+            # built lazily on first need and reused across the loop.
             with session_scope() as session:
-                existing = session.exec(
+                if session.exec(
                     select(NewsItem).where(NewsItem.external_id == ext_id)
-                ).first()
-                if existing is not None:
+                ).first() is not None:
                     continue
-                # Cross-source URL dedup — yfinance + RSS both republish
-                # the same underlying Reuters/CNBC URL under different
-                # `external_id`s, leaving the feed cluttered with
-                # duplicates the user can't easily tell apart.
-                # `_recent_canonicals` is rebuilt per session_scope so
-                # we don't reuse a stale snapshot between iterations.
                 if seen_urls is None:
                     seen_urls = _recent_canonicals(session)
                 canon = canonical_url(link)
@@ -237,6 +236,20 @@ def _poll_rss() -> None:
                     skipped_dup += 1
                     continue
                 seen_urls.add(canon)
+
+            # Resolve tickers OUTSIDE the transaction — this may hit the LLM
+            # for ambiguous items, and we never hold a write txn across a
+            # network call. The ambiguity gate + per-poll budget keep it cheap.
+            resolved = resolve_article_tickers(
+                title, summary, watch_tickers, allow_ai=ai_budget > 0
+            )
+            if resolved.used_ai:
+                ai_budget -= 1
+            ticker = resolved.primary
+            tickers_csv = format_tickers_csv(resolved.ranked)
+
+            new_id = None
+            with session_scope() as session:
                 item = NewsItem(
                     source=source,
                     external_id=ext_id,
@@ -258,7 +271,7 @@ def _poll_rss() -> None:
             # theses on both). The linker iterates over tickers_csv
             # internally so one call covers them all.
             if new_id is not None:
-                if ranked:
+                if resolved.ranked:
                     _safe_link_news(new_id)
                 _safe_publish_news(new_id, ticker, title, source, None)
 
@@ -289,6 +302,7 @@ def _poll_yfinance() -> None:
         tickers = sorted({r.ticker for r in rows if r.ticker})
 
     new_count = 0
+    ai_budget = _AI_TAG_BUDGET_PER_POLL
     for ticker in tickers:
         # yfinance uses dashes for class shares (BRK-B); watchlist stores dots.
         yf_ticker = ticker.replace(".", "-")
@@ -328,12 +342,13 @@ def _poll_yfinance() -> None:
                 published_at = datetime.now(timezone.utc)
 
             ext_id = _stable_id("yfinance", str(external_id))
-            new_id = None
+
+            # Dedup FIRST (cheap) so we never spend an LLM tag-call on an
+            # item we're about to drop as already-seen / cross-source dup.
             with session_scope() as session:
-                existing = session.exec(
+                if session.exec(
                     select(NewsItem).where(NewsItem.external_id == ext_id)
-                ).first()
-                if existing is not None:
+                ).first() is not None:
                     continue
                 if seen_urls is None:
                     seen_urls = _recent_canonicals(session)
@@ -342,36 +357,46 @@ def _poll_yfinance() -> None:
                     skipped_dup += 1
                     continue
                 seen_urls.add(canon)
-                # Extract every other ticker the story also mentions, so
-                # a "$NVDA and $AMD both report" item tags both. yfinance
-                # `ticker` is the queried symbol — guaranteed primary; the
-                # ranked extractor gives us the rest. `tickers` here is
-                # the watchlist universe loaded at the top of this fn.
-                extra_ranked = extract_tickers_ranked(
-                    f"{title} {summary}", tickers, title=title
-                )
-                all_tickers = [ticker] + [t for t in extra_ranked if t != ticker]
-                tickers_csv = format_tickers_csv(all_tickers)
-                item = NewsItem(
+
+            # The yfinance feed-ticker is only a HINT: its per-ticker feed
+            # carries syndicated / loosely-related stories, so it must NOT be
+            # forced as the primary (that's how "Snowflake's Partnership With
+            # Amazon" got stamped $NVDA). `resolve_article_tickers` keeps it
+            # primary only when the content backs it; otherwise it demotes the
+            # feed tag and — for ambiguous items — asks the light model which
+            # ticker the story is really about. Runs outside the txn (may hit
+            # the network). `tickers` is the watchlist universe from the top.
+            resolved = resolve_article_tickers(
+                title, summary, tickers, feed_ticker=ticker,
+                allow_ai=ai_budget > 0,
+            )
+            if resolved.used_ai:
+                ai_budget -= 1
+            primary = resolved.primary
+            tickers_csv = format_tickers_csv(resolved.ranked)
+
+            new_id = None
+            with session_scope() as session:
+                row = NewsItem(
                     source="yfinance",
                     external_id=ext_id,
                     title=title[:500],
                     url=url[:1000],
                     summary=(summary or "")[:1000],
-                    ticker=ticker,
+                    ticker=primary,
                     tickers_csv=tickers_csv,
                     is_macro=False,
                     published_at=published_at,
                     fetched_at=datetime.now(timezone.utc),
                 )
-                session.add(item)
+                session.add(row)
                 session.flush()
-                new_id = item.id
+                new_id = row.id
                 new_count += 1
             if new_id is not None:
-                if ticker:
+                if resolved.ranked:
                     _safe_link_news(new_id)
-                _safe_publish_news(new_id, ticker, title, "yfinance", None)
+                _safe_publish_news(new_id, primary, title, "yfinance", None)
 
     logger.info(
         "news yfinance: inserted {} new items across {} tickers (skipped {} url dups)",

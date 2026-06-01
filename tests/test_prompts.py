@@ -29,6 +29,7 @@ EXPECTED_PROMPT_NAMES = {
     "reddit_curate",
     "book_risk",
     "macro_themes",
+    "tag_article_tickers",
 }
 
 
@@ -77,6 +78,7 @@ def test_every_prompt_substitutes_cleanly():
             "text",
             "form_type",
             "ticker",
+            "title",
             "summary",
             "enrichment_json",
             "numbered_items",
