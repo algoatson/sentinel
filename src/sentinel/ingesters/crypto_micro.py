@@ -17,7 +17,7 @@ never fatal. Bounded to a curated subset to stay polite.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from loguru import logger
@@ -231,6 +231,27 @@ def _run() -> None:
             n += 1
 
     logger.info("crypto micro: updated {}/{} tickers", n, len(targets))
+
+
+# crypto_micro polls every 20 min — a row that hasn't refreshed in 90 min
+# means the ingester is failing for this coin (geo-block, API outage, coin
+# delisted from the venue). Acting on funding/OI that old is flying blind on
+# a 24/7 asset, so the trade gates treat stale micro as absent.
+MICRO_STALE_MINUTES = 90
+
+
+def has_fresh_micro(ticker: str, *, max_age_minutes: int = MICRO_STALE_MINUTES) -> bool:
+    """True iff we hold microstructure for `ticker` updated within the freshness
+    window. The autonomous crypto gate uses this so it never opens on stale
+    funding/OI left behind by a failed ingest run."""
+    with session_scope() as s:
+        row = s.get(CryptoMicro, ticker)
+    if row is None or row.updated_at is None:
+        return False
+    upd = row.updated_at
+    if upd.tzinfo is None:
+        upd = upd.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - upd) <= timedelta(minutes=max_age_minutes)
 
 
 def micro_for(ticker: str) -> dict | None:

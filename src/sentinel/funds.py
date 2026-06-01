@@ -32,6 +32,7 @@ from .models import (
     RedditMention,
     TradingCall,
 )
+from .crypto_regime import blocks_entry, market_regime
 from .routing import asset_class_of
 
 _POLICIES: dict[str, dict] = {
@@ -769,6 +770,10 @@ def _run() -> list[dict]:
     moves: list[dict] = []
     with session_scope() as s:
         funds = s.exec(select(Fund).where(Fund.active == True)).all()  # noqa: E712
+        # Market-regime read once per cycle (BTC is the proxy). Gates
+        # counter-trend crypto entries across EVERY source — the engine-side
+        # backstop to the same gate funding_squeeze applies at the detector.
+        crypto_regime = market_regime(s, now)
         for fund in funds:
             pol = _effective_policy(fund)
             opens = _open_trades(s, fund.id)
@@ -929,6 +934,19 @@ def _run() -> list[dict]:
                 want = call.direction
                 if invert:
                     want = "short" if call.direction == "long" else "long"
+
+                # Market-regime gate (crypto only): no new LONGS when the
+                # complex is risk-off, no new SHORTS when it's risk-on. Alts
+                # are ~80% BTC beta, so a counter-trend per-coin entry is the
+                # classic way the crypto leg bleeds. Evaluated on `want` so a
+                # contrarian fund's inverted side is judged correctly; BTC
+                # itself is never gated against its own regime.
+                if acls == "crypto" and blocks_entry(crypto_regime, want, call.ticker):
+                    logger.debug(
+                        "funds[{}]: skip ${} {} — counter-regime ({})",
+                        fund.name, call.ticker, want, crypto_regime.reason,
+                    )
+                    continue
 
                 held = by_ticker.get(call.ticker)
                 if held is not None:

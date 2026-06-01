@@ -40,7 +40,9 @@ from sqlmodel import select
 
 from .. import discord_client, ui
 from ..config import settings
+from ..crypto_regime import blocks_entry, market_regime
 from ..db import session_scope
+from ..ingesters.crypto_micro import MICRO_STALE_MINUTES
 from ..models import CryptoMicro, PriceContext, Watchlist
 
 
@@ -59,6 +61,13 @@ _PRICE_FLAT_BAND = 2.0    # |chg_1d| < this counts as flat for fade signal
 # OI surge alone (no funding alignment) doesn't fire; OI is a co-signal
 # that confirms a setup detected via funding.
 _OI_SURGE_PCT = 20.0
+
+# Orderbook imbalance is (bid−ask)/(bid+ask) ∈ [−1,+1]: +1 all bids (buy
+# pressure), −1 all asks (sell pressure). When the resting book leans this
+# hard AGAINST the setup's direction, the flow contradicts the thesis — skip.
+# Only applied when imbalance is present (OKX/feed gaps leave it None, and a
+# missing book shouldn't veto an otherwise-clean funding signal).
+_OB_CONTRA = 0.35
 
 _COOLDOWN = timedelta(hours=4)
 _RECENT: dict[str, datetime] = {}
@@ -98,22 +107,54 @@ def _on_cooldown(ticker: str, now: datetime) -> bool:
     return last is not None and (now - last) < _COOLDOWN
 
 
-def _evaluate(session, ticker: str, now: datetime) -> dict | None:
-    """Pure assessment — does this ticker's current funding/OI/price
-    state qualify for a squeeze, fade, or OI-confirm call? Returns the
-    finding dict (suitable for post + record_call), or None."""
+def _orderbook_contradicts(direction: str, imbalance: float | None) -> bool:
+    """True when the resting orderbook leans hard AGAINST `direction` — a heavy
+    ask wall under a long, or a heavy bid wall under a short. None (no book
+    data) never vetoes."""
+    if imbalance is None:
+        return False
+    if direction == "long" and imbalance <= -_OB_CONTRA:
+        return True
+    if direction == "short" and imbalance >= _OB_CONTRA:
+        return True
+    return False
+
+
+def _micro_is_stale(micro: CryptoMicro, now: datetime) -> bool:
+    if micro.updated_at is None:
+        return True
+    upd = micro.updated_at
+    if upd.tzinfo is None:
+        upd = upd.replace(tzinfo=timezone.utc)
+    return (now - upd) > timedelta(minutes=MICRO_STALE_MINUTES)
+
+
+def _evaluate(session, ticker: str, now: datetime, regime) -> dict | None:
+    """Pure assessment — does this ticker's current funding/OI/price state
+    qualify for a squeeze, fade, or OI-confirm call? Returns the finding dict
+    (suitable for post + record_call), or None.
+
+    Beyond the funding/OI/price rules, a candidate must clear three gates:
+    fresh micro data, the BTC market regime (no counter-trend entries), and
+    the resting orderbook (flow must not lean hard against the direction)."""
     micro = session.get(CryptoMicro, ticker)
     pc = session.get(PriceContext, ticker)
     if micro is None or pc is None:
         return None
+    # Stale funding/OI (a failed ingest run) is worse than none — never fire
+    # a leverage signal on data we can't trust is current.
+    if _micro_is_stale(micro, now):
+        return None
     funding = micro.funding_rate
     oi_chg = micro.oi_change_24h_pct
+    imbalance = micro.orderbook_imbalance
     price_1d = (pc.change_1d_pct or 0.0) * 100  # percent
     funding_pct = (funding or 0.0) * 100        # to 8h percent
 
+    finding: dict | None = None
+
     # Setup 1 — full squeeze: deeply negative funding + price already up.
-    # Most reliable. Shorts are paying to hold; one push and they
-    # capitulate.
+    # Most reliable. Shorts are paying to hold; one push and they capitulate.
     if (
         funding is not None
         and funding_pct <= _FUNDING_DEEP_NEG_PCT
@@ -122,7 +163,7 @@ def _evaluate(session, ticker: str, now: datetime) -> dict | None:
         oi_bit = (
             f" · OI +{oi_chg * 100:.1f}%/24h" if oi_chg and oi_chg > 0 else ""
         )
-        return {
+        finding = {
             "kind": "squeeze_long",
             "direction": "long",
             "conviction": _CONV_FULL_SQUEEZE,
@@ -132,19 +173,16 @@ def _evaluate(session, ticker: str, now: datetime) -> dict | None:
                 f"price {price_1d:+.1f}% 24h{oi_bit}. Capitulation risk "
                 f"as shorts cover."
             ),
-            "funding_pct": funding_pct,
-            "price_1d_pct": price_1d,
-            "oi_chg_pct": (oi_chg or 0.0) * 100,
         }
 
     # Setup 2 — funding fade: deeply positive funding + flat/down price.
     # Longs are crowded paying premium. Mean reversion / fade signal.
-    if (
+    elif (
         funding is not None
         and funding_pct >= _FUNDING_DEEP_POS_PCT
         and abs(price_1d) < _PRICE_FLAT_BAND
     ):
-        return {
+        finding = {
             "kind": "funding_fade",
             "direction": "short",
             "conviction": _CONV_FUNDING_FADE,
@@ -154,20 +192,17 @@ def _evaluate(session, ticker: str, now: datetime) -> dict | None:
                 f"price {price_1d:+.1f}% 24h. Crowded long premium will "
                 f"mean-revert."
             ),
-            "funding_pct": funding_pct,
-            "price_1d_pct": price_1d,
-            "oi_chg_pct": (oi_chg or 0.0) * 100,
         }
 
-    # Setup 3 — OI surge confirms a price move.  Direction follows price.
+    # Setup 3 — OI surge confirms a price move. Direction follows price.
     # Lower conviction since we lack the funding extreme; OI alone could
     # just be vol expansion.
-    if (
+    elif (
         oi_chg is not None
         and oi_chg * 100 >= _OI_SURGE_PCT
         and abs(price_1d) >= _PRICE_UP_THR
     ):
-        return {
+        finding = {
             "kind": "oi_confirm",
             "direction": "long" if price_1d > 0 else "short",
             "conviction": _CONV_OI_CONFIRM,
@@ -177,22 +212,49 @@ def _evaluate(session, ticker: str, now: datetime) -> dict | None:
                 f"funding {funding_pct:+.3f}%/8h. Fresh leverage entering "
                 f"on the move."
             ),
-            "funding_pct": funding_pct,
-            "price_1d_pct": price_1d,
-            "oi_chg_pct": oi_chg * 100,
         }
 
-    return None
+    if finding is None:
+        return None
+
+    direction = finding["direction"]
+    # Market-regime gate — don't fight BTC's tape. A per-coin long while the
+    # whole complex is risk-off (or a fade while it's ripping) is the classic
+    # way the crypto leg bleeds.
+    if blocks_entry(regime, direction, ticker):
+        logger.debug(
+            "funding_squeeze: skip ${} {} — counter-regime ({})",
+            ticker, direction, regime.reason,
+        )
+        return None
+    # Orderbook gate — the resting book must not lean hard against us.
+    if _orderbook_contradicts(direction, imbalance):
+        logger.debug(
+            "funding_squeeze: skip ${} {} — orderbook {:+.2f} contradicts",
+            ticker, direction, imbalance,
+        )
+        return None
+
+    finding["funding_pct"] = funding_pct
+    finding["price_1d_pct"] = price_1d
+    finding["oi_chg_pct"] = (oi_chg or 0.0) * 100
+    finding["orderbook_imbalance"] = imbalance
+    finding["regime"] = regime.state
+    if regime.state != "neutral":
+        finding["evidence"] += f" Market: {regime.reason}."
+    return finding
 
 
 def _findings(session, now: datetime) -> list[dict]:
     """Scan the crypto watchlist; rank by abs(funding_pct) so the
     deepest extremes go first when the per-cycle cap clips."""
+    # One BTC-regime read per cycle, shared across every coin's evaluation.
+    regime = market_regime(session, now)
     out: list[dict] = []
     for ticker in _crypto_tickers(session):
         if _on_cooldown(ticker, now):
             continue
-        finding = _evaluate(session, ticker, now)
+        finding = _evaluate(session, ticker, now, regime)
         if finding is not None:
             finding["ticker"] = ticker
             out.append(finding)
@@ -225,7 +287,14 @@ def _embed(f: dict) -> discord.Embed:
             value=f"{f['oi_chg_pct']:+.1f}%",
             inline=True,
         )
-    emb.set_footer(text=f"funding_squeeze · conv {f['conviction']}/5")
+    ob = f.get("orderbook_imbalance")
+    if ob is not None:
+        emb.add_field(name="Book", value=f"{ob:+.2f}", inline=True)
+    footer = f"funding_squeeze · conv {f['conviction']}/5"
+    regime = f.get("regime")
+    if regime and regime != "neutral":
+        footer += f" · regime {regime}"
+    emb.set_footer(text=footer)
     return emb
 
 
