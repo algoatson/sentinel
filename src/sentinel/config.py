@@ -113,11 +113,12 @@ class Settings(BaseSettings):
 
     # Per-million-token prices for the $ estimate on /system. Token COUNTS
     # are exact (from each response's usage block); these just turn them
-    # into dollars. Defaults are a rough deepseek-v4-flash placeholder —
-    # set them to your provider's actual rates for an accurate readout.
+    # into dollars. Set to deepseek-v4-flash's published rates. (Cache-read
+    # is $0.022/M but we don't model the cache-hit fraction, so the input
+    # figure is a conservative upper bound — real spend is a bit lower.)
     # 0 disables the $ figure (tokens still shown).
-    LLM_PRICE_IN_PER_M: float = 0.25
-    LLM_PRICE_OUT_PER_M: float = 0.85
+    LLM_PRICE_IN_PER_M: float = 0.112
+    LLM_PRICE_OUT_PER_M: float = 0.224
 
     # Per-tier provider overrides — set these to put a tier on a DIFFERENT
     # provider than the shared one above (e.g. light on a free Google AI
