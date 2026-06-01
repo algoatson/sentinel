@@ -16,7 +16,7 @@
   import Skeleton from '$components/Skeleton.svelte';
   import { base } from '$app/paths';
   import { usd, price, timeAgo } from '$lib/format';
-  import { Bitcoin, ArrowUpRight, ArrowDownRight } from 'lucide-svelte';
+  import { Bitcoin, ArrowUpRight, ArrowDownRight, BarChart3 } from 'lucide-svelte';
 
   const scrQ = createQuery({
     queryKey: ['crypto-screener'],
@@ -143,7 +143,7 @@
       {#each Array(3) as _, i (i)}<Skeleton class="h-10 w-full rounded" />{/each}
     </div>
   {:else if !cryptoPos.length}
-    <EmptyState title="No open crypto positions" description="The crypto wallet opens positions off funding-squeeze, why-moved and convergence calls — gated by the BTC regime above." />
+    <EmptyState icon={Bitcoin} title="No open crypto positions" description="The crypto wallet opens positions off funding-squeeze, why-moved and convergence calls — gated by the BTC regime above." />
   {:else}
     <div class="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
       {#each cryptoPos as p (p.id)}
@@ -185,7 +185,7 @@
       {#each Array(10) as _, i (i)}<Skeleton class="h-6 w-full rounded" />{/each}
     </div>
   {:else if !coins.length}
-    <EmptyState title="No crypto microstructure yet" description="The crypto_micro ingester polls Binance/OKX every 20 min." />
+    <EmptyState icon={BarChart3} title="No crypto microstructure yet" description="The crypto_micro ingester polls Binance/OKX every 20 min." />
   {:else}
     <div class="overflow-x-auto">
       <table class="w-full text-[12.5px] tabular">
@@ -206,7 +206,7 @@
         </thead>
         <tbody>
           {#each coins as c (c.ticker)}
-            <tr class="border-b border-border-soft transition-colors hover:bg-white/[0.025]">
+            <tr class="border-b border-border-soft transition-colors even:bg-white/[0.018] hover:bg-white/[0.045]">
               <td class="px-3 py-1.5 text-left"><TickerLink ticker={c.ticker} class="text-[12.5px] font-semibold" /></td>
               <td class="px-3 py-1.5 text-right text-muted">{price(c.last_price)}</td>
               <td class="px-3 py-1.5 text-right"><Delta value={c.change_1d_pct} /></td>

@@ -404,7 +404,7 @@
         <tbody>
           {#each sortedRows.slice(0, 80) as r (r.ticker)}
             <tr
-              class="cursor-pointer border-b border-border-soft transition-colors hover:bg-white/[0.025]"
+              class="cursor-pointer border-b border-border-soft transition-colors even:bg-white/[0.018] hover:bg-white/[0.045]"
               onclick={() => pick(r.ticker)}
             >
               <td class="px-3 py-1.5 text-left">

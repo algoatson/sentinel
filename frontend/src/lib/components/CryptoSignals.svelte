@@ -56,6 +56,7 @@
     </div>
   {:else if $q.data.signals.length === 0}
     <EmptyState
+      icon={Activity}
       title="No funding/OI setups firing"
       description={$q.data.regime.state === 'risk_off'
         ? 'Detector is quiet — and with the crypto tape risk-off, new longs are gated anyway. Squeeze / fade setups land here on a funding extreme.'
