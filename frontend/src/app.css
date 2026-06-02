@@ -277,6 +277,13 @@ body {
 ::view-transition-new(root) {
   animation: none;
 }
+/* The sidebar active accent slides to the newly-active item. */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-group(nav-accent) {
+    animation-duration: 0.26s;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
 @keyframes vt-out {
   to { opacity: 0; }
 }

@@ -189,7 +189,13 @@
           .join(' ')}
       >
         {#if active}
-          <span class="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-primary"></span>
+          <!-- view-transition-name lets this accent MORPH (slide) to the
+               newly-active item during a route transition — only one is ever
+               rendered at a time, so no name clash. -->
+          <span
+            class="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-primary"
+            style="view-transition-name: nav-accent"
+          ></span>
         {/if}
         <item.icon class={[
           'h-3.5 w-3.5 shrink-0',
