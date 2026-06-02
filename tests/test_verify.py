@@ -417,6 +417,7 @@ def test_record_call_floors_conviction_on_contradiction(monkeypatch):
     from sentinel import scorecard
     from sentinel.models import TradingCall
 
+    monkeypatch.setattr(settings, "VERIFY_ENABLED", True)
     monkeypatch.setattr(
         verify,
         "verify_text",
@@ -444,6 +445,7 @@ def test_record_call_grounded_keeps_conviction(monkeypatch):
     from sentinel import scorecard
     from sentinel.models import TradingCall
 
+    monkeypatch.setattr(settings, "VERIFY_ENABLED", True)
     monkeypatch.setattr(
         verify,
         "verify_text",
@@ -467,6 +469,7 @@ def test_record_call_failopen_records_unverified(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("verifier down")
 
+    monkeypatch.setattr(settings, "VERIFY_ENABLED", True)
     monkeypatch.setattr(verify, "verify_text", _boom)
     scorecard.record_call("NVDA", "long", "synthesis", "NVDA strong", 3)
     with session_scope() as s:

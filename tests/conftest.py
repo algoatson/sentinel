@@ -10,6 +10,12 @@ import tempfile
 
 _tmpdir = tempfile.mkdtemp(prefix="sentinel-test-")
 os.environ["SENTINEL_DB_URL"] = f"sqlite:///{_tmpdir}/test.db"
+# Fact verification (verify.py) is wired into scorecard.record_call, which is
+# exercised by many tests — left on, it would fire a REAL light-LLM extraction
+# per call (the deployment .env carries an API key), making the suite slow and
+# non-deterministic. Force it off in the test env (set before Settings loads);
+# the verify integration tests opt back in explicitly with monkeypatch.
+os.environ["VERIFY_ENABLED"] = "false"
 
 import pytest  # noqa: E402
 from sqlmodel import SQLModel  # noqa: E402
