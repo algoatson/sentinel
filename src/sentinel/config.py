@@ -174,5 +174,33 @@ class Settings(BaseSettings):
     DASHBOARD_HOST: str = "127.0.0.1"
     DASHBOARD_PORT: int = 8730
 
+    # ── Fact-verification layer (verify.py). The one inviolable rule —
+    # never fabricate a number — backed by a deterministic check: at the
+    # call + post chokepoints, the hard ticker-bound figures the LLM emits
+    # (price / 1d / 5d move / volume multiple / direction) are extracted and
+    # compared against PriceContext ground truth. It ANNOTATES and FLAGS,
+    # never blocks: a contradicted post still ships (with a ⚠ field), a
+    # contradicted call is still recorded (grounded=False, conviction
+    # floored). Fail-open everywhere — extraction unavailable or any error
+    # leaves the item unverified, never dropped. ─────────────────────────
+    VERIFY_ENABLED: bool = True
+    # Only verify posts at/above this importance — low-importance noise isn't
+    # worth a light-LLM extraction call. Calls are always verified when enabled.
+    VERIFY_MIN_IMPORTANCE: int = 3
+    # A stated price within this % of last_price is supported.
+    VERIFY_PRICE_TOL_PCT: float = 2.0
+    # A stated %-move within this many percentage points (OR 25% relative,
+    # whichever is looser) of the actual move is supported.
+    VERIFY_PCT_TOL_PP: float = 1.5
+    # A stated volume-vs-20d multiple within this absolute band is supported.
+    VERIFY_VOL_TOL: float = 0.5
+    # Ground truth older than this many hours can't fairly verify a figure →
+    # the claim is unverifiable (never contradicted). Generous enough to absorb
+    # a weekend + holiday so we don't false-flag a Friday-close figure on Monday.
+    VERIFY_CONTEXT_STALE_HOURS: float = 80.0
+    # On a contradiction, floor the recorded call's conviction to 1 (it still
+    # records — we just stop trusting a call built on a wrong number).
+    VERIFY_FLOOR_CONVICTION_ON_CONTRADICTION: bool = True
+
 
 settings = Settings()
