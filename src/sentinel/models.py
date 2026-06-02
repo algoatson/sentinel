@@ -563,6 +563,20 @@ class Briefing(SQLModel, table=True):
     generated_at: datetime
 
 
+class GamePlan(SQLModel, table=True):
+    """The Morning Game Plan (pipelines/game_plan.py) — one ranked, book-centric
+    action list fusing every arm of the system into a single decision surface.
+    One row per ET trading day (`plan_date` = ET YYYY-MM-DD), upserted by the
+    08:45 ET cron / --run-once. `sections_json` is the LLM-ranked (or, fail-open,
+    the deterministic-unranked) section list; `the_read` is the short overall
+    take. Web-only — never posted to Discord."""
+    plan_date: str = Field(primary_key=True, max_length=10)
+    generated_at: datetime
+    sections_json: str = Field(default="[]")
+    the_read: str = Field(default="", max_length=2000)
+    model: str = Field(default="", max_length=120)
+
+
 class ClaimCheck(SQLModel, table=True):
     """One fact-verification run (verify.py) — the audit trail behind the
     "never fabricate" rule and the /system grounding section. Written at the

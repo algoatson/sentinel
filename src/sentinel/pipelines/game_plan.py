@@ -24,6 +24,7 @@ throughout; it is a *consumer/synthesiser* of the other arms, not a new source.
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -32,7 +33,7 @@ from loguru import logger
 from sqlmodel import select
 
 from ..db import session_scope
-from ..models import DailyPlan, EarningsDate, TradingCall, Watchlist
+from ..models import DailyPlan, EarningsDate, GamePlan, TradingCall, Watchlist
 
 _ET = ZoneInfo("America/New_York")
 
@@ -341,3 +342,205 @@ def build_inputs(session=None) -> dict:
         "fresh_ideas": fresh,
         "prior": prior,
     }
+
+
+# ── LLM ranking + persistence ─────────────────────────────────────────────
+
+
+def _fallback_sections(bundle: dict) -> list[dict]:
+    """Deterministic, unranked sections built straight from the bundle — used
+    when the LLM is unavailable / returns junk. Same shape as the LLM output so
+    the API + panel render identically; phrasing is mechanical, not pretty."""
+    sections: list[dict] = []
+    br = bundle.get("book_risk", {})
+
+    risk_items: list[dict] = []
+    for r in br.get("near_stop", []):
+        d = r.get("dist_to_stop_pct")
+        risk_items.append({
+            "ticker": r.get("ticker"),
+            "headline": f"{r.get('ticker')} {d}% from stop" if d is not None else f"{r.get('ticker')} near stop",
+            "trigger": "near_stop",
+            "action": "Review stop — tighten or trim",
+            "priority": 1,
+        })
+    for e in br.get("earnings_soon", []):
+        risk_items.append({
+            "ticker": e.get("ticker"),
+            "headline": f"{e.get('ticker')} earnings in {e.get('days_until')}d",
+            "trigger": e.get("trigger", "earnings"),
+            "action": "Size down or hedge into the print",
+            "priority": 2,
+        })
+    for r in br.get("near_target", []):
+        risk_items.append({
+            "ticker": r.get("ticker"),
+            "headline": f"{r.get('ticker')} near target",
+            "trigger": "near_target",
+            "action": "Consider taking profit / trail",
+            "priority": 2,
+        })
+    if risk_items:
+        sections.append({"kind": "book_risk", "items": risk_items})
+
+    mat = bundle.get("maturing", {}).get("maturing_today", [])
+    if mat:
+        sections.append({"kind": "maturing", "items": [
+            {
+                "ticker": c.get("ticker"),
+                "headline": f"{c.get('ticker')} {c.get('direction')} call maturing ({c.get('age_days')}d)",
+                "trigger": "maturing",
+                "action": "Check resolution / log the outcome",
+                "priority": 3,
+            }
+            for c in mat[:6]
+        ]})
+
+    cats = bundle.get("catalysts", [])
+    if cats:
+        sections.append({"kind": "catalysts", "items": [
+            {
+                "ticker": c.get("ticker"),
+                "headline": f"{c.get('label')} ({c.get('date')})",
+                "trigger": c.get("trigger", "catalyst"),
+                "action": "Note the date",
+                "priority": 3,
+            }
+            for c in cats[:8]
+        ]})
+
+    ideas = bundle.get("fresh_ideas", [])
+    if ideas:
+        sections.append({"kind": "fresh_ideas", "items": [
+            {
+                "ticker": i.get("ticker"),
+                "headline": f"{i.get('ticker')} {i.get('direction')} · conv {i.get('conviction')} ({i.get('source')})",
+                "trigger": "fresh_idea",
+                "action": "Review thesis; consider a starter",
+                "priority": 2,
+            }
+            for i in ideas[:6]
+        ]})
+
+    return sections
+
+
+def _llm_payload(bundle: dict) -> dict:
+    """Trim the bundle to the fields the ranker needs — keeps token cost bounded
+    while leaving every real figure intact (it only drops bulky prose)."""
+    br = bundle.get("book_risk", {})
+    return {
+        "et_date": bundle.get("et_date"),
+        "book_risk": {
+            "dollar_at_risk": br.get("dollar_at_risk"),
+            "pct_book_at_risk": br.get("pct_book_at_risk"),
+            "n_open": br.get("n_open"),
+            "naked_count": br.get("naked_count"),
+            "near_stop": br.get("near_stop", []),
+            "near_target": br.get("near_target", []),
+            "earnings_soon": br.get("earnings_soon", []),
+            "fresh_news": br.get("fresh_news", []),
+            "fresh_filings": br.get("fresh_filings", []),
+        },
+        "maturing": {
+            "maturing_today": bundle.get("maturing", {}).get("maturing_today", []),
+            "resolved_recent": bundle.get("maturing", {}).get("resolved_recent", []),
+            "track_record": bundle.get("maturing", {}).get("track_record", {}),
+        },
+        "catalysts": bundle.get("catalysts", []),
+        "fresh_ideas": bundle.get("fresh_ideas", []),
+        "daily_plan": bundle.get("prior", {}).get("daily_plan", ""),
+    }
+
+
+def _rank_with_llm(bundle: dict) -> tuple[str, list[dict], str]:
+    """Returns (the_read, sections, model). Fail-open: ('', [], '') on any
+    problem so the caller falls back to the deterministic bundle."""
+    from ..config import settings
+    from ..llm import _api_route, get_llm, parse_json_response
+    from ..prompts import get_prompt
+
+    narrative_keys = bundle.get("prior", {}).get("recent_narrative", [])
+    rendered = get_prompt("game_plan").safe_substitute(
+        bundle=json.dumps(_llm_payload(bundle), default=str)[:9000],
+        narrative="\n".join(narrative_keys[:40]) or "(none)",
+    )
+    raw = get_llm().complete(rendered, model="heavy", json_mode=True, max_tokens=1400)
+    parsed = parse_json_response(raw, expect=dict)
+    if not isinstance(parsed, dict):
+        return "", [], ""
+    sections = parsed.get("sections")
+    if not isinstance(sections, list):
+        return "", [], ""
+    the_read = str(parsed.get("the_read", ""))[:2000]
+    route = _api_route("heavy")
+    model = (route[2] if route else settings.LLM_MODEL_HEAVY)
+    return the_read, sections, str(model)[:120]
+
+
+def run_game_plan() -> dict:
+    """Build the deterministic bundle, have the LLM rank/phrase it (fail-open to
+    the unranked bundle), persist one GamePlan row per ET date, and broadcast.
+    Sync-callable; never raises out. Returns the persisted plan dict.
+
+    # TODO(discord): the artifact is structured so a later one-line #digest /
+    # #priority post_embed of the_read + top items is trivial — intentionally
+    # deferred (web-only for now)."""
+    bundle = build_inputs()
+    plan_date = bundle["et_date"]
+
+    the_read, sections, model = "", [], ""
+    try:
+        the_read, sections, model = _rank_with_llm(bundle)
+    except Exception as e:  # noqa: BLE001 — fail-open, never crash the cycle
+        logger.warning("game_plan LLM ranking failed, using unranked bundle: {}", e)
+
+    if not sections:
+        sections = _fallback_sections(bundle)
+        if not the_read:
+            the_read = (
+                f"{bundle['book_risk'].get('n_open', 0)} open positions; "
+                f"${bundle['book_risk'].get('dollar_at_risk', 0):,.0f} at risk. "
+                "Deterministic plan (LLM ranking unavailable)."
+            )
+
+    now = datetime.now(timezone.utc)
+    sections_json = json.dumps(sections, default=str)
+    try:
+        with session_scope() as s:
+            row = s.get(GamePlan, plan_date)
+            if row is None:
+                row = GamePlan(plan_date=plan_date, generated_at=now)
+            row.generated_at = now
+            row.sections_json = sections_json
+            row.the_read = (the_read or "")[:2000]
+            row.model = model
+            s.add(row)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("game_plan persist failed: {}", e)
+
+    n_items = sum(len(sec.get("items", [])) for sec in sections)
+    try:
+        from .. import events
+
+        events.publish("game_plan", {"plan_date": plan_date, "n_items": n_items})
+    except Exception as e:  # noqa: BLE001
+        logger.debug("events.publish(game_plan) failed: {}", e)
+
+    return {
+        "plan_date": plan_date,
+        "generated_at": now.isoformat(),
+        "the_read": the_read,
+        "sections": sections,
+        "model": model,
+    }
+
+
+async def run_game_plan_job() -> None:
+    """Scheduler entry — off-loop (build + one heavy LLM call)."""
+    import asyncio
+
+    try:
+        await asyncio.to_thread(run_game_plan)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("run_game_plan_job failure: {}", e)

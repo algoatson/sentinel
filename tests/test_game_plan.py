@@ -100,3 +100,63 @@ def test_contradicted_call_excluded_from_ideas():
         ))
     b = game_plan.build_inputs()
     assert all(i["ticker"] != "TSLA" for i in b["fresh_ideas"])
+
+
+# ── run_game_plan: persistence + fail-open ───────────────────────────────────
+
+
+def test_run_game_plan_persists_with_llm(monkeypatch):
+    from sentinel.models import GamePlan
+
+    _seed_book()
+    _seed_calls()
+
+    def _fake_rank(bundle):
+        return (
+            "Tight book, one print this week.",
+            [{"kind": "book_risk", "items": [
+                {"ticker": "NVDA", "headline": "1% from stop", "trigger": "near_stop",
+                 "action": "Tighten", "priority": 1}
+            ]}],
+            "fake-model",
+        )
+
+    monkeypatch.setattr(game_plan, "_rank_with_llm", _fake_rank)
+    out = game_plan.run_game_plan()
+    assert out["the_read"].startswith("Tight book")
+    assert out["sections"][0]["items"][0]["ticker"] == "NVDA"
+    with session_scope() as s:
+        row = s.get(GamePlan, out["plan_date"])
+    assert row is not None
+    assert row.model == "fake-model"
+    assert "NVDA" in row.sections_json
+
+
+def test_run_game_plan_failopen_still_writes_row(monkeypatch):
+    from sentinel.models import GamePlan
+
+    _seed_book()  # gives the deterministic fallback something to surface
+
+    def _boom(bundle):
+        raise RuntimeError("LLM down")
+
+    monkeypatch.setattr(game_plan, "_rank_with_llm", _boom)
+    out = game_plan.run_game_plan()
+    # fail-open: a row is still written, from the deterministic bundle (unranked)
+    assert out["model"] == ""
+    assert out["sections"]  # fallback surfaced the at-risk book
+    with session_scope() as s:
+        row = s.get(GamePlan, out["plan_date"])
+    assert row is not None
+    assert row.sections_json and row.sections_json != "[]"
+
+
+def test_run_game_plan_upserts_one_row_per_date(monkeypatch):
+    from sentinel.models import GamePlan
+
+    monkeypatch.setattr(game_plan, "_rank_with_llm", lambda b: ("read", [], ""))
+    game_plan.run_game_plan()
+    game_plan.run_game_plan()
+    with session_scope() as s:
+        rows = s.exec(select(GamePlan)).all()
+    assert len(rows) == 1

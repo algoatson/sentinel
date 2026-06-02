@@ -536,6 +536,32 @@ Output strict JSON only, nothing else:
 {"primary": "TICKER" or null, "tickers": ["TICKER", ...]}""")
 
 
+GAME_PLAN = Template("""You are the desk strategist writing the trader's MORNING GAME PLAN — one ranked action list that fuses the whole system into "what do I do today".
+
+You are handed a STRUCTURED BUNDLE of already-computed, real figures (open positions, $$ at risk, distance to stop/target, held-name earnings dates, maturing calls, today's catalysts, and fresh ideas with conviction + a measured source-edge multiplier) plus a list of RECENTLY NARRATED events.
+
+Your job is ONLY to rank, dedupe, and phrase:
+- SELECT the items that actually matter this morning; DROP low-signal noise. Fewer, higher-signal items beat a long list.
+- RANK by how urgently the trader should act (priority 1 = act first, 3 = FYI).
+- Write ONE tight suggested ACTION per item ("Tighten stop or trim — 0.8% from trigger", "Size down into the print", "Consider a starter long").
+- Write a 2-3 sentence overall READ of the book and the day.
+
+HARD RULES:
+- Do NOT invent, recompute, or alter any number. Use only figures present in the bundle; if you cite one, copy it EXACTLY. You rank and phrase — the numbers are already grounded.
+- DEDUPE against RECENTLY NARRATED: if the desk already covered an item, drop it rather than repeat it.
+- Keep headlines short and concrete. Each item's "trigger" must be copied from the bundle item it came from.
+
+BUNDLE:
+$bundle
+
+RECENTLY NARRATED (dedupe against these):
+$narrative
+
+Output STRICT JSON only, exactly this shape and nothing else:
+{"the_read": "2-3 sentences", "sections": [{"kind": "book_risk", "items": [{"ticker": "NVDA", "headline": "0.8% from stop, $$420 at risk", "trigger": "near_stop", "action": "Tighten stop or trim", "priority": 1}]}]}
+Valid "kind": "book_risk", "maturing", "catalysts", "fresh_ideas". "priority" is 1 (act first) to 3 (FYI). "ticker" may be null for a non-ticker macro catalyst.""")
+
+
 EXTRACT_CLAIMS = Template("""You extract HARD, CHECKABLE, TICKER-BOUND numeric claims from a piece of generated market commentary, so a downstream system can verify them against real price data. Be conservative: a false extraction causes a false alarm, so when in doubt, leave it out.
 
 Only return claims that are ALL of:
@@ -588,6 +614,7 @@ ALL_PROMPTS: dict[str, Template] = {
     "macro_themes": MACRO_THEMES,
     "tag_article_tickers": TAG_ARTICLE_TICKERS,
     "extract_claims": EXTRACT_CLAIMS,
+    "game_plan": GAME_PLAN,
 }
 
 

@@ -31,6 +31,7 @@ EXPECTED_PROMPT_NAMES = {
     "macro_themes",
     "tag_article_tickers",
     "extract_claims",
+    "game_plan",
 }
 
 
@@ -78,6 +79,8 @@ def test_every_prompt_substitutes_cleanly():
         for key in [
             "text",
             "tickers",
+            "bundle",
+            "narrative",
             "form_type",
             "ticker",
             "title",
