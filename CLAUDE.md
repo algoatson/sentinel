@@ -46,7 +46,7 @@ Four subsystems on one asyncio loop, one SQLite DB (`data/radar.db`, WAL):
    web (`api/` FastAPI + `dashboard/` NiceGUI/SvelteKit mount + `frontend/`).
 
 `scheduler.py` runs 43 jobs; `main.py` is the entrypoint; `config.py` + `.env` are
-settings; `models.py` is 34 SQLModel tables; `db.py` is the engine + migrations.
+settings; `models.py` is 35 SQLModel tables; `db.py` is the engine + migrations.
 
 ## The chokepoints — route through these, don't fork them
 
@@ -54,8 +54,9 @@ This is the single most important convention. Each concern has exactly one funne
 
 | Concern | Funnel | Notes |
 |---|---|---|
-| Record a directional call | `scorecard.record_call(...)` | de-dupes + auto-fades + stores `TradingCall`. Never insert `TradingCall` directly. |
-| Post to Discord | `discord_client.post_embed(...)` | stamps timestamp + importance badge + `PostActionsView`. |
+| Record a directional call | `scorecard.record_call(...)` | de-dupes + auto-fades + **fact-verifies** + stores `TradingCall`. Never insert `TradingCall` directly. |
+| Post to Discord | `discord_client.post_embed(...)` | stamps timestamp + importance badge + `PostActionsView`; **fact-verifies** the embed (importance ≥ `VERIFY_MIN_IMPORTANCE`). |
+| Verify emitted numbers | `verify.verify_text(text, tickers, …)` | extracts hard ticker-bound figures, checks vs `PriceContext`. Annotates/flags, never blocks; fail-open. |
 | Pick a ticker's channel | `routing.channel_for(ticker, default)` | crypto → `#crypto`, else the default. |
 | Read a prompt | `prompts.get_prompt(name)` | DB active row → code constant. |
 | DB transaction | `db.session_scope()` | auto rollback/close, `expire_on_commit=False`. |
@@ -71,7 +72,12 @@ When you add a feature, wire it through the relevant funnel so the behavior
 
 - **Never fabricate.** A stale/zero price must not become P&L; an unscoreable call
   retires *unscored*; verdicts and the health report are deterministic arithmetic,
-  never an LLM guess. Reason boldly, invent nothing.
+  never an LLM guess. Reason boldly, invent nothing. This is now *checked*:
+  `verify.py` extracts the hard ticker-bound numbers the LLM emits and compares
+  them to `PriceContext` at the call + post chokepoints — it annotates and flags
+  (⚠ field / `grounded=False` / floored conviction / `#meta` line), but **never
+  blocks**, and is fully fail-open. Don't make it block, and don't widen its
+  metric set to anything that isn't deterministically ground-truthable.
 - **No disclaimers / no abstention.** This is a private paper tool with no
   compliance surface. Do **not** add "not financial advice" boilerplate or make
   pipelines refuse to take a directional view — the call *is* the product.
@@ -145,3 +151,10 @@ docs/      ARCHITECTURE.md, HANDBOOK.md
 - The "contrarian" wallet was retired and replaced by the trend-aligned
   **`leaders`** wallet; the current roster is degen, catalyst, macro, crypto,
   sniper, leaders, hype, plus the user-directed research wallet.
+- `verify.py` runs an extra **light-LLM** call per recorded call and per
+  high-importance post. `change_*_pct` in `PriceContext` are **fractions**
+  (0.116) but the verifier (and the extractor prompt) speak **percentage
+  points** (11.6) — the conversion is explicit in `_check_pct`; keep it that
+  way. The verifier is gated by `VERIFY_ENABLED` (+ the `VERIFY_*` tolerances);
+  with it off, behavior is byte-identical to before (no calls, fields, or
+  `ClaimCheck` rows). It is **inline at the chokepoints — no scheduled job.**

@@ -9,6 +9,7 @@ helper used by every other pipeline. Both attach the PostActionsView
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
@@ -182,6 +183,72 @@ async def post_filing(
     return str(msg.id)
 
 
+# ── fact-verification on outbound posts ────────────────────────────────────
+
+_CASHTAG_RE = re.compile(r"\$([A-Za-z]{1,5})\b")
+_BARE_TICKER_RE = re.compile(r"\b([A-Z]{1,5})\b")
+
+
+def _embed_text(embed: discord.Embed) -> str:
+    """Flatten an embed to LLM-friendly text (title + description + fields +
+    footer) — same shape as interactions.extract_post_text, but for an embed
+    we're about to send rather than a received message."""
+    parts: list[str] = []
+    if embed.title:
+        parts.append(embed.title)
+    if embed.description:
+        parts.append(embed.description)
+    for f in embed.fields:
+        parts.append(f"{f.name}: {f.value}")
+    if embed.footer and embed.footer.text:
+        parts.append(embed.footer.text)
+    return "\n".join(parts).strip()
+
+
+def _candidate_tickers(text: str, title: str) -> list[str]:
+    """Cashtags anywhere + bare uppercase tokens in the title. Deliberately
+    over-inclusive — the extractor + PriceContext gate drop everything that
+    isn't a real, known ticker, so a stray token costs nothing."""
+    out: list[str] = []
+    for m in _CASHTAG_RE.finditer(text or ""):
+        t = m.group(1).upper()
+        if t not in out:
+            out.append(t)
+    for m in _BARE_TICKER_RE.finditer(title or ""):
+        t = m.group(1)
+        if t not in out:
+            out.append(t)
+    return out
+
+
+async def _verify_embed(embed: discord.Embed) -> None:
+    """Best-effort: extract the hard figures in `embed`, check them against
+    ground truth off-loop, and append a ⚠ field on a contradiction. Fail-open
+    — never raises, never blocks the post."""
+    try:
+        text = _embed_text(embed)
+        tickers = _candidate_tickers(text, embed.title or "")
+        if not tickers:
+            return
+        from . import verify as _verify
+
+        vr = await asyncio.to_thread(
+            _verify.verify_text,
+            text,
+            tickers,
+            surface="post",
+            source=(embed.title or "")[:120],
+        )
+        if vr.ok and vr.n_contradicted > 0:
+            embed.add_field(
+                name="⚠ Unverified figures",
+                value=(vr.note or "a stated figure disagrees with live data")[:1024],
+                inline=False,
+            )
+    except Exception as e:
+        logger.debug("post_embed verify failed: {}", e)
+
+
 async def post_embed(
     channel_id: int,
     embed: discord.Embed,
@@ -190,15 +257,31 @@ async def post_embed(
     with_actions: bool = True,
     importance: Optional[int] = None,
     importance_note: str = "",
+    verify: Optional[bool] = None,
 ) -> Optional[discord.Message]:
     """Generic embed-poster used by every pipeline. Attaches the actions view
     (🤖 Ask AI / 👍 / 👎) by default; pass `with_actions=False` for posts that
     aren't user-actionable (e.g. #meta error notifications). `importance`
     (1-5) renders the triage badge.
 
+    `verify` controls the fact-verification pass (verify.py): the hard figures
+    in the embed are checked against ground truth and a ⚠ field is appended on
+    a contradiction. None (default) → on when VERIFY_ENABLED and importance is
+    at/above VERIFY_MIN_IMPORTANCE. Annotates only, never blocks; fail-open.
+
     Returns the Message on success, None on send failure (already logged).
     """
     _apply_importance(embed, importance, importance_note)
+    do_verify = (
+        verify
+        if verify is not None
+        else (
+            settings.VERIFY_ENABLED
+            and (importance or 0) >= settings.VERIFY_MIN_IMPORTANCE
+        )
+    )
+    if do_verify:
+        await _verify_embed(embed)
     try:
         chan = await _channel(channel_id)
     except Exception as e:
@@ -221,6 +304,23 @@ async def post_meta(content: str) -> Optional[str]:
     except Exception as e:
         logger.debug("post_meta failed: {}", e)
         return None
+
+
+def notify_meta(content: str) -> None:
+    """Fire a one-line #meta alert from SYNC code (scheduler worker threads,
+    e.g. scorecard.record_call). Schedules `post_meta` on the bot's loop and
+    returns immediately. Silent no-op when the bot/loop isn't running (tests,
+    --run-once without Discord). Best-effort — never raises."""
+    try:
+        bot = _bot
+        if bot is None:
+            return
+        loop = bot.loop
+        if loop is None or not loop.is_running():
+            return
+        asyncio.run_coroutine_threadsafe(post_meta(content), loop)
+    except Exception as e:
+        logger.debug("notify_meta failed: {}", e)
 
 
 def jump_url(channel_id: int | None, message_id: str | None) -> Optional[str]:

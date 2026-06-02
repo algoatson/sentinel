@@ -84,7 +84,7 @@ flowchart TB
       I8[watchlist weekly]:::ing
     end
 
-    DB[("SQLite · data/radar.db · WAL · 34 tables")]:::db
+    DB[("SQLite · data/radar.db · WAL · 35 tables")]:::db
 
     subgraph INTEL["Reasoning — LLM + analytics"]
       direction TB
@@ -120,7 +120,7 @@ flowchart TB
 
 ---
 
-## 3. Data model (SQLite, 34 tables)
+## 3. Data model (SQLite, 35 tables)
 
 One SQLite file, `data/radar.db`, in WAL mode (`busy_timeout=60000`,
 `synchronous=NORMAL`) so contended writers wait rather than error. New tables
@@ -139,7 +139,7 @@ it moves the DB + WAL/SHM siblings into `data/backups/` and reinitializes empty.
 | Wallets | `Fund`, `FundTrade`, `FundEquity` |
 | Accountability | `TradingCall`, `Thesis`, `ThesisEvent`, `NarrativeEvent` |
 | LLM caches | `CallSummary`, `NewsAnalysis`, `RedditAnalysis`, `ResearchTask` |
-| Ops / tuning | `Feedback`, `PromptVersion`, `PendingTuning`, `JobRun`, `Briefing`, `Watch` |
+| Ops / tuning | `Feedback`, `PromptVersion`, `PendingTuning`, `JobRun`, `Briefing`, `Watch`, `ClaimCheck` |
 
 Load-bearing shapes:
 
@@ -281,6 +281,21 @@ notability, and rebuckets `wallet_meta` — nothing else needs changing. `mark_c
 fills 1d/5d/20d returns from `PriceBar` history; an unscoreable call (no/stale
 price) retires *unscored* rather than getting a fabricated grade.
 
+**Fact verification (`verify.py`).** The "never fabricate" rule is *enforced*,
+not just discouraged by the grounding preamble. Inside `record_call` — before
+the `TradingCall` is persisted — the thesis is run through `verify.verify_text`:
+a light-LLM extractor pulls the hard, ticker-bound figures (last price, 1d/5d
+move, volume multiple, up/down direction) and a deterministic `check_claims`
+compares each to the `PriceContext` row within configurable tolerances
+(`VERIFY_*`). A contradiction is **annotated, never blocking**: the call is
+always recorded, but stamped `grounded=False`, conviction floored to 1, the
+thesis tagged `⚠ unverified figure`, and a one-line `#meta` alert fired. Every
+run that examined real figures writes a `ClaimCheck` row (the audit trail behind
+the `/system` grounding panel) and publishes a `claim_check` SSE event. Fully
+**fail-open**: a disabled flag, an unavailable extractor, or any exception
+leaves the call *unverified* (`grounded=None`), never dropped. The identical
+check runs on outbound embeds at the `post_embed` chokepoint (§7).
+
 **Autonomous wallets** (`funds.py`, `_POLICIES`): seven paper accounts trade the
 same call stream under deterministic policies, $10,000 each, no LLM in the trade
 loop — degen 🦍, catalyst 🎯, macro 🌐, crypto 🪙, sniper 🔭, **leaders 📈**
@@ -307,7 +322,11 @@ instead, to avoid firehosing). `routing.channel_for(ticker, default)` sends a
 ticker's content to its asset-class channel (crypto → `#crypto`).
 
 Every post goes through the `discord_client.post_embed` chokepoint: a UTC
-timestamp, an importance badge (🔴🟠🟡🔵⚪ for 5→1), and a persistent
+timestamp, an importance badge (🔴🟠🟡🔵⚪ for 5→1), an inline **fact-verification**
+pass (run off-loop via `asyncio.to_thread` on posts at/above
+`VERIFY_MIN_IMPORTANCE` — extracts the embed's hard figures, checks them against
+`PriceContext`, appends a `⚠ Unverified figures` field on a contradiction, never
+holds the post; see §6), and a persistent
 `PostActionsView` with three buttons — **🤖 Ask AI** (opens a thread, seeds a
 placeholder, replaces it with an LLM brief, then answers follow-ups on the shared
 `chat.answer_question` path), **👍 Useful**, **👎 Noise**. The 👍/👎 feed the

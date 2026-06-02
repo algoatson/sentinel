@@ -358,6 +358,15 @@ export interface HealthReport {
   watchlist: number;
   open_calls: number;
   faded: string[];
+  grounding?: {
+    checked_24h: number;
+    contradicted_24h: number;
+    checked_7d: number;
+    contradicted_7d: number;
+    rate_7d: number;
+    worst: string;
+    warn: boolean;
+  };
 }
 
 export interface LlmTokens {

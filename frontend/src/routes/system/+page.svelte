@@ -278,6 +278,40 @@
           </div>
         </div>
       {/if}
+
+      {#if $healthQ.data.grounding && $healthQ.data.grounding.checked_7d > 0}
+        {@const g = $healthQ.data.grounding}
+        <div class="mt-3 border-t border-border-soft pt-2">
+          <div
+            class="text-[10px] font-semibold uppercase tracking-wider"
+            class:text-warn={g.warn}
+            class:text-faint={!g.warn}
+          >
+            Grounding · fact-check
+          </div>
+          <div class="mt-1 flex items-baseline gap-2 text-[11px]">
+            <span
+              class="tabular font-semibold"
+              class:text-bad={g.warn}
+              class:text-good={!g.warn}
+            >
+              {(g.rate_7d * 100).toFixed(0)}%
+            </span>
+            <span class="text-muted">
+              contradicted · {g.contradicted_7d}/{g.checked_7d} checks (7d)
+            </span>
+          </div>
+          {#if g.worst}
+            <div class="mt-0.5 text-[10.5px] text-faint">
+              Worst: {g.worst}
+            </div>
+          {:else}
+            <div class="mt-0.5 text-[10.5px] text-faint">
+              Stated figures matched live data — no contradictions.
+            </div>
+          {/if}
+        </div>
+      {/if}
     </Card>
   </div>
 

@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from loguru import logger
 from sqlmodel import select
 
+from .config import settings
 from .db import session_scope
 from .models import PriceBar, PriceContext, TradingCall
 
@@ -93,11 +94,12 @@ def record_call(
             )
         else:
             thesis_out = thesis[:400]
+
+        # De-dup standing ideas first — a re-emitted call doesn't get inserted,
+        # verified, or alerted on. Same ticker+direction+source still maturing
+        # → it's the same call (a 6h pipeline restating it would otherwise
+        # inflate the scorecard the octopus self-corrects from).
         with session_scope() as s:
-            # De-dup standing ideas: a 6h pipeline re-emitting the same
-            # thesis must NOT count as a fresh call (it would inflate the
-            # scorecard the octopus self-corrects from). Same
-            # ticker+direction+source still maturing → it's the same call.
             dupe = s.exec(
                 select(TradingCall)
                 .where(TradingCall.ticker == ticker)
@@ -108,6 +110,31 @@ def record_call(
             ).first()
             if dupe is not None:
                 return
+
+        # Fact-verify the thesis BEFORE persisting (chokepoint enforcement of
+        # "never fabricate"). Annotate + flag only — a contradiction floors
+        # conviction but the call is ALWAYS recorded. Fully fail-open: any
+        # problem leaves grounded=None (unverified), never blocks the call.
+        grounded_flag: bool | None = None
+        verify_note: str | None = None
+        if settings.VERIFY_ENABLED:
+            try:
+                from . import verify
+
+                vr = verify.verify_text(
+                    thesis, [ticker], surface="call", source=source
+                )
+                if vr.ok and vr.n_checked > 0:
+                    grounded_flag = vr.grounded
+                    if not vr.grounded:
+                        verify_note = vr.note[:400]
+                        if settings.VERIFY_FLOOR_CONVICTION_ON_CONTRADICTION:
+                            conviction = 1
+                            thesis_out = f"{thesis_out} · ⚠ unverified figure"[:400]
+            except Exception as e:
+                logger.debug("record_call verify failed: {}", e)
+
+        with session_scope() as s:
             pc = s.get(PriceContext, ticker)
             call = TradingCall(
                 ticker=ticker.upper(),
@@ -117,10 +144,24 @@ def record_call(
                 thesis=thesis_out,
                 price_at_call=pc.last_price if pc is not None else None,
                 created_at=datetime.now(timezone.utc),
+                grounded=grounded_flag,
+                verify_note=verify_note,
             )
             s.add(call)
             s.flush()
             call_id = call.id
+
+        # One-line #meta alert on a contradicted call (best-effort, off-loop).
+        if grounded_flag is False:
+            try:
+                from . import discord_client
+
+                discord_client.notify_meta(
+                    f"⚠️ unverified figure in {ticker} {direction} call "
+                    f"(`{source}`): {(verify_note or '')[:180]}"
+                )
+            except Exception as e:
+                logger.debug("record_call meta alert failed: {}", e)
         # Broadcast (best-effort, outside the session so we don't hold a tx open).
         try:
             from . import events

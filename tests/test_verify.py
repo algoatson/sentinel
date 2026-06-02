@@ -406,3 +406,71 @@ def test_tradingcall_verify_columns_migrate_idempotently():
         tc = s.exec(select(TradingCall)).first()
     assert tc.grounded is False
     assert tc.verify_note == "faded figure"
+
+
+# ── record_call hook (chokepoint integration) ───────────────────────────────
+
+
+def test_record_call_floors_conviction_on_contradiction(monkeypatch):
+    from sqlmodel import select
+
+    from sentinel import scorecard
+    from sentinel.models import TradingCall
+
+    monkeypatch.setattr(
+        verify,
+        "verify_text",
+        lambda *a, **k: verify.VerifyResult(
+            grounded=False,
+            ok=True,
+            n_checked=1,
+            n_contradicted=1,
+            note="NVDA price stated 999 vs actual 200",
+        ),
+    )
+    scorecard.record_call("NVDA", "long", "synthesis", "NVDA ripping to 999", 5)
+    with session_scope() as s:
+        tc = s.exec(select(TradingCall)).first()
+    assert tc is not None
+    assert tc.grounded is False
+    assert tc.conviction == 1            # floored from 5
+    assert tc.verify_note
+    assert "unverified" in tc.thesis
+
+
+def test_record_call_grounded_keeps_conviction(monkeypatch):
+    from sqlmodel import select
+
+    from sentinel import scorecard
+    from sentinel.models import TradingCall
+
+    monkeypatch.setattr(
+        verify,
+        "verify_text",
+        lambda *a, **k: verify.VerifyResult(
+            grounded=True, ok=True, n_checked=1, n_contradicted=0
+        ),
+    )
+    scorecard.record_call("NVDA", "long", "synthesis", "NVDA strong", 4)
+    with session_scope() as s:
+        tc = s.exec(select(TradingCall)).first()
+    assert tc.grounded is True
+    assert tc.conviction == 4
+
+
+def test_record_call_failopen_records_unverified(monkeypatch):
+    from sqlmodel import select
+
+    from sentinel import scorecard
+    from sentinel.models import TradingCall
+
+    def _boom(*a, **k):
+        raise RuntimeError("verifier down")
+
+    monkeypatch.setattr(verify, "verify_text", _boom)
+    scorecard.record_call("NVDA", "long", "synthesis", "NVDA strong", 3)
+    with session_scope() as s:
+        tc = s.exec(select(TradingCall)).first()
+    assert tc is not None             # call still recorded
+    assert tc.grounded is None        # unverified
+    assert tc.conviction == 3

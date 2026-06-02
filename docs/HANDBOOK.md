@@ -40,7 +40,12 @@ These are invariants, not preferences.
   and gates, not hoped for.
 - **Never fabricate.** A stale/zero price never becomes P&L; an unscoreable call
   retires unscored; a verdict is arithmetic, never an LLM guess; the health report
-  is deterministic. Reason boldly, invent nothing.
+  is deterministic. Reason boldly, invent nothing. And now it's *checked*:
+  `verify.py` extracts the hard ticker-bound numbers the LLM emits (price, 1d/5d
+  move, volume multiple, direction) and compares them to live `PriceContext` at
+  the call + post chokepoints — flagging a contradiction with a ⚠ field, a
+  `grounded=False` stamp, a floored conviction, and a `#meta` line. It only ever
+  annotates; it never blocks a post or drops a call, and it fails open.
 - **Accountable.** Every directional opinion is logged, marked to market, and
   scored. The track record is visible and feeds back into behavior.
 - **Free to advise.** Single-user paper tool, no compliance surface — no "not
@@ -270,8 +275,10 @@ This is the part to understand — it's why the system is a loop, not a feed.
    idea; **auto-fades** (over ≥12 scored calls in a 90-day window, a source with
    measured negative edge has its conviction mechanically trimmed — −1 at 40–45%
    hit-rate, −2 at 33–40%, hard fade below 33%, floored at 1, never inflated, and
-   self-healing as the window rolls); and stores a `TradingCall` with the price at
-   call time.
+   self-healing as the window rolls); **fact-verifies** the thesis against live
+   `PriceContext` (a contradicted figure → `grounded=False`, conviction floored,
+   a ⚠ note, and a `#meta` alert — but the call is *always* recorded, fail-open);
+   and stores a `TradingCall` with the price at call time.
 3. **It propagates for free.** Conviction lives on the call, so the fade
    automatically shrinks fund position size, can drop a call below a wallet's
    `min_conviction` gate, lowers `call_review` notability, and rebuckets
@@ -382,7 +389,11 @@ These make it an assistant, not a dashboard:
 - **stale crypto marks** — a 24/7 feed, so staleness is unambiguous;
 - **LLM failure rate** — counted at the `complete()` boundary, with a live
   token-spend and `$` estimate;
-- **auto-fade activity** — which sources are currently being dampened.
+- **auto-fade activity** — which sources are currently being dampened;
+- **grounding** — the fact-verification contradiction rate over the last 24h/7d
+  (from `ClaimCheck` rows), with the worst sample; warns when the bot is
+  repeatedly stating figures that disagree with its own ground truth (>10% over a
+  real sample). Also rendered as a card on the web **System** page.
 
 Expected, non-bug log lines: LLM timeouts under local compute saturation (the
 pipeline skips, no corruption) and APScheduler "maximum number of running
@@ -504,9 +515,11 @@ think: form conclusions, take directional views, size conviction, and own the
 outcome. The scorecard and the autonomous wallets exist to keep it honest about
 those calls — accountability, not abstention, is the discipline. So: no
 disclaimers, no refusing a take, predictions and directional calls are core. The
-one rule that is never relaxed: **never fabricate a number, price, or fact.**
-Ground every claim in the data or real market knowledge, separate fact from
-inference from bet — but still bet.
+one rule that is never relaxed: **never fabricate a number, price, or fact** —
+now backed by a real check (`verify.py` flags any hard figure that disagrees
+with live `PriceContext`, at the call + post chokepoints). Ground every claim in
+the data or real market knowledge, separate fact from inference from bet — but
+still bet.
 
 ---
 
