@@ -31,6 +31,7 @@ from .config import settings
 from .db import session_scope
 from .llm import llm_stats
 from .models import (
+    ClaimCheck,
     Filing,
     JobRun,
     NewsItem,
@@ -42,6 +43,53 @@ from .models import (
 )
 
 _PRUNE_DAYS = 7
+
+# Grounding (verify.py) warn threshold: a contradiction rate above this, over
+# at least this many checks in the 7d window, means the bot is repeatedly
+# stating figures that disagree with its own ground truth — worth flagging.
+_GROUNDING_MIN_SAMPLE = 10
+_GROUNDING_WARN_RATE = 0.10
+
+
+def _grounding_status(s, now: datetime) -> dict:
+    """Fact-verification health from ClaimCheck rows (last 24h + 7d).
+
+    Returns checked/contradicted counts per window, the 24h rate, a worst-case
+    sample note, and a `warn` flag (rate over threshold with a real sample).
+    Empty when nothing's been checked yet."""
+    out = {
+        "checked_24h": 0,
+        "contradicted_24h": 0,
+        "checked_7d": 0,
+        "contradicted_7d": 0,
+        "rate_7d": 0.0,
+        "worst": "",
+        "warn": False,
+    }
+    since_7d = now - timedelta(days=7)
+    # SQLite returns naive datetimes; compare on a naive basis to avoid a
+    # naive-vs-aware TypeError (the SQL filter handles the 7d cut).
+    since_24h_naive = (now - timedelta(hours=24)).replace(tzinfo=None)
+    rows = s.exec(select(ClaimCheck).where(ClaimCheck.ts >= since_7d)).all()
+    for r in rows:
+        out["checked_7d"] += 1
+        if not r.grounded:
+            out["contradicted_7d"] += 1
+            if r.note and not out["worst"]:
+                out["worst"] = r.note
+        r_ts = r.ts.replace(tzinfo=None) if r.ts.tzinfo else r.ts
+        if r_ts >= since_24h_naive:
+            out["checked_24h"] += 1
+            if not r.grounded:
+                out["contradicted_24h"] += 1
+    if out["checked_7d"]:
+        out["rate_7d"] = out["contradicted_7d"] / out["checked_7d"]
+        if (
+            out["checked_7d"] >= _GROUNDING_MIN_SAMPLE
+            and out["rate_7d"] > _GROUNDING_WARN_RATE
+        ):
+            out["warn"] = True
+    return out
 
 
 def attach_listener(sched) -> None:
@@ -246,6 +294,7 @@ def health_text() -> str:
             select(func.count()).select_from(TradingCall)
             .where(TradingCall.settled == False)  # noqa: E712
         ).one()
+        grounding = _grounding_status(s, now)
 
     faded = _fade_status()
     ls = llm_stats()
@@ -267,6 +316,11 @@ def health_text() -> str:
     if ls["calls"] >= 20 and llm_rate > 0.25:
         warn.append(
             f"LLM error rate {llm_rate * 100:.0f}% ({ls['errors']}/{ls['calls']})"
+        )
+    if grounding["warn"]:
+        warn.append(
+            f"grounding: {grounding['contradicted_7d']}/{grounding['checked_7d']} "
+            f"checks contradicted ({grounding['rate_7d'] * 100:.0f}%, 7d)"
         )
 
     if crit:
@@ -310,6 +364,15 @@ def health_text() -> str:
         f"LLM: {ls['calls']} calls / {ls['errors']} failed (since boot) · "
         f"watchlist {wl} · open calls {calls_open}",
     ]
+    if grounding["checked_7d"]:
+        gl = (
+            f"Grounding 7d: {grounding['checked_7d']} checks · "
+            f"{grounding['contradicted_7d']} contradicted "
+            f"({grounding['rate_7d'] * 100:.0f}%)"
+        )
+        if grounding["worst"]:
+            gl += f" · worst: {grounding['worst'][:80]}"
+        lines.append(gl)
     if faded:
         lines.append("Auto-fade active: " + " · ".join(faded))
     return "\n".join(lines)[:4000]
@@ -354,6 +417,7 @@ def health_report() -> dict:
                 select(func.count()).select_from(TradingCall)
                 .where(TradingCall.settled == False)  # noqa: E712
             ).one()
+            grounding = _grounding_status(s, now)
 
         faded = _fade_status()
         ls = llm_stats()
@@ -379,6 +443,12 @@ def health_report() -> dict:
             warn.append(
                 f"LLM error rate {llm_rate * 100:.0f}% "
                 f"({ls['errors']}/{ls['calls']})"
+            )
+        if grounding["warn"]:
+            warn.append(
+                f"grounding: {grounding['contradicted_7d']}/"
+                f"{grounding['checked_7d']} checks contradicted "
+                f"({grounding['rate_7d'] * 100:.0f}%, 7d)"
             )
 
         if crit:
@@ -423,6 +493,7 @@ def health_report() -> dict:
             "watchlist": int(wl),
             "open_calls": int(calls_open),
             "faded": faded,
+            "grounding": grounding,
         }
     except Exception as e:  # never break the header chip / panel
         logger.debug("health_report failed: {}", e)
@@ -442,6 +513,15 @@ def health_report() -> dict:
             "watchlist": 0,
             "open_calls": 0,
             "faded": [],
+            "grounding": {
+                "checked_24h": 0,
+                "contradicted_24h": 0,
+                "checked_7d": 0,
+                "contradicted_7d": 0,
+                "rate_7d": 0.0,
+                "worst": "",
+                "warn": False,
+            },
         }
 
 

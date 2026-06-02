@@ -162,7 +162,13 @@ def init_db() -> None:
         )
         _migrate_add_columns(
             "tradingcall",
-            [("resolved_posted_at", "DATETIME")],
+            [
+                ("resolved_posted_at", "DATETIME"),
+                # Fact-verification verdict stamped by verify.py at record time
+                # (NULL = unverified / fail-open). See models.TradingCall.
+                ("grounded", "BOOLEAN"),
+                ("verify_note", "VARCHAR"),
+            ],
         )
         # Per-position risk management + journal — set by user via
         # the /book UI. Existing rows have NULL on every field which

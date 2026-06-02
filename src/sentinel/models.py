@@ -261,6 +261,12 @@ class TradingCall(SQLModel, table=True):
     # `settled`/scoring: a call can be verdict-posted at 5d while its 20d
     # calibration mark is still maturing.
     resolved_posted_at: Optional[datetime] = Field(default=None, index=True)
+    # Fact-verification verdict (verify.py) stamped at record time. None =
+    # unverified (verifier disabled, extraction unavailable, or it errored —
+    # fail-open). True = no contradicted figure. False = a hard number in the
+    # thesis contradicted ground truth (conviction is floored when so).
+    grounded: Optional[bool] = Field(default=None)
+    verify_note: Optional[str] = Field(default=None, max_length=400)
 
 
 class ArticleBody(SQLModel, table=True):
@@ -555,3 +561,24 @@ class Briefing(SQLModel, table=True):
     importance: Optional[int] = Field(default=None)
     importance_reason: Optional[str] = Field(default=None, max_length=200)
     generated_at: datetime
+
+
+class ClaimCheck(SQLModel, table=True):
+    """One fact-verification run (verify.py) — the audit trail behind the
+    "never fabricate" rule and the /system grounding section. Written at the
+    call + post chokepoints; read by health for the 24h/7d contradiction rate.
+
+    `surface` is "call" or "post"; `source` is the originating pipeline/title.
+    `grounded` mirrors VerifyResult.grounded (no contradicted figure). `note`
+    summarizes the worst contradictions; `sample` keeps a snippet of the text
+    that was checked so a flagged run is inspectable after the fact."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    ts: datetime = Field(index=True)
+    surface: str = Field(max_length=8)  # "call" | "post"
+    source: str = Field(default="", max_length=120)
+    ticker: Optional[str] = Field(default=None, index=True, max_length=16)
+    n_claims: int = Field(default=0)
+    n_contradicted: int = Field(default=0)
+    grounded: bool = Field(default=True)
+    note: str = Field(default="", max_length=500)
+    sample: str = Field(default="", max_length=500)

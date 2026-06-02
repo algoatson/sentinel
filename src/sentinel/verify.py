@@ -361,4 +361,52 @@ def verify_text(
         result = VerifyResult(grounded=True, ok=False)
     if not available:
         result.ok = False
+    # Persist + broadcast only runs that actually examined ticker-bound numbers
+    # — an unverified or claimless run isn't telemetry, it's just noise.
+    if result.ok and result.n_checked > 0:
+        _record(result, surface=surface, source=source, tickers=tickers, text=text)
     return result
+
+
+def _record(
+    result: VerifyResult, *, surface: str, source: str, tickers: list[str], text: str
+) -> None:
+    """Best-effort ClaimCheck row + live event. Never fatal."""
+    cand = {t.strip().upper() for t in tickers if t and t.strip()}
+    tkr = next(iter(cand)) if len(cand) == 1 else None
+    try:
+        from .models import ClaimCheck
+
+        with session_scope() as s:
+            s.add(
+                ClaimCheck(
+                    ts=datetime.now(timezone.utc),
+                    surface=surface[:8],
+                    source=(source or "")[:120],
+                    ticker=tkr,
+                    n_claims=result.n_checked,
+                    n_contradicted=result.n_contradicted,
+                    grounded=result.grounded,
+                    note=result.note[:500],
+                    sample=(text or "")[:500],
+                )
+            )
+    except Exception as e:
+        logger.debug("verify ClaimCheck persist failed: {}", e)
+    try:
+        from . import events
+
+        events.publish(
+            "claim_check",
+            {
+                "surface": surface,
+                "source": source,
+                "ticker": tkr,
+                "n_claims": result.n_checked,
+                "n_contradicted": result.n_contradicted,
+                "grounded": result.grounded,
+                "note": result.note[:200],
+            },
+        )
+    except Exception as e:
+        logger.debug("events.publish(claim_check) failed: {}", e)

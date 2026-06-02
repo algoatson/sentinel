@@ -271,3 +271,138 @@ def test_verify_text_llm_error_sentinel_is_unavailable(monkeypatch):
     _patch_llm(monkeypatch, LLM_ERROR_SENTINEL)
     r = verify.verify_text("AAPL at 260", ["AAPL"], surface="post", source="test")
     assert r.ok is False
+
+
+# ── persistence + telemetry ──────────────────────────────────────────────────
+
+
+def test_verify_text_persists_claimcheck(monkeypatch):
+    from sqlmodel import select
+
+    from sentinel.models import ClaimCheck
+
+    _seed("AAPL", last_price=200.0)
+    _patch_llm(
+        monkeypatch, '[{"ticker":"AAPL","metric":"price","value":260,"raw":"260"}]'
+    )
+    verify.verify_text(
+        "AAPL at 260", ["AAPL"], surface="call", source="synthesis"
+    )
+    with session_scope() as s:
+        rows = s.exec(select(ClaimCheck)).all()
+    assert len(rows) == 1
+    assert rows[0].surface == "call"
+    assert rows[0].source == "synthesis"
+    assert rows[0].ticker == "AAPL"
+    assert rows[0].n_contradicted == 1
+    assert rows[0].grounded is False
+
+
+def test_verify_text_unavailable_writes_no_row(monkeypatch):
+    from sqlmodel import select
+
+    from sentinel.models import ClaimCheck
+
+    _seed("AAPL")
+    _patch_llm(monkeypatch, RuntimeError("down"))
+    verify.verify_text("AAPL at 260", ["AAPL"], surface="post", source="x")
+    with session_scope() as s:
+        assert s.exec(select(ClaimCheck)).all() == []
+
+
+# ── health grounding detector ────────────────────────────────────────────────
+
+
+def _seed_checks(n_checked, n_contradicted, *, age_hours=1.0):
+    from sentinel.models import ClaimCheck
+
+    with session_scope() as s:
+        for i in range(n_checked):
+            contradicted = i < n_contradicted
+            s.add(
+                ClaimCheck(
+                    ts=datetime.now(UTC) - timedelta(hours=age_hours),
+                    surface="post",
+                    source="test",
+                    ticker="AAPL",
+                    n_claims=1,
+                    n_contradicted=1 if contradicted else 0,
+                    grounded=not contradicted,
+                    note="AAPL price stated 260 vs actual 200" if contradicted else "",
+                    sample="x",
+                )
+            )
+
+
+def test_grounding_detector_flags_high_rate():
+    from sentinel.health import _grounding_status
+
+    _seed_checks(20, 5)  # 25% contradicted over a real sample
+    with session_scope() as s:
+        st = _grounding_status(s, datetime.now(UTC))
+    assert st["checked_7d"] == 20
+    assert st["contradicted_7d"] == 5
+    assert st["warn"] is True
+    assert st["worst"]  # a contradiction note surfaced
+
+
+def test_grounding_detector_quiet_below_sample():
+    from sentinel.health import _grounding_status
+
+    _seed_checks(4, 4)  # 100% contradicted but sample too small to flag
+    with session_scope() as s:
+        st = _grounding_status(s, datetime.now(UTC))
+    assert st["warn"] is False
+
+
+def test_grounding_detector_quiet_below_rate():
+    from sentinel.health import _grounding_status
+
+    _seed_checks(20, 1)  # 5% — under the 10% threshold
+    with session_scope() as s:
+        st = _grounding_status(s, datetime.now(UTC))
+    assert st["warn"] is False
+
+
+def test_health_report_includes_grounding():
+    from sentinel.health import health_report
+
+    rep = health_report()
+    assert "grounding" in rep
+    assert rep["grounding"]["checked_7d"] == 0  # nothing checked yet
+
+
+# ── migration idempotency ────────────────────────────────────────────────────
+
+
+def test_tradingcall_verify_columns_migrate_idempotently():
+    from sentinel.db import _migrate_add_columns
+
+    cols = [("grounded", "BOOLEAN"), ("verify_note", "VARCHAR")]
+    # Already present from create_all; re-applying must be a no-op, not an error.
+    _migrate_add_columns("tradingcall", cols)
+    _migrate_add_columns("tradingcall", cols)
+
+    from datetime import datetime as _dt
+
+    from sqlmodel import select
+
+    from sentinel.models import TradingCall
+
+    with session_scope() as s:
+        s.add(
+            TradingCall(
+                ticker="AAPL",
+                direction="long",
+                conviction=3,
+                source="test",
+                thesis="t",
+                created_at=_dt.now(UTC),
+                grounded=False,
+                verify_note="faded figure",
+            )
+        )
+    with session_scope() as s:
+        tc = s.exec(select(TradingCall)).first()
+    assert tc.grounded is False
+    assert tc.verify_note == "faded figure"
