@@ -11,6 +11,7 @@
   import TickerLink from '$components/TickerLink.svelte';
   import EquityCurveChart from '$components/EquityCurveChart.svelte';
   import Sparkline from '$components/Sparkline.svelte';
+  import GamePlanPanel from '$components/GamePlanPanel.svelte';
   import TodayPulse from '$components/TodayPulse.svelte';
   import RiskMonitor from '$components/RiskMonitor.svelte';
   import EarningsExposure from '$components/EarningsExposure.svelte';
@@ -243,6 +244,12 @@
      them into separate full-width rows. The user preferred the original
      stacked shape, so it's back: TodayPulse → HoldingsTape →
      LiveEvents → DailyPlanCard, all full-width, separated by space-y-2. -->
+<!-- Morning Game Plan — the day's ranked action list, fusing every arm into
+     one decision surface. Sits up top: it's the first thing to read. -->
+<div class="mb-4">
+  <GamePlanPanel />
+</div>
+
 <div class="mb-4 space-y-2">
   <TodayPulse />
   <HoldingsTape />

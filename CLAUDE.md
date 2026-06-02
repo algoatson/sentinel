@@ -45,8 +45,8 @@ Four subsystems on one asyncio loop, one SQLite DB (`data/radar.db`, WAL):
 4. **Surface** — Discord (`discord_client.py`, `chat.py`, `interactions.py`) and
    web (`api/` FastAPI + `dashboard/` NiceGUI/SvelteKit mount + `frontend/`).
 
-`scheduler.py` runs 43 jobs; `main.py` is the entrypoint; `config.py` + `.env` are
-settings; `models.py` is 35 SQLModel tables; `db.py` is the engine + migrations.
+`scheduler.py` runs 44 jobs; `main.py` is the entrypoint; `config.py` + `.env` are
+settings; `models.py` is 36 SQLModel tables; `db.py` is the engine + migrations.
 
 ## The chokepoints — route through these, don't fork them
 

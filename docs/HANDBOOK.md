@@ -256,6 +256,12 @@ See `ARCHITECTURE.md §5` for the full table; the load-bearing ones:
   contradicting the thesis), with cooldown + escalation.
 - **`position_review`** — pre-market hold/trim/close/flag verdicts on open
   positions (deterministic gate first, heavy LLM only on flagged names).
+- **`game_plan`** — the **Morning Game Plan** (08:45 ET weekdays, web-only): a
+  deterministic assembler fuses book risk, maturing calls, today's catalysts and
+  fresh ideas into one bundle of real figures; the heavy LLM only *ranks, dedupes
+  and phrases* it (never invents a number) into a single prioritised action list
+  surfaced on the Overview. Fail-open — if the LLM is down, the unranked bundle is
+  persisted so the panel still renders.
 - **`lounge`** — twice-daily #general aside: a grounded geopolitics→mechanism→name
   chain or an absurd-but-true observation, gated `SKIP` when there's nothing real.
 - **Automation pipelines** (no LLM): `auto_exits` (enforce stops/targets/trailing
@@ -433,8 +439,8 @@ Discord bot — one voice, no second writer. A mount failure logs and the bot ru
 on.
 
 - **SvelteKit app at `/app`** (Svelte 5 + SvelteKit 2 + Tailwind 4 + TanStack
-  Query, built static into `frontend/build/`). Pages: **Overview** (KPIs, equity
-  curve, activity), **Markets** (watchlist + funding screener + movers),
+  Query, built static into `frontend/build/`). Pages: **Overview** (the **Morning
+  Game Plan** ranked action list up top, then KPIs, equity curve, activity), **Markets** (watchlist + funding screener + movers),
   **Symbol** detail, **Crypto** (screener + funding setups + BTC regime),
   **Book** (open positions + risk controls), **Journal** (closed trades + notes),
   **Calls**, **Intel** (news + filings + Reddit), **Feed**, **Analytics**,

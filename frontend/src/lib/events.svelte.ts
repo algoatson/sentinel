@@ -57,7 +57,7 @@ class LiveEventBus {
     };
 
     // Subscribe to the kinds we publish from the backend.
-    for (const kind of ['news', 'call', 'filing', 'watch', 'trade']) {
+    for (const kind of ['news', 'call', 'filing', 'watch', 'trade', 'game_plan']) {
       this.source.addEventListener(kind, handle(kind));
     }
   }

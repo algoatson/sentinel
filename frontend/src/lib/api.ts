@@ -972,6 +972,28 @@ export interface BriefingToday {
 }
 export const briefingToday = () => get<BriefingToday>('/briefing/today');
 
+// ── Morning Game Plan ──────────────────────────────────────────────────────
+export interface GamePlanItem {
+  ticker: string | null;
+  headline: string;
+  trigger: string;
+  action: string;
+  priority: number; // 1 = act first, 3 = FYI
+}
+export interface GamePlanSection {
+  kind: 'book_risk' | 'maturing' | 'catalysts' | 'fresh_ideas' | string;
+  items: GamePlanItem[];
+}
+export interface GamePlanToday {
+  plan_date: string;
+  generated_at: string | null;
+  the_read: string;
+  sections: GamePlanSection[];
+  model: string;
+  exists: boolean;
+}
+export const gamePlanToday = () => get<GamePlanToday>('/plan/gameplan/today');
+
 export interface TradeLifecycle {
   trade: {
     id: number;

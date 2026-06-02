@@ -73,6 +73,9 @@
         queryClient.invalidateQueries({ queryKey: ['wallets'] });
         queryClient.invalidateQueries({ queryKey: ['wallet-history'] });
         queryClient.invalidateQueries({ queryKey: ['kpi'] });
+      } else if (kind === 'game_plan') {
+        queryClient.invalidateQueries({ queryKey: ['game-plan-today'] });
+        toast.info('🗒️ Morning Game Plan updated');
       }
     });
     return off;

@@ -84,7 +84,7 @@ flowchart TB
       I8[watchlist weekly]:::ing
     end
 
-    DB[("SQLite · data/radar.db · WAL · 35 tables")]:::db
+    DB[("SQLite · data/radar.db · WAL · 36 tables")]:::db
 
     subgraph INTEL["Reasoning — LLM + analytics"]
       direction TB
@@ -120,7 +120,7 @@ flowchart TB
 
 ---
 
-## 3. Data model (SQLite, 35 tables)
+## 3. Data model (SQLite, 36 tables)
 
 One SQLite file, `data/radar.db`, in WAL mode (`busy_timeout=60000`,
 `synchronous=NORMAL`) so contended writers wait rather than error. New tables
@@ -135,7 +135,7 @@ it moves the DB + WAL/SHM siblings into `data/backups/` and reinitializes empty.
 | Filings | `Filing`, `SeenFiling` |
 | Social / news | `RedditMention`, `HnMention`, `NewsItem`, `SocialPulse`, `ArticleBody` |
 | Market | `PriceBar`, `PriceContext`, `CryptoMicro`, `EarningsDate` |
-| User book | `PaperTrade`, `Holding`, `SymbolNote`, `DailyPlan` |
+| User book | `PaperTrade`, `Holding`, `SymbolNote`, `DailyPlan`, `GamePlan` |
 | Wallets | `Fund`, `FundTrade`, `FundEquity` |
 | Accountability | `TradingCall`, `Thesis`, `ThesisEvent`, `NarrativeEvent` |
 | LLM caches | `CallSummary`, `NewsAnalysis`, `RedditAnalysis`, `ResearchTask` |
@@ -226,6 +226,7 @@ validated back against the watchlist.
 | `auto_thesis` | promote 5/5-conviction calls into theses | none | — | (narrative) |
 | `auto_research_pre_earnings` | queue research tasks ahead of earnings | heavy | — | (SSE) |
 | `risk_circuit` | pause new opens when a wallet draws down ≥15% | none | — | (narrative) |
+| `game_plan` | fuse risk + maturing + catalysts + fresh ideas into one ranked morning action list | heavy | — | (web `/api/plan/gameplan`) |
 
 **Filings flow:** discover (one EDGAR `getcurrent` probe) → cheap triage score on
 a raw excerpt → if ≥2, full form-typed summary + re-score with enrichment →
@@ -385,9 +386,9 @@ model or a remote OpenAI-compatible API independently (`llm.py`, `config.py`):
 
 ---
 
-## 9. Scheduler cadence (43 jobs)
+## 9. Scheduler cadence (44 jobs)
 
-`scheduler.py` registers 43 APScheduler jobs (intervals jittered ±45s to avoid
+`scheduler.py` registers 44 APScheduler jobs (intervals jittered ±45s to avoid
 SQLite lock contention). Every scheduled job is also runnable as
 `--run-once <name>` for single-cycle debugging (the sole exception is the weekly
 watchlist rebuild, a sync bootstrap step). Cadences are env-tunable
@@ -405,7 +406,7 @@ watchlist rebuild, a sync bootstrap step). Cadences are env-tunable
 | 2 h | `mark_calls`, `call_review` |
 | 4 h | `macro_themes` |
 | 6 h (default) | `synthesis`, `prices_backfill` |
-| Cron (ET) | `catalyst_radar` 07:00, `auto_research_pre_earnings` 07:30, `health_post` 08:00, `position_review` 08:00, `thesis_generate` 08:15, `premarket_briefing` 08:30, `lounge_am` 11:20, `movers_daily` 16:15, `daily_digest` 16:30, `funds_digest` 16:45, `thesis_review` 17:10, `lounge_pm` 17:20, `prices_daily` 17:00 |
+| Cron (ET) | `catalyst_radar` 07:00, `auto_research_pre_earnings` 07:30, `health_post` 08:00, `position_review` 08:00, `thesis_generate` 08:15, `premarket_briefing` 08:30, `game_plan` 08:45 (mon-fri), `lounge_am` 11:20, `movers_daily` 16:15, `daily_digest` 16:30, `funds_digest` 16:45, `thesis_review` 17:10, `lounge_pm` 17:20, `prices_daily` 17:00 |
 | Cron (other) | `funds_cycle` hourly, `funds_meta` Sun 12:00 ET, `watchlist_rebuild` Sun 06:00 UTC, `monthly_tuning` 1st 12:00 UTC |
 
 Market-hours gating is explicit only in `hot_movers` (and the price/crypto
