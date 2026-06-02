@@ -1,500 +1,417 @@
 # Sentinel — Architecture
 
-Visual reference of how the bot is wired together as of the news-alerts addition.
+How the system is wired together, as of June 2026. This is the "what reads what,
+what writes what, what runs when" reference. For feature-level detail and usage
+see `HANDBOOK.md`; for code conventions see `../CLAUDE.md`.
 
-Three-layer architecture sharing a single SQLite database:
+Sentinel is a single Python process (`python -m sentinel.main`) running four
+cooperating subsystems on one asyncio event loop, sharing one SQLite database:
 
-1. **Ingestion** — passive, scheduled, zero LLM. Each source writes to its own tables.
-2. **Intelligence** — LLM-driven pipelines that read ingestion tables and produce derived data.
-3. **Surface** — Discord, six channels. User interacts with reactions and chat.
+1. **Ingestion** — passive, scheduled, zero-LLM collectors. Each source writes
+   its own tables. One source failing never blocks another.
+2. **Reasoning** — LLM + analytic pipelines that read ingestion tables and
+   produce derived data (summaries, scores, calls, narratives, digests).
+3. **Accountability + wallets** — every directional call is logged, marked to
+   market, graded, auto-faded, and traded by autonomous paper wallets.
+4. **Surface** — a Discord bot (channels + `!commands`) and an in-process web
+   dashboard (FastAPI `/api` + SvelteKit `/app` + legacy NiceGUI `/`).
 
-The agentic feel is a function of scheduling + accumulation, not any single LLM having autonomy.
+The agentic feel comes from scheduling, routing, and accumulation — not from any
+single LLM call having autonomy. The whole thing is a closed loop:
+
+```
+ingest → reason → call → trade(paper) → measure → auto-fade → self-monitor
+   ^________________________________________________________________|
+                (the scorecard feeds the next reason)
+```
 
 ---
 
-## 1. Layered overview
+## 1. Process & runtime model
+
+`main.py` boots in this order (`main()` → `_run_live()`):
+
+1. Parse CLI args. Short-circuit modes exit early: `--preflight` (boot checks),
+   `--reset` (archive DB to `data/backups/`, recreate schema), `--run-once <job>`.
+2. `init_db()` — create all tables, run additive column migrations, seed prompts
+   and funds.
+3. Unless `--skip-llm`: verify both LLM tiers respond.
+4. Unless `--skip-watchlist`: build the watchlist from config + EDGAR.
+5. `_run_live()`: start the APScheduler, register the Discord bot + reaction/
+   button handlers, mount the in-process web server (FastAPI + NiceGUI + the
+   SvelteKit static build) as a uvicorn task on the same loop, then block on the
+   Discord client until SIGTERM/SIGINT.
+
+Everything runs in one process on one event loop. Scheduled jobs run off-loop in
+worker threads; all blocking DB/LLM work inside async handlers is pushed through
+`asyncio.to_thread` so the loop never stalls.
+
+---
+
+## 2. Layered overview
 
 ```mermaid
 flowchart TB
-    classDef src fill:#1f5582,stroke:#0a2540,color:#fff,stroke-width:1px
-    classDef ing fill:#2e7d8f,stroke:#0a2540,color:#fff,stroke-width:1px
-    classDef db fill:#37474f,stroke:#0a2540,color:#fff,stroke-width:1px
-    classDef light fill:#2e7d32,stroke:#0a2540,color:#fff,stroke-width:1px
-    classDef heavy fill:#c0392b,stroke:#0a2540,color:#fff,stroke-width:1px
-    classDef none fill:#6c5ce7,stroke:#0a2540,color:#fff,stroke-width:1px
-    classDef disc fill:#5c3a92,stroke:#0a2540,color:#fff,stroke-width:1px
-    classDef user fill:#d35400,stroke:#0a2540,color:#fff,stroke-width:1px
+    classDef src fill:#1f5582,stroke:#0a2540,color:#fff
+    classDef ing fill:#2e7d8f,stroke:#0a2540,color:#fff
+    classDef db fill:#37474f,stroke:#0a2540,color:#fff
+    classDef light fill:#2e7d32,stroke:#0a2540,color:#fff
+    classDef heavy fill:#c0392b,stroke:#0a2540,color:#fff
+    classDef none fill:#6c5ce7,stroke:#0a2540,color:#fff
+    classDef surf fill:#5c3a92,stroke:#0a2540,color:#fff
 
-    subgraph SRC["📡 External sources"]
+    subgraph SRC["External sources"]
       direction LR
       SEC[SEC EDGAR]:::src
-      HNAPI[Hacker News Algolia]:::src
-      YFIN[yfinance / Yahoo]:::src
-      RSS[13 RSS feeds]:::src
+      HN[HN Algolia]:::src
+      YF[yfinance]:::src
+      RSS[~35 RSS / news feeds]:::src
+      RDT[Reddit public RSS]:::src
+      CG[CoinGecko trending]:::src
+      CEX[Binance / OKX]:::src
       WIKI[Wikipedia indices]:::src
     end
 
-    subgraph ING["🔄 Ingesters — passive, no LLM"]
+    subgraph ING["Ingestion — no LLM"]
       direction LR
-      I1["watchlist_builder<br/>Sun 06:00 UTC + on boot"]:::ing
-      I2["filings ingest<br/>every 10 min"]:::ing
-      I3["hn_poll<br/>every 30 min"]:::ing
-      I4["prices_poll<br/>5 min, market hrs"]:::ing
-      I5["prices_daily<br/>17:00 ET"]:::ing
-      I6["news_poll<br/>every 20 min"]:::ing
-      I7["reddit_poll<br/>STUB — PRAW pending"]:::ing
+      I1[filings 3m]:::ing
+      I2[prices 3m]:::ing
+      I3[news 5m]:::ing
+      I4[reddit 15m]:::ing
+      I5[hackernews 30m]:::ing
+      I6[crypto_micro 20m]:::ing
+      I7[crypto_trending 30m]:::ing
+      I8[watchlist weekly]:::ing
     end
 
-    DB[("💾 SQLite · ./data/radar.db<br/>13 tables<br/><br/>Watchlist · TrackedEntity · Filing · SeenFiling<br/>RedditMention · HnMention · NewsItem<br/>PriceBar · PriceContext<br/>SocialPulse · Feedback · PromptVersion")]:::db
+    DB[("SQLite · data/radar.db · WAL · 34 tables")]:::db
 
-    subgraph INTEL["🧠 Intelligence — LLM-driven"]
+    subgraph INTEL["Reasoning — LLM + analytics"]
       direction TB
-      subgraph FAST["⚡ Light tier (gemma4:e4b)"]
-        direction LR
-        L1["filings + materiality<br/>10 min · per filing"]:::light
-        L2["sentiment_tag<br/>1h batches of 25"]:::light
-        L3["news_alerts<br/>15 min · LLM triage"]:::light
-        L4["chat handler<br/>on demand · RAG"]:::light
-      end
-      subgraph SLOW["🐢 Heavy tier (qwen2.5:14b-instruct)"]
-        direction LR
-        H1["macro_themes<br/>every 4h"]:::heavy
-        H2["social_pulse<br/>1h · market hrs"]:::heavy
-        H3["convergence<br/>every 30 min"]:::heavy
-        H4["movers_daily<br/>16:15 ET"]:::heavy
-        H5["premarket_briefing<br/>08:30 ET"]:::heavy
-        H6["daily_digest<br/>16:30 ET"]:::heavy
-        H7["monthly_tuning<br/>1st 12:00 UTC"]:::heavy
-      end
-      subgraph PURE["📊 Pure-SQL (no LLM)"]
-        direction LR
-        N1["enrich<br/>per-filing"]:::none
-        N2["news_impact_tag<br/>hourly"]:::none
-      end
+      L[Light tier: filings/materiality, sentiment,
+        news_alerts, watches-compile, reddit_feed, chat]:::light
+      H[Heavy tier: synthesis, why_moved, convergence,
+        macro_themes, briefing, digest, theses, position_review]:::heavy
+      N[No-LLM: enrich, news_impact, hot_movers, funding_squeeze,
+        auto_exits/thesis, risk_circuit, call_review, analytics]:::none
     end
 
-    subgraph DISC["💬 Discord"]
+    subgraph SPINE["Accountability + wallets"]
       direction LR
-      C1["#priority"]:::disc
-      C2["#filings"]:::disc
-      C3["#insiders"]:::disc
-      C4["#pulse"]:::disc
-      C5["#digest"]:::disc
-      C6["#meta"]:::disc
+      SC[scorecard.record_call
+        + auto-fade]:::none
+      FN[7 autonomous wallets
+        + research wallet]:::none
     end
 
-    subgraph U["👤 You"]
+    subgraph SURF["Surface"]
       direction LR
-      UC["Chat<br/>!status · !ticker · !news ·<br/>!recent · !filing · @mention"]:::user
-      UR["Reactions<br/>👍 👎 · ✅ ❌"]:::user
+      DSC[Discord · 17 channels · !commands]:::surf
+      WEB[Web · FastAPI /api · SvelteKit /app · NiceGUI /]:::surf
     end
 
-    SRC --> ING
-    ING --> DB
-    DB --> INTEL
-    INTEL --> DB
-    INTEL --> DISC
-    UC --> L4
-    L4 --> DISC
-    DISC --> UR
-    UR --> H7
-    UR --> DB
+    SRC --> ING --> DB
+    DB --> INTEL --> DB
+    INTEL --> SPINE
+    SPINE --> DB
+    DB --> SURF
+    SURF --> DB
 ```
 
 ---
 
-## 2. Detailed data flow
+## 3. Data model (SQLite, 34 tables)
 
-What reads what, what writes what. Solid arrows = primary data flow; dashed = LLM call; dotted = enrichment context.
+One SQLite file, `data/radar.db`, in WAL mode (`busy_timeout=60000`,
+`synchronous=NORMAL`) so contended writers wait rather than error. New tables
+auto-create on boot; new columns are applied as additive `ADD COLUMN` migrations
+in `db.py`. DB URL is `SENTINEL_DB_URL` (fallback `FILING_RADAR_DB_URL`,
+default `sqlite:///./data/radar.db`). `archive_database()` powers `--reset`:
+it moves the DB + WAL/SHM siblings into `data/backups/` and reinitializes empty.
 
-```mermaid
-flowchart LR
-    classDef tab fill:#37474f,stroke:#0a2540,color:#fff
-    classDef ing fill:#2e7d8f,stroke:#0a2540,color:#fff
-    classDef light fill:#2e7d32,stroke:#0a2540,color:#fff
-    classDef heavy fill:#c0392b,stroke:#0a2540,color:#fff
-    classDef none fill:#6c5ce7,stroke:#0a2540,color:#fff
-    classDef ch fill:#5c3a92,stroke:#0a2540,color:#fff
+| Group | Tables |
+|---|---|
+| Universe | `Watchlist`, `TrackedEntity` |
+| Filings | `Filing`, `SeenFiling` |
+| Social / news | `RedditMention`, `HnMention`, `NewsItem`, `SocialPulse`, `ArticleBody` |
+| Market | `PriceBar`, `PriceContext`, `CryptoMicro`, `EarningsDate` |
+| User book | `PaperTrade`, `Holding`, `SymbolNote`, `DailyPlan` |
+| Wallets | `Fund`, `FundTrade`, `FundEquity` |
+| Accountability | `TradingCall`, `Thesis`, `ThesisEvent`, `NarrativeEvent` |
+| LLM caches | `CallSummary`, `NewsAnalysis`, `RedditAnalysis`, `ResearchTask` |
+| Ops / tuning | `Feedback`, `PromptVersion`, `PendingTuning`, `JobRun`, `Briefing`, `Watch` |
 
-    %% Ingesters
-    WB[watchlist_builder]:::ing
-    FI[filings ingest]:::ing
-    HN[hn_poll]:::ing
-    PP[prices_poll]:::ing
-    NP[news_poll]:::ing
+Load-bearing shapes:
 
-    %% Tables
-    WL[(Watchlist)]:::tab
-    F[(Filing)]:::tab
-    HM[(HnMention)]:::tab
-    NI[(NewsItem)]:::tab
-    PB[(PriceBar)]:::tab
-    PC[(PriceContext)]:::tab
-    SP[(SocialPulse)]:::tab
-    FB[(Feedback)]:::tab
-    PV[(PromptVersion)]:::tab
-    RM[(RedditMention)]:::tab
-
-    %% Pipelines
-    ENR{{enrich}}:::none
-    MAT{{materiality}}:::light
-    SENT{{sentiment_tag}}:::light
-    NA{{news_alerts}}:::light
-    CHAT{{chat handler}}:::light
-
-    SOC{{social_pulse}}:::heavy
-    MT{{macro_themes}}:::heavy
-    CONV{{convergence}}:::heavy
-    MOV{{movers}}:::heavy
-    BR{{briefing}}:::heavy
-    DIG{{digest}}:::heavy
-    TUN{{tuning}}:::heavy
-    NIMP{{news_impact}}:::none
-
-    %% Discord channels
-    CPRIO>#priority]:::ch
-    CFIL>#filings]:::ch
-    CINS>#insiders]:::ch
-    CPULSE>#pulse]:::ch
-    CDIG>#digest]:::ch
-    CMETA>#meta]:::ch
-
-    %% Ingestion writes
-    WB --> WL
-    FI --> F
-    HN --> HM
-    PP --> PB
-    PP --> PC
-    NP --> NI
-
-    %% enrich reads many, writes nothing (returns a dataclass)
-    F -.-> ENR
-    HM -.-> ENR
-    NI -.-> ENR
-    PC -.-> ENR
-    RM -.-> ENR
-
-    %% Materiality (filings pipeline)
-    F --> MAT
-    ENR -.-> MAT
-    MAT --> F
-    MAT --> CPRIO
-    MAT --> CFIL
-    MAT --> CINS
-
-    %% Sentiment tagger
-    RM --> SENT
-    SENT --> RM
-
-    %% News pipelines
-    NI --> NA
-    NA --> NI
-    NA --> CPULSE
-
-    NI --> MT
-    WL --> MT
-    MT --> CPULSE
-
-    NI --> NIMP
-    PB --> NIMP
-    NIMP --> NI
-
-    %% Social pulse
-    RM --> SOC
-    PC --> SOC
-    F --> SOC
-    SOC --> SP
-    SOC --> CPULSE
-
-    %% Convergence
-    F --> CONV
-    PC --> CONV
-    RM --> CONV
-    HM --> CONV
-    NI --> CONV
-    CONV --> CPRIO
-
-    %% Movers
-    PC --> MOV
-    HM --> MOV
-    RM --> MOV
-    NI --> MOV
-    MOV --> WL
-    MOV --> CPULSE
-
-    %% Briefing
-    F --> BR
-    NI --> BR
-    HM --> BR
-    SP --> BR
-    PC --> BR
-    BR --> CDIG
-
-    %% Daily digest
-    F --> DIG
-    SP --> DIG
-    DIG --> CDIG
-
-    %% Tuning loop
-    FB --> TUN
-    F --> TUN
-    TUN --> PV
-    TUN --> CMETA
-
-    %% Chat + RAG
-    F -.-> CHAT
-    NI -.-> CHAT
-    PC -.-> CHAT
-    HM -.-> CHAT
-    SP -.-> CHAT
-    CHAT --> CPRIO
-    CHAT --> CFIL
-    CHAT --> CINS
-    CHAT --> CPULSE
-    CHAT --> CDIG
-    CHAT --> CMETA
-
-    %% Feedback collection
-    CPRIO --> FB
-    CFIL --> FB
-    CINS --> FB
-    CPULSE --> FB
-    CDIG --> FB
-    CMETA --> FB
-```
+- **`Watchlist`** — `cik`, `ticker`, `source` (`index` / `tracked_entity` /
+  `activity` / `crypto` / `crypto_trending` / `macro`), `asset_class`
+  (`equity` / `crypto` / `future` / `rate`), `expires_at` (TTL for promoted rows).
+- **`Filing`** — `accession_number` (unique), `form_type`, `summary`,
+  `materiality_score` (0–3), `materiality_reason`, `message_id`, `channel`.
+- **`TradingCall`** — the accountability spine: `ticker`, `direction`,
+  `conviction` (1–5), `source` (pipeline name), `thesis`, `price_at_call`,
+  `ret_1d_pct` / `ret_5d_pct` / `ret_20d_pct`, `settled`, `resolved_posted_at`.
+- **`Fund` / `FundTrade` / `FundEquity`** — wallet policy knobs, per-position
+  risk fields (`stop_price`, `target_price`, `trailing_stop_pct`,
+  `watermark_price`), and the equity curve.
+- **`Thesis` / `ThesisEvent`** — running hypotheses with `state`
+  (`active` / `validated` / `invalidated` / `matured` / `closed`) and linked
+  supporting/challenging events.
+- **`PromptVersion`** — versioned prompts; `get_prompt(name)` returns the active
+  DB row or falls back to the code constant.
 
 ---
 
-## 3. Discord channel routing
+## 4. Ingestion layer
 
-Where each post type lands and what reactions it accepts:
+Each ingester runs on its scheduler interval, off-loop, with a top-level catch
+that posts errors to `#meta`. Per-item failures are skipped, never fatal.
 
-| Producer | Channel | Mention | Reactions used |
+| Ingester | Source | Writes | Key behaviors |
 |---|---|---|---|
-| filings ⟶ score 3 (non-insider) | `#priority` | `@you` | 👍/👎 → feedback |
-| filings ⟶ score 2 (non-insider) | `#filings` | — | 👍/👎 → feedback |
-| filings ⟶ Form 4 / 13F score≥2 | `#insiders` | — | 👍/👎 → feedback |
-| filings ⟶ score 0-1 | (DB only, no post) | — | — |
-| `social_pulse` spike | `#pulse` | — | 👍/👎 |
-| `macro_themes` themes | `#pulse` | — | 👍/👎 |
-| `news_alerts` 🚨 alert | `#pulse` | — | 👍/👎 |
-| `movers` daily | `#pulse` | — | 👍/👎 |
-| `convergence` 🎯 | `#priority` | `@you` | 👍/👎 |
-| `premarket_briefing` 🌅 | `#digest` | — | 👍/👎 |
-| `daily_digest` 📊 | `#digest` | — | 👍/👎 |
-| `monthly_tuning` proposal | `#meta` | — | ✅ apply / ❌ reject |
-| Pipeline errors | `#meta` | — | — |
-| Chat replies (you ⟶ bot) | same channel as your message | — | — |
+| `filings` | EDGAR `getcurrent` Atom feed → per-CIK `submissions.json` | `Filing`, `SeenFiling` | 8 req/s limiter; one cheap global probe then deep-fetch; docs stripped to text, truncated ~100k chars |
+| `reddit` | Public Reddit `/r/<sub>/new/.rss` + Google-News fallback | `RedditMention` | 4-UA rotation; 403 circuit breaker (5 strikes → 20-min cooldown → gnews-only); lazy top-comment enrichment |
+| `hackernews` | HN Algolia search (6h lookback) | `HnMention` | whole-word ticker / company-name match; short tickers (≤2 char) only via company name |
+| `news` | ~35 RSS/Google-News feeds + yfinance per-ticker | `NewsItem` | canonical-URL dedup (24h); `is_macro` tag from feed; LLM ticker tagging (≤40 calls/poll) validated against watchlist |
+| `prices` (intraday) | yfinance 1m bars | `PriceBar`, `PriceContext` | NYSE-hours gated (crypto/futures 24/7); bulk `INSERT … ON CONFLICT`; dead-ticker auto-prune after 3 empty cycles |
+| `prices` (daily / backfill) | yfinance daily / multi-year | `PriceBar` | 17:00 ET daily refresh; 6h backfill; first-seen tickers get long history |
+| `crypto_micro` | Binance (primary) / OKX (fallback) | `CryptoMicro` | funding rate, OI + 24h drift, orderbook imbalance; geo-block failover; 90-min staleness gate |
+| `crypto_trending` | CoinGecko trending (free) | `Watchlist` | verify-before-promote via `can_price()`; 14-day TTL then auto-expire |
+
+**Watchlist construction** (`edgar/watchlist_builder.py`, weekly + on boot):
+S&P 500 + Nasdaq 100 (Wikipedia) → tickers resolved to CIKs → plus
+`config/etfs.yaml`, `config/crypto.yaml`, `config/macro_assets.yaml`, and the
+`config/tracked_entities.yaml` 13F filers (CIK-verified against EDGAR). **Activity
+promotion** adds any CIK with ≥3 filings in 30 days or any 8-K in 7 days (60-day
+TTL). Crypto/macro instruments get synthetic CIKs. Net universe ≈ 700+ names.
+
+**Ticker extraction** (`utils.py`): `$cashtag` or bare ticker or company-name
+alias, each gated by watchlist membership and a 54-word common-English blocklist;
+bare tickers also need a corroborating signal (repeat, flair, cashtag in title,
+or financial-context cue). News articles add an LLM tagging pass on top, always
+validated back against the watchlist.
 
 ---
 
-## 4. Scheduler cadence
+## 5. Reasoning layer (pipelines)
 
-17 jobs total. UTC unless noted.
+`pipelines/` holds ~25 processors. "Calls?" = emits a scored `TradingCall`.
 
-| Job | Trigger | Frequency | Tier | What it does |
+| Pipeline | Purpose | Tier | Calls? | Channel |
 |---|---|---|---|---|
-| `filings_cycle` | interval | 10 min | light | New filings → summarize + score + route |
-| `reddit_poll` | interval | 15 min | none | **STUB** — PRAW pending |
-| `hn_poll` | interval | 30 min | none | Algolia search per ticker/company |
-| `prices_poll` | interval | 5 min | none | 1-min bars during market hours |
-| `prices_daily` | cron | 17:00 ET | none | 30d daily bar refresh |
-| `news_poll` | interval | 20 min | none | RSS + yfinance per-ticker |
-| `news_alerts` | interval | 15 min | light | LLM triage tier-1 fresh news |
-| `news_impact_tag` | interval | 1h | none | Measure realized 1h/1d return per news item |
-| `sentiment_tag` | interval | 1h | light | Tag RedditMention rows |
-| `social_pulse` | interval | 1h (mkt) | heavy | Spike detection + LLM synthesis |
-| `convergence` | interval | 30 min | heavy | 2+ signal alignment per ticker |
-| `macro_themes` | interval | 4h | heavy | Cluster macro headlines into themes |
-| `movers_daily` | cron | 16:15 ET | heavy | Top % movers without filing trigger |
-| `premarket_briefing` | cron | 08:30 ET | heavy | Overnight synthesis |
-| `daily_digest` | cron | 16:30 ET | heavy | End-of-day digest |
-| `watchlist_rebuild` | cron | Sun 06:00 UTC | none | S&P 500 + Nasdaq 100 + ETFs + activity |
-| `monthly_tuning` | cron | 1st 12:00 UTC | heavy | Propose materiality prompt delta |
+| `filings` | summarize + score materiality of each filing, route by score | light | — | filings / insiders / priority |
+| `enrich` | pure-DB context (Reddit/HN/news counts + price) for materiality | none | — | (internal) |
+| `why_moved` | explain an unexplained price/volume move, then commit a forward read | heavy | ✅ | priority / crypto |
+| `convergence` | stack filing + social + price + news on one name → a call | heavy | ✅ | convergence / priority |
+| `synthesis` | the "octopus": system-wide connected read, every 6h, reads its own track record | heavy | ✅ | news / pulse |
+| `macro_themes` | macro desk: news → transmission chain → exposed names → committed read | heavy | ✅ | macro / news |
+| `funding_squeeze` | crypto funding/OI/orderbook squeeze setups | none | ✅ | crypto / news |
+| `social_pulse` | tickers with abnormal Reddit volume + substance/noise judgment | heavy | — | pulse |
+| `sentiment` | tag recent Reddit mentions bullish/bearish/thesis | light | — | (db) |
+| `movers` | EOD biggest movers + one-line hypothesis + wider-universe discovery | heavy | — | pulse |
+| `hot_movers` | terse "what's moving NOW" on volume, no narrative | none | — | hot |
+| `news_alerts` | breaking tier-1 news triage with importance | light | — | news / pulse |
+| `news_impact` | measure realized 1h/1d return per news item | none | — | (db) |
+| `briefing` | pre-market positioned take | heavy | — | digest |
+| `digest` | end-of-day narrative + "the read" | heavy | — | digest |
+| `catalysts` | forward calendar (OPEX/FOMC/CPI + persisted earnings) | none | — | catalysts / digest |
+| `lounge` | off-clock #general geopolitics↔market chain, gated `SKIP` | light | — | general |
+| `watches` | compile NL alerts to a constrained spec, evaluate each cycle | light (compile) | — | priority / news |
+| `reddit_feed` | LLM-curated stream of genuinely notable r/ posts | light | — | reddit |
+| `book_risk` | proactive risk scan of your open paper positions | light | — | risk / priority |
+| `position_review` | pre-market hold/trim/close verdicts on open positions | heavy | — | (narrative / SSE) |
+| `call_review` | post the deterministic verdict on matured calls | none | — | calls / digest |
+| `tuning` | monthly: rewrite the materiality prompt from 👍/👎 feedback | heavy | — | meta |
+| `auto_exits` | enforce user stops/targets/trailing stops | none | — | (SSE) |
+| `auto_thesis` | promote 5/5-conviction calls into theses | none | — | (narrative) |
+| `auto_research_pre_earnings` | queue research tasks ahead of earnings | heavy | — | (SSE) |
+| `risk_circuit` | pause new opens when a wallet draws down ≥15% | none | — | (narrative) |
+
+**Filings flow:** discover (one EDGAR `getcurrent` probe) → cheap triage score on
+a raw excerpt → if ≥2, full form-typed summary + re-score with enrichment →
+route. Form type selects both prompt and model (`8-K`/`4`/`424B`/generic → light;
+`10-Q`/`10-K`/`13F`/`S-1`/`DEF 14A` → heavy). Routing: insider forms (4, 13F) to
+`#insiders` at score ≥2; others to `#priority` (3) or `#filings` (2); 0–1 stored
+but not posted.
+
+**Synthesis ("octopus"):** every `SYNTHESIS_HOURS` (default 6) it pulls a
+system-wide snapshot — holdings + open fund positions, material filings, social
+pulses, per-asset movers, macro/market-moving news with measured impact, earnings
+window, the track-record brief, and wallet edge — plus its own last two reads and
+how the calls it made since then resolved. The model writes an *update*, not a
+cold take, and may emit calls.
 
 ---
 
-## 5. LLM tier assignment
+## 6. Accountability spine
 
 ```mermaid
 flowchart LR
-    classDef light fill:#2e7d32,stroke:#0a2540,color:#fff
-    classDef heavy fill:#c0392b,stroke:#0a2540,color:#fff
-    classDef none fill:#6c5ce7,stroke:#0a2540,color:#fff
+    classDef t fill:#37474f,stroke:#0a2540,color:#fff
+    classDef h fill:#c0392b,stroke:#0a2540,color:#fff
+    classDef n fill:#6c5ce7,stroke:#0a2540,color:#fff
 
-    subgraph "⚡ LIGHT — gemma4:e4b (fast)"
-      F1[filings summaries]:::light
-      F2[materiality scoring]:::light
-      F3[sentiment_tag]:::light
-      F4[news_alerts triage]:::light
-      F5[chat / @mention RAG]:::light
-    end
+    P[why_moved / convergence /
+      synthesis / macro_themes /
+      funding_squeeze emit CALL]:::h
+    RC{{scorecard.record_call}}:::n
+    TC[(TradingCall)]:::t
+    MK{{mark_calls 1d/5d/20d}}:::n
+    CR{{call_review verdict}}:::n
+    FN[wallets size + trade]:::n
+    WM{{wallet_meta edge}}:::n
 
-    subgraph "🐢 HEAVY — qwen2.5:14b-instruct (quality)"
-      H1[macro_themes]:::heavy
-      H2[social_pulse synthesis]:::heavy
-      H3[convergence synthesis]:::heavy
-      H4[movers hypothesis]:::heavy
-      H5[premarket_briefing]:::heavy
-      H6[daily_digest]:::heavy
-      H7[monthly_tuning]:::heavy
-    end
-
-    subgraph "📊 NO LLM — pure DB/code"
-      N1[enrich]:::none
-      N2[news_impact_tag]:::none
-      N3[ingesters — all of them]:::none
-      N4[scheduler]:::none
-      N5[discord routing]:::none
-    end
+    P --> RC
+    RC -->|dedup + auto-fade| TC
+    TC --> MK --> TC
+    TC --> CR
+    TC --> FN --> WM
+    WM -.feeds.-> P
+    MK -.feeds.-> P
 ```
 
-Sampling defaults (auto-selected on model tag prefix):
-- Gemma: `temperature=1.0, top_p=0.95, top_k=64`
-- Qwen3: `temperature=0.7, top_p=0.8, top_k=20, min_p=0` (plus `/no_think` injection for JSON mode)
+Every directional call funnels through `scorecard.record_call`. It de-dupes a
+re-emitted standing idea, applies **auto-fade** (over ≥12 scored calls in a 90-day
+window, a source with measured negative hit-rate gets conviction mechanically cut
+— −1 at 40–45% HR, −2 at 33–40%, hard fade below 33%, floored at 1, never
+inflated), and stores a `TradingCall` with the price at call time. Because
+conviction lives on the call, the fade automatically shrinks fund position size,
+can drop a call below a wallet's `min_conviction` gate, lowers `call_review`
+notability, and rebuckets `wallet_meta` — nothing else needs changing. `mark_calls`
+fills 1d/5d/20d returns from `PriceBar` history; an unscoreable call (no/stale
+price) retires *unscored* rather than getting a fabricated grade.
+
+**Autonomous wallets** (`funds.py`, `_POLICIES`): seven paper accounts trade the
+same call stream under deterministic policies, $10,000 each, no LLM in the trade
+loop — degen 🦍, catalyst 🎯, macro 🌐, crypto 🪙, sniper 🔭, **leaders 📈**
+(trend-aligned momentum; replaced the retired contrarian), hype 🚀 — plus a
+user-directed **research 🔬** wallet. All symmetric long/short, no leverage,
+2-day earnings blackout, sized by fixed-risk with a conviction/edge multiplier.
+`wallet_meta` reads realized P&L by source/conviction/asset and refuses to call an
+edge real below its minimum closed-trade sample. The degen-vs-leaders-vs-hype
+triangle is a designed hypothesis test (does the momentum signal have edge, and
+does trend/crowd confirmation sharpen it).
 
 ---
 
-## 6. Discovery loop
+## 7. Surface layer
 
-How the watchlist self-expands beyond the seed indices:
+### Discord
 
-```mermaid
-flowchart LR
-    classDef seed fill:#1f5582,stroke:#0a2540,color:#fff
-    classDef promote fill:#d35400,stroke:#0a2540,color:#fff
-    classDef table fill:#37474f,stroke:#0a2540,color:#fff
+17 channels, grouped as raw-ish streams (`#filings`, `#insiders`, `#news`,
+`#macro`, `#crypto`, `#reddit`, `#pulse`), curated reasoning (`#priority`,
+`#convergence`, `#hot`, `#calls`, `#risk`, `#funds`), and daily/system
+(`#digest`, `#catalysts`, `#general`, `#meta`). Channel IDs are env-configured;
+unset optional channels degrade to a sensible parent (`#reddit` and `#hot` *skip*
+instead, to avoid firehosing). `routing.channel_for(ticker, default)` sends a
+ticker's content to its asset-class channel (crypto → `#crypto`).
 
-    S1[S&P 500 · Nasdaq 100<br/>from Wikipedia]:::seed
-    S2[config/etfs.yaml<br/>~46 sector + leveraged ETFs]:::seed
-    S3[config/tracked_entities.yaml<br/>tracked funds]:::seed
+Every post goes through the `discord_client.post_embed` chokepoint: a UTC
+timestamp, an importance badge (🔴🟠🟡🔵⚪ for 5→1), and a persistent
+`PostActionsView` with three buttons — **🤖 Ask AI** (opens a thread, seeds a
+placeholder, replaces it with an LLM brief, then answers follow-ups on the shared
+`chat.answer_question` path), **👍 Useful**, **👎 Noise**. The 👍/👎 feed the
+monthly materiality tuner; ✅/❌ reactions on a `#meta` tuning proposal apply or
+reject the prompt delta. Users interact via `!commands` and `@mention` (status,
+ticker/news/filing lookups, paper trading, holdings, scorecard, calls, funds,
+theses, research, watches, timeline, catalysts, health — see HANDBOOK §11).
 
-    P1["activity promotion<br/>3+ filings in 30d<br/>OR any 8-K in 7d"]:::promote
-    P2["movers discovery<br/>yfinance day_gainers<br/>not on watchlist"]:::promote
+### Web (in-process, localhost)
 
-    WL[(Watchlist)]:::table
+The same process serves a web app via uvicorn on the bot's loop (default
+`127.0.0.1:8730`):
 
-    S1 --> WL
-    S2 --> WL
-    S3 --> WL
-    P1 --> WL
-    P2 --> WL
+- **FastAPI `/api`** — ~22 routers (`overview`, `markets`, `symbol`, `crypto`,
+  `calls`, `filings`, `news`, `social`, `theses`, `wallets`, `positions`,
+  `research`, `watches`, `analytics`, `catalysts`, `copilot`, `plan`, `prompts`,
+  `health`, `lookup`, `market-status`, `events`). It reads through the same WAL
+  engine and shares accessors with the Discord bot — one voice, no forked logic.
+  `/api/events` is a Server-Sent-Events stream (with `Last-Event-ID` replay) fed
+  by the in-process `events.publish` pub/sub, so the UI updates live.
+- **SvelteKit `/app`** — the modern UI (Svelte 5 + SvelteKit 2 + Tailwind 4 +
+  TanStack Query), built static into `frontend/build/` and mounted by
+  `dashboard/v2_serve.py` with SPA fallback. Pages: Overview, Markets,
+  Symbol detail, Crypto, Book, Journal, Calls, Intel, Feed, Analytics, Theses,
+  Research, Copilot, Lookup, Watches, Portfolio, Compare, Settings, System.
+- **NiceGUI `/`** — the original 5k-line in-process cockpit (`dashboard/app.py`),
+  still mounted at root. The swap to make SvelteKit primary is planned but not yet
+  flipped; both run on the same FastAPI app today.
 
-    WL -.->|expired 'activity' rows<br/>cleaned weekly| WL
-```
-
-Future: social-mention discovery when Reddit is wired (any unseen cashtag crossing a mention threshold → promote).
-
----
-
-## 7. Feedback loop
-
-How 👍 / 👎 close back into the prompt:
-
-```mermaid
-flowchart LR
-    classDef ch fill:#5c3a92,stroke:#0a2540,color:#fff
-    classDef table fill:#37474f,stroke:#0a2540,color:#fff
-    classDef heavy fill:#c0392b,stroke:#0a2540,color:#fff
-    classDef light fill:#2e7d32,stroke:#0a2540,color:#fff
-
-    P>posts]:::ch
-    R["👍 / 👎 react<br/>(you)"]
-    FB[(Feedback)]:::table
-    F[(Filing)]:::table
-    TUN{{monthly_tuning<br/>1st of month}}:::heavy
-    META>#meta proposal<br/>with ✅ / ❌]:::ch
-    PV[(PromptVersion)]:::table
-    MAT{{materiality scorer<br/>future cycles}}:::light
-
-    P --> R
-    R --> FB
-    FB --> TUN
-    F --> TUN
-    TUN --> META
-    META -- "you ✅" --> PV
-    META -- "you ❌" --> R
-    PV --> MAT
-```
+The `analytics/` package (19 read-only modules: attribution, calibration,
+concentration, correlation, volatility, streaks, perf-by-source, pnl-distribution,
+risk-monitor, earnings-exposure, holdings-news, daily/monthly, hot, converging,
+sentiment-quality, digest, dedupe) computes the numbers behind the dashboard and
+chat. A dashboard mount failure logs and the bot runs on.
 
 ---
 
-## 8. File map
+## 8. LLM stack
 
-```
-sentinel/
-├── config/
-│   ├── indices.yaml          # which indices the watchlist pulls
-│   ├── etfs.yaml             # curated ETF list
-│   ├── tracked_entities.yaml # funds/insiders by CIK
-│   ├── subreddits.yaml       # for when Reddit comes online
-│   └── news_feeds.yaml       # 13 RSS feeds (macro + tier-1 + Google News topics)
-├── data/
-│   └── radar.db              # SQLite, WAL mode
-├── docs/
-│   ├── SPEC.md               # original spec
-│   └── ARCHITECTURE.md       # this file
-├── src/sentinel/
-│   ├── main.py               # entry point, --run-once registry
-│   ├── config.py             # pydantic-settings Settings
-│   ├── db.py                 # engine + session_scope + inline migrations
-│   ├── models.py             # all 13 SQLModel tables
-│   ├── llm.py                # Ollama wrapper, family-aware sampling, parse_json_response
-│   ├── prompts.py            # all SPEC §8 prompts + seed_prompts
-│   ├── discord_client.py     # bot, post_filing, post_meta, post_digest, post_pulse, run_with_bot
-│   ├── chat.py               # !commands + @mention RAG
-│   ├── feedback.py           # on_raw_reaction_add (filings feedback + tuning apply/reject)
-│   ├── scheduler.py          # 17-job AsyncIOScheduler
-│   ├── utils.py              # extract_tickers (cashtag/bare/blocklist rules)
-│   ├── edgar/
-│   │   ├── client.py         # EDGAR HTTP w/ 8 req/s limiter, company_tickers, submissions
-│   │   └── watchlist_builder.py
-│   ├── ingesters/
-│   │   ├── reddit.py         # STUB — PRAW pending
-│   │   ├── hackernews.py     # Algolia search per ticker/company
-│   │   ├── news.py           # RSS + yfinance per-ticker
-│   │   └── prices.py         # yfinance + market-hours guard
-│   └── pipelines/
-│       ├── filings.py        # summarize + materiality + route
-│       ├── enrich.py         # pure DB → EnrichmentContext (filings + chat + materiality)
-│       ├── sentiment.py      # batched LLM tagging of RedditMention
-│       ├── social_pulse.py   # spike detection + heavy synthesis
-│       ├── convergence.py    # 2+ signal stacking → #priority
-│       ├── movers.py         # PriceContext outliers + day_gainers discovery
-│       ├── macro_themes.py   # cluster macro headlines → themes (with validator)
-│       ├── news_alerts.py    # LLM-triaged tier-1 breaking news
-│       ├── news_impact.py    # measure realized 1h/1d return per news item
-│       ├── briefing.py       # pre-market briefing
-│       ├── digest.py         # end-of-day digest
-│       └── tuning.py         # monthly feedback-driven prompt delta
-└── tests/
-    ├── test_ticker_extraction.py   # 12 cases — passing
-    ├── test_prompts.py             # 8 cases — passing
-    ├── test_edgar.py               # placeholder
-    └── test_materiality.py         # placeholder
-```
+Two logical tiers, **light** and **heavy**, each resolvable to a local Ollama
+model or a remote OpenAI-compatible API independently (`llm.py`, `config.py`):
+
+- **Code defaults:** light `gemma4:e4b`, heavy `qwen3:30b-a3b` (local Ollama).
+- **This deployment's `.env`:** both tiers route to `deepseek/deepseek-v4-flash`
+  via OpenRouter (`gmicloud/fp8`), with local `qwen2.5:14b-instruct` as the Ollama
+  heavy fallback. So the configured defaults and the running config can differ —
+  read `.env` to know what a given box is actually using.
+- **Reasoning level** (`LLM_REASONING`, default `medium`) controls hidden
+  chain-of-thought; JSON/structured calls always force reasoning off. Heavy calls
+  can `fallback_light` on failure.
+- Retry is tenacity (3 attempts, exponential backoff) on connect/timeout errors;
+  a defensive `parse_json_response` strips fences and salvages object-vs-array
+  mismatches. Token + cost are tracked per process (`llm_stats`), priced via
+  `LLM_PRICE_IN_PER_M` / `LLM_PRICE_OUT_PER_M`. A grounding preamble
+  (`grounding.py` + `config/world_anchor.yaml`) corrects training-cutoff bias.
 
 ---
 
-## 9. Non-goals (worth restating)
+## 9. Scheduler cadence (43 jobs)
 
-Per SPEC §12, the bot does **not** do any of the following, even though they might seem tempting:
+`scheduler.py` registers 43 APScheduler jobs (intervals jittered ±45s to avoid
+SQLite lock contention). Every scheduled job is also runnable as
+`--run-once <name>` for single-cycle debugging (the sole exception is the weekly
+watchlist rebuild, a sync bootstrap step). Cadences are env-tunable
+(`POLL_*_MINUTES`, `SYNTHESIS_HOURS`, `*_HOUR_ET`, …).
 
-- Auto-trading, broker integration, position sizing
-- Price prediction or signal generation
-- Backtesting framework
-- Multi-user, ACLs, web dashboard
-- X/Twitter integration, Discord-scraping of other servers
-- Paid news APIs (Bloomberg, Reuters paid)
-- LLM-speculation discovery of "related" tickers
-- Slash commands for portfolio management
+| Cadence | Jobs |
+|---|---|
+| 3 min | `filings_cycle`, `prices_poll` |
+| 5 min | `news_poll`, `auto_exits` |
+| 10 min | `news_alerts` |
+| 15 min | `reddit_poll`, `hot_movers`, `watches`, `auto_thesis`, `risk_circuit` |
+| 20 min | `crypto_micro`, `funding_squeeze`, `reddit_feed` |
+| 30 min | `hn_poll`, `crypto_trending`, `convergence`, `why_moved`, `book_risk` |
+| 1 h | `sentiment_tag`, `social_pulse`, `news_impact_tag` |
+| 2 h | `mark_calls`, `call_review` |
+| 4 h | `macro_themes` |
+| 6 h (default) | `synthesis`, `prices_backfill` |
+| Cron (ET) | `catalyst_radar` 07:00, `auto_research_pre_earnings` 07:30, `health_post` 08:00, `position_review` 08:00, `thesis_generate` 08:15, `premarket_briefing` 08:30, `lounge_am` 11:20, `movers_daily` 16:15, `daily_digest` 16:30, `funds_digest` 16:45, `thesis_review` 17:10, `lounge_pm` 17:20, `prices_daily` 17:00 |
+| Cron (other) | `funds_cycle` hourly, `funds_meta` Sun 12:00 ET, `watchlist_rebuild` Sun 06:00 UTC, `monthly_tuning` 1st 12:00 UTC |
 
-The bot's role is **information surfacing + correlation + RAG**, not decision-making. The edge comes from:
+Market-hours gating is explicit only in `hot_movers` (and the price/crypto
+ingesters); other jobs run 24/7 but their cadences align with market timing.
 
-1. **Breadth** — ~600 names + ETFs continuously monitored.
-2. **Speed** — sub-10-min latency on SEC filings.
-3. **Cross-source synthesis** — filings × price × HN × news × Reddit (when wired).
-4. **Measurement** — every news item gets tagged with realized price reaction.
-5. **Adaptation** — 👍/👎 feedback → monthly prompt-tuning loop.
+---
 
-You bring the trading judgment; the bot keeps you informed without you having to refresh anything.
+## 10. Where things live
+
+| Concern | File |
+|---|---|
+| Orchestration / cadences | `scheduler.py` |
+| Entrypoint, `--run-once`, `--reset`, `--preflight` | `main.py`, `preflight.py` |
+| Data model / DB engine / migrations | `models.py`, `db.py` |
+| Settings + env | `config.py`, `.env.example` |
+| LLM wrapper / tiers / tools | `llm.py`, `llm_tools.py`, `llm_tool_log.py` |
+| Accountability + auto-fade | `scorecard.py` |
+| Wallets + meta | `funds.py` |
+| Theses / per-ticker memory | `thesis.py`, `narrative.py` |
+| User paper book / research | `portfolio.py`, `research_desk.py`, `research.py`, `dossier.py` |
+| Ingesters | `ingesters/`, `edgar/` |
+| Pipelines | `pipelines/` |
+| Analytics | `analytics/` |
+| Prompts | `prompts.py` |
+| Discord surface | `discord_client.py`, `chat.py`, `feedback.py`, `interactions.py`, `ui.py`, `routing.py` |
+| Web API | `api/` |
+| Web dashboards | `dashboard/` (NiceGUI `app.py`, SvelteKit mount `v2_serve.py`), `frontend/` |
+| Tests (~365) | `tests/` |

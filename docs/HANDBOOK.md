@@ -1,114 +1,136 @@
 # Sentinel — The Handbook
 
-> The complete "understand it all" guide: every feature, how each piece works,
-> how they're wired together, how to run and use it, and where it can go next.
-> Personal, single-user, **paper-only** trading-intelligence copilot that lives
-> in Discord.
+> The complete "understand it all" guide: what every feature does, how the pieces
+> wire together, how to run and use it, and where it can go next. A personal,
+> single-user, **paper-only** trading-intelligence copilot that lives in Discord
+> and a localhost web dashboard.
+
+For the wiring diagram and table-of-everything see `ARCHITECTURE.md`; for code
+conventions see `../CLAUDE.md`.
 
 ---
 
 ## 1. The one-paragraph mental model
 
-Sentinel continuously **ingests** the market's information surface (SEC
-filings, Reddit, Hacker News, prices, macro/geopolitical news, crypto
-micro-structure), **reasons** over it with a local LLM to produce connected
-reads and concrete directional calls, **acts** on those calls in seven
-autonomous paper wallets, **measures** whether the calls actually worked,
-**auto-corrects** by fading sources it's measurably bad at, and **watches
-itself** for silent failure — all posted into Discord channels and queryable
-with `!` commands. It is opinionated by design: it's allowed to conclude,
-predict, and give advice. The only hard rule is **it never fabricates a
-number** — it bets, but it never invents the evidence.
-
-The whole system is one closed loop:
+Sentinel continuously **ingests** the market's information surface (SEC filings,
+Reddit, Hacker News, prices, macro/geopolitical news, crypto microstructure),
+**reasons** over it with an LLM to produce connected reads and concrete
+directional calls, **acts** on those calls in autonomous paper wallets,
+**measures** whether the calls actually worked, **auto-corrects** by fading
+sources it's measurably bad at, and **watches itself** for silent failure — all
+surfaced into Discord channels and a web dashboard, queryable with `!commands`
+and a copilot chat. It is opinionated by design: it's allowed to conclude,
+predict, and advise. The only hard rule is **it never fabricates a number** — it
+bets, but it never invents the evidence.
 
 ```
 ingest → reason → call → trade(paper) → measure → auto-fade → self-monitor
-   ↑__________________________________________________________________│
-                 (the scorecard feeds the next reason)
+   ^________________________________________________________________|
+                (the scorecard feeds the next reason)
 ```
 
 ---
 
 ## 2. Design spine (the rules everything obeys)
 
-These are invariants, not preferences. Every feature was built to honor them.
+These are invariants, not preferences.
 
 - **Noise reduction over coverage.** A pipeline stays silent unless it has
-  something real to say. "An empty channel beats a noisy one" is enforced in
-  prompts and gates, not hoped for.
-- **Never fabricate.** A stale/zero price never becomes P&L; an unscoreable
-  call retires unscored; a verdict is arithmetic, never an LLM guess; the
-  health report is deterministic. Reason boldly, invent nothing.
-- **Accountable.** Every directional opinion is logged, marked-to-market, and
-  scored. The bot's track record is visible and feeds back into its behavior.
-- **Free to advise.** Single-user paper tool, no compliance surface — no
-  "not financial advice" disclaimers, no refusing a take. The call *is* the
-  product. (Earlier spec drafts had template restrictions; removed on purpose.)
-- **One chokepoint per concern.** Calls funnel through `record_call`; embeds
-  through `post_embed`; prompts through `get_prompt`; DB through
-  `session_scope`; wallet policy through `_POLICIES`. Fix once, propagate
-  everywhere.
+  something real to say. An empty channel beats a noisy one — enforced in prompts
+  and gates, not hoped for.
+- **Never fabricate.** A stale/zero price never becomes P&L; an unscoreable call
+  retires unscored; a verdict is arithmetic, never an LLM guess; the health report
+  is deterministic. Reason boldly, invent nothing.
+- **Accountable.** Every directional opinion is logged, marked to market, and
+  scored. The track record is visible and feeds back into behavior.
+- **Free to advise.** Single-user paper tool, no compliance surface — no "not
+  financial advice" disclaimers, no refusing a take. The call *is* the product.
+- **One chokepoint per concern.** Calls funnel through `scorecard.record_call`;
+  embeds through `discord_client.post_embed`; prompts through `get_prompt`; DB
+  through `session_scope`; wallet policy through `funds._POLICIES`; ticker→channel
+  through `routing.channel_for`. Fix once, propagate everywhere.
 - **Scheduler ↔ registry parity.** Every scheduled job is also a manual
-  `--run-once` job (sole intentional exception: the weekly watchlist
-  rebuild, a sync bootstrap step).
-- **Tested.** ~136 deterministic tests pin the load-bearing math and gates.
+  `--run-once` job (sole exception: the weekly watchlist rebuild, a sync bootstrap).
+- **One process, one DB, one voice.** Discord and the web dashboard share the same
+  accessors and the same SQLite database. No forked logic, no second writer.
+- **Tested.** ~365 deterministic tests pin the load-bearing math and gates.
 
 ---
 
 ## 3. Setup & running
 
 ### Prerequisites
-1. **Ollama** running locally with the two configured models pulled
-   (`ollama list`):
-   - light: `gemma4:e4b` (fast, used for triage/curation/lounge/chat)
-   - heavy: `qwen3:30b-a3b` (reasoning: synthesis / why_moved / convergence /
-     macro desk). Large — pre-pull it or first boot stalls downloading.
-   - Optional: route "heavy" to an OpenAI-compatible API instead
-     (`HEAVY_LLM_API_*`) to stay fast without local GPU.
-2. **`.env`** with the Discord bot token + channel IDs (see §4).
+
+1. **An LLM for each tier.** Two independent choices:
+   - *Local:* Ollama running with the configured models pulled
+     (`LLM_MODEL_LIGHT`, `LLM_MODEL_HEAVY`; defaults `gemma4:e4b` and
+     `qwen3:30b-a3b`).
+   - *Serverless:* any OpenAI-compatible API (OpenRouter, Novita, DeepInfra,
+     Google AI, …) via `LLM_API_*`, with per-tier overrides if light and heavy
+     should use different providers. This deployment routes both tiers to
+     `deepseek/deepseek-v4-flash` on OpenRouter, with local `qwen2.5:14b-instruct`
+     as the heavy fallback.
+2. **`.env`** with the Discord bot token + channel IDs and an EDGAR user-agent
+   (see §4).
 3. **`uv`** for dependency management.
 
 ### Commands
+
 ```bash
-# Run the live bot (this is "running it")
+# Live bot + scheduler + web dashboard (this is "running it")
 uv run python -m sentinel.main
+
+# Boot self-check (go/no-go) — run this before the first real run
+uv run python -m sentinel.main --preflight
 
 # Single-cycle debug — run any one job once and exit
 uv run python -m sentinel.main --run-once synthesis
 uv run python -m sentinel.main --run-once filings --skip-watchlist
 
-# The test suite (≠ running the bot; ~5s)
-uv run pytest -q
+# Archive the live DB to data/backups/ and start from an empty schema
+uv run python -m sentinel.main --reset
 
-# Lint
+# Tests (~365) and lint
+uv run pytest -q
 uv run ruff check src tests
 ```
 
-`--run-once <job>` accepts any of: `filings, reddit, hackernews, prices,
-prices_daily, prices_backfill, sentiment, social_pulse, digest, tuning,
-convergence, movers, briefing, news, macro_themes, news_impact, mark_calls,
-call_review, book_risk, health, funds_cycle, funds_digest, funds_meta,
-news_alerts, crypto_trending, crypto_micro, synthesis, why_moved, watches,
-catalysts, lounge, reddit_feed`. Flags: `--skip-watchlist`, `--skip-llm`.
+CLI flags: `--run-once <job>`, `--skip-watchlist`, `--skip-llm`, `--preflight`,
+`--reset`. `--run-once` accepts any scheduled job name: `filings, reddit,
+hackernews, prices, prices_daily, prices_backfill, sentiment, social_pulse,
+digest, tuning, convergence, movers, hot_movers, thesis_generate, thesis_review,
+auto_thesis, auto_exits, risk_circuit, auto_research_pre_earnings, briefing, news,
+macro_themes, news_impact, mark_calls, call_review, book_risk, health,
+funds_cycle, funds_digest, funds_meta, news_alerts, crypto_trending, crypto_micro,
+synthesis, why_moved, watches, catalysts, lounge, reddit_feed`.
 
 ### Running it for real
-- Smoke-test first: `--run-once prices`, `--run-once filings`,
-  `--run-once macro_themes`, `--run-once book_risk` — watch `#meta`.
-- Then run under something durable: `nohup uv run python -m
-  sentinel.main > data/logs/run.out 2>&1 &`, tmux, or systemd.
-- **Start on a weekday.** Equities only poll during NYSE hours; on a weekend
-  most price-driven pipelines look dead (correctly).
+
+- Smoke-test first: `--preflight`, then `--run-once prices`, `--run-once filings`,
+  `--run-once macro_themes` — watch `#meta`.
+- Run under something durable: `nohup uv run python -m sentinel.main >
+  data/logs/run.out 2>&1 &`, tmux, or systemd.
+- **Start on a weekday.** Equities only poll during NYSE hours; on a weekend most
+  price-driven pipelines correctly look quiet.
 - A day shows **liveness + content quality**. The edge layers
   (scorecard/verdicts/wallet-meta/auto-fade) need **1–3 weeks** because calls
   mature at 1d/5d/20d. Don't judge edge on day one.
 
+### Preflight checks
+
+`--preflight` runs eight boot checks in <5s and exits 0 (no criticals) or 1:
+required env present (DISCORD_TOKEN critical), DB writable, schema initializes
+with all tables, every `config/*.yaml` parses, channel IDs look like valid
+snowflakes, the dashboard port is free, the watchlist is seeded (warning), and
+both LLM tiers respond (critical only if both are down — one down degrades to the
+fallback).
+
 ### Operational note (SQLite concurrency)
-Many pipelines write concurrently from worker threads. The DB engine is
-configured WAL + `busy_timeout=30000` + `synchronous=NORMAL` so a contended
-writer **waits** instead of erroring. If you ever see `database is locked`
-again it means a single write transaction exceeded 30s (e.g. a huge price
-backfill) — the structural fix is bulk-insert in the price poller (see §15).
+
+Many pipelines write concurrently from worker threads. The engine is WAL +
+`busy_timeout=60000` + `synchronous=NORMAL` so a contended writer **waits** rather
+than errors. The price poller bulk-inserts (`INSERT … ON CONFLICT DO NOTHING`) so
+the write lock is held for milliseconds, not seconds.
 
 ---
 
@@ -121,174 +143,205 @@ backfill) — the structural fix is bulk-insert in the price poller (see §15).
 | **Streams (raw-ish, time-ordered):** | |
 | `DISCORD_FILINGS_CHANNEL_ID` | All SEC filings (with materiality scoring) |
 | `DISCORD_INSIDERS_CHANNEL_ID` | Form 4 / 13F insider activity |
-| `DISCORD_NEWS_CHANNEL_ID` | Per-ticker news + breaking alerts (→ pulse) |
-| `DISCORD_MACRO_CHANNEL_ID` | Macro/geopolitical news ONLY (→ news → pulse) |
+| `DISCORD_NEWS_CHANNEL_ID` | Per-ticker news + breaking alerts |
+| `DISCORD_MACRO_CHANNEL_ID` | Macro/geopolitical news only (→ news → pulse) |
 | `DISCORD_CRYPTO_CHANNEL_ID` | All per-coin crypto content (→ news) |
 | `DISCORD_REDDIT_CHANNEL_ID` | Notable r/ posts — *skips* when unset (firehose) |
 | `DISCORD_PULSE_CHANNEL_ID` | Social-mention spikes only |
-| **Curated (bot's reasoning, lower volume):** | |
+| **Curated (the bot's reasoning):** | |
 | `DISCORD_PRIORITY_CHANNEL_ID` | Material 8-Ks + high-conviction signals |
 | `DISCORD_CONVERGENCE_CHANNEL_ID` | Multi-source agreement (→ priority) |
 | `DISCORD_HOT_CHANNEL_ID` | Watchlist movers NOW — *skips* when unset (opt-in) |
 | `DISCORD_CALLS_CHANNEL_ID` | Call-resolution verdicts (→ digest → meta) |
-| `DISCORD_RISK_CHANNEL_ID` | Book-risk alerts on OPEN positions (→ priority → meta) |
+| `DISCORD_RISK_CHANNEL_ID` | Book-risk alerts on open positions (→ priority → meta) |
 | `DISCORD_FUNDS_CHANNEL_ID` | Autonomous-wallet trade narrations (→ digest → meta) |
-| **Daily / scheduled / system:** | |
-| `DISCORD_DIGEST_CHANNEL_ID` | EOD digest |
-| `DISCORD_CATALYSTS_CHANNEL_ID` | Forward catalyst calendar (→ digest → news → pulse) |
+| **Daily / system:** | |
+| `DISCORD_DIGEST_CHANNEL_ID` | EOD digest + pre-market briefing |
+| `DISCORD_CATALYSTS_CHANNEL_ID` | Forward catalyst calendar (→ digest → news) |
 | `DISCORD_GENERAL_CHANNEL_ID` | The Lounge — geopolitics↔market musings (→ digest) |
-| `DISCORD_META_CHANNEL_ID` | Ops / health / errors — the bot's console |
-| `OLLAMA_BASE_URL`, `LLM_MODEL_LIGHT`, `LLM_MODEL_HEAVY` | Local LLM |
-| `HEAVY_LLM_API_BASE/KEY/MODEL` | Optional remote heavy model |
+| `DISCORD_META_CHANNEL_ID` | Ops / health / errors / tuning — the bot's console |
+| **LLM:** | |
+| `OLLAMA_BASE_URL`, `LLM_MODEL_LIGHT`, `LLM_MODEL_HEAVY` | Local Ollama tiers |
+| `LLM_API_BASE/KEY/MODEL_LIGHT/MODEL_HEAVY` | Shared OpenAI-compatible API |
+| `LIGHT_LLM_API_*`, `HEAVY_LLM_API_*` | Per-tier provider overrides |
+| `LLM_API_PROVIDER_LIGHT/HEAVY` | OpenRouter provider/quant hint |
+| `LLM_REASONING` | `low`/`medium`/`high`/`off` (default `medium`) |
+| `LLM_PRICE_IN_PER_M`, `LLM_PRICE_OUT_PER_M` | Token pricing for the `$` estimate |
+| **Data sources:** | |
 | `REDDIT_USER_AGENT` | Override the rotating UA pool (leave blank) |
 | `EDGAR_USER_AGENT` | Required by SEC EDGAR fair-use |
-| `POLL_*_MINUTES`, `*_HOURS`, `*_HOUR_ET` | Pipeline cadences |
+| **Cadences:** | |
+| `POLL_*_MINUTES`, `*_HOURS`, `*_HOUR_ET`, `NEWS_ALERTS_MINUTES`, `SYNTHESIS_HOURS`, `WHY_MOVED_MINUTES`, `WATCHES_MINUTES` | Pipeline timing |
+| **Wallets + dashboard:** | |
 | `FUND_STARTING_CASH` (10,000), `FUNDS_CYCLE_MINUTES` | Wallets |
+| `DASHBOARD_ENABLED/HOST/PORT` (127.0.0.1:8730) | Web server |
 
-**Channel fallback** is universal: an unset optional channel degrades to a
-sensible parent (never crashes). Unset `DISCORD_REDDIT_CHANNEL_ID` is the one
-that *skips* rather than falls back (it would firehose a shared channel).
+**Channel fallback is universal:** an unset optional channel degrades to a
+sensible parent (never crashes). `#reddit` and `#hot` are the exceptions — they
+*skip* rather than fall back, to avoid firehosing a shared channel.
+
+**Config YAML** (in `config/`): `indices.yaml` (sp500, nasdaq100),
+`etfs.yaml` (~54), `crypto.yaml` (~51 coins), `macro_assets.yaml` (~37 futures +
+rates), `macro_calendar.yaml` (FOMC/CPI fixed dates), `news_feeds.yaml` (~35
+feeds, each `macro: true/false`), `subreddits.yaml` (~72), `tracked_entities.yaml`
+(~20 13F filers by CIK), and `world_anchor.yaml` (ground-truth facts so the LLM
+doesn't anchor on stale training priors).
 
 ---
 
 ## 5. Ingestion layer (the senses)
 
 Each runs on a scheduler interval, off the event loop in a thread, with a
-top-level catch that posts errors to `#meta`. Per-item failures are skipped,
-never fatal.
+top-level catch that posts errors to `#meta`. Per-item failures are skipped.
 
 | Ingester | Source | ~Cadence | Writes |
 |---|---|---|---|
-| `filings` | SEC EDGAR `getcurrent` for watchlist CIKs | 10m | `Filing` (+ posts) |
-| `reddit` | Public Reddit RSS (UA-rotated, circuit-broken) + Google-News fallback | 15m | `RedditMention` |
-| `hackernews` | HN Algolia | 30m | `HnMention` |
-| `prices` (intraday) | yfinance 1m bars, NYSE-hours-gated (crypto/futures 24/7) | 5m | `PriceBar`, `PriceContext` |
-| `prices` (daily/backfill) | yfinance daily/60d | 17:00 ET / 6h | `PriceBar` |
-| `news` | 32 RSS/Google-News feeds (macro+geopolitical+crypto) + yfinance per-ticker | 5m | `NewsItem` |
-| `crypto_trending` | CoinGecko trending → promotes coins to the watchlist (auto-expire) | 30m | `Watchlist` |
-| `crypto_micro` | Binance/OKX funding, OI, orderbook imbalance | 20m | `CryptoMicro` |
+| `filings` | SEC EDGAR `getcurrent` → per-CIK submissions | 3 min | `Filing` (+ posts) |
+| `reddit` | Public Reddit RSS (UA-rotated, circuit-broken) + Google-News fallback | 15 min | `RedditMention` |
+| `hackernews` | HN Algolia (6h lookback) | 30 min | `HnMention` |
+| `prices` (intraday) | yfinance 1m bars, NYSE-gated (crypto/futures 24/7) | 3 min | `PriceBar`, `PriceContext` |
+| `prices` (daily / backfill) | yfinance daily / multi-year | 17:00 ET / 6h | `PriceBar` |
+| `news` | ~35 RSS/Google-News feeds (macro + geopolitical + crypto) + yfinance per-ticker | 5 min | `NewsItem` |
+| `crypto_trending` | CoinGecko trending → promotes coins to watchlist (14d TTL) | 30 min | `Watchlist` |
+| `crypto_micro` | Binance/OKX funding, OI, orderbook imbalance | 20 min | `CryptoMicro` |
 
 Key behaviors:
-- **Ticker extraction** is disciplined: `$cashtag` regex + watchlist
-  membership + a blocklist of common English words. Spurious matches that
-  slip through are killed downstream by the LLM curator.
-- **Self-healing watchlist**: yfinance-dead tickers get struck 3× then
-  auto-pruned; their orphaned `PriceContext`/`PriceBar` are swept so a dead
-  coin can't resurface as a fake mover. Bad/zero price bars are rejected at
-  the source.
-- The watchlist (~700 tickers) is **autonomous**: S&P/Wikipedia index +
-  ETFs + activity-promoted + crypto-trending, rebuilt weekly.
+
+- **Ticker extraction** is disciplined: `$cashtag` / bare-ticker / company-name,
+  each gated by watchlist membership and a 54-word blocklist; bare tickers need a
+  corroborating signal. News adds an LLM tagging pass, always re-validated against
+  the watchlist. Spurious matches that slip through get killed downstream by the
+  LLM curators.
+- **Self-healing watchlist:** yfinance-dead tickers are pruned after 3 empty
+  cycles and their orphaned `PriceContext`/`PriceBar` swept, so a dead coin can't
+  resurface as a fake mover. Bad/zero bars are rejected at the source.
+- **The watchlist (~700+ names) is autonomous:** S&P 500 + Nasdaq 100 (Wikipedia)
+  + curated ETFs/crypto/macro + activity-promoted filers (≥3 filings/30d or any
+  8-K/7d, 60d TTL) + crypto-trending (14d TTL), rebuilt weekly.
+- **Article bodies** are fetched on demand (direct httpx + BeautifulSoup, Jina
+  Reader fallback) and cached in `ArticleBody`; failed paywalls persist as stubs
+  so they aren't re-fetched.
 
 ---
 
 ## 6. Reasoning layer (the pipelines)
 
-These consume the ingested data and post to Discord. Heavy = `qwen3`,
-Light = `gemma4`. "Calls?" = does it emit scored `TradingCall`s.
+These consume ingested data and post to Discord / publish SSE. Heavy = the
+reasoning tier, Light = the fast tier. "Calls?" = emits a scored `TradingCall`.
+See `ARCHITECTURE.md §5` for the full table; the load-bearing ones:
 
-| Pipeline | What it does | LLM | ~Cadence | Calls? | Channel |
-|---|---|---|---|---|---|
-| `filings` | Summarize + score materiality of each filing | both | 10m | — | filings/insiders/priority |
-| `why_moved` | Explains an unexplained price/volume move from evidence, then commits a forward read | heavy | 30m | ✅ | priority/crypto |
-| `convergence` | Where filing + social + price + news stack on the same name → a call | heavy | 30m | ✅ | priority |
-| `synthesis` | The "octopus": system-wide connected read across all arms, continuous (reads its last briefing + its own track record) | heavy | 6h | ✅ | priority |
-| `macro_themes` (macro desk) | News → transmission chain → exposed names → a committed read | heavy | 4h | ✅ | news |
-| `lounge` | Off-clock #general: a grounded geopolitics↔market causal chain or absurd-but-true take, gated `SKIP` | light | 11:20 & 17:20 ET | — | general |
-| `social_pulse` | Tickers with abnormal Reddit volume + substance/noise judgment | light | 1h | — | pulse |
-| `sentiment` | Tags recent Reddit mentions bullish/bearish/thesis | light | 1h | — | (db) |
-| `movers` | EOD biggest movers + one-line hypothesis | light | 16:15 ET | — | pulse |
-| `news_alerts` | Breaking per-ticker news triage | light | 10m | — | news/crypto |
-| `news_impact` | Measures news→price correlation after the fact | — | 1h | — | (db) |
-| `briefing` | Pre-market: positions take, not a neutral wire | heavy | 08:30 ET | — | priority |
-| `digest` | End-of-day narrative summary + "the read" | heavy | 16:30 ET | — | digest |
-| `catalysts` | Computed calendar (OPEX, jobs, FOMC, **earnings dates** persisted) | — | 07:00 ET | — | digest |
-| `watches` | User natural-language alerts compiled to a constrained spec, evaluated each cycle | light(compile) | 15m | — | priority |
-| `tuning` | Monthly: rewrites the materiality prompt from 👍/👎 feedback | heavy | monthly | — | meta |
-| `reddit_feed` | LLM-curated stream of genuinely notable r/ posts (kills spurious matches) | light | 20m | — | reddit |
-| `book_risk` | Proactive risk scan of *your* open paper positions | light(read) | 30m | — | risk |
-| `call_review` | Posts the verdict on each notable matured call | — | 2h | — | calls |
-| `funds_*` | The autonomous wallets (see §8) | — | 1h / EOD / weekly | (consumes) | funds |
-| `health` | Self-diagnostic (see §10) | — | 08:00 ET | — | meta |
+- **`filings`** — summarize + materiality-score every filing (cheap triage first,
+  full form-typed summary only if it clears the bar), then route by score to
+  filings/insiders/priority. The materiality prompt is the one prompt the monthly
+  tuner owns at runtime.
+- **`why_moved`** — reverse-causality explainer: an unexplained price/volume move
+  → gather evidence → heavy read → optional forward call.
+- **`convergence`** — where filing + social + price + news stack on the same name
+  within a window → a synthesized call.
+- **`synthesis`** (the octopus) — every 6h, a system-wide connected read across
+  all arms and asset classes that ingests its own prior reads and how its recent
+  calls resolved, then writes an *update* and may commit calls.
+- **`macro_themes`** (macro desk) — news → transmission chain → exposed names →
+  committed read, every 4h, from the ~35 curated feeds.
+- **`funding_squeeze`** — deterministic crypto setups (squeeze-long on deeply
+  negative funding + price up; funding-fade on crowded positive funding; OI-confirm
+  on a leverage surge), gated by BTC regime and orderbook agreement.
+- **`book_risk`** — proactive scan of *your* open paper positions, pinging only on
+  real trouble (drawdown bucket, earnings imminent, or a fresh filing/news
+  contradicting the thesis), with cooldown + escalation.
+- **`position_review`** — pre-market hold/trim/close/flag verdicts on open
+  positions (deterministic gate first, heavy LLM only on flagged names).
+- **`lounge`** — twice-daily #general aside: a grounded geopolitics→mechanism→name
+  chain or an absurd-but-true observation, gated `SKIP` when there's nothing real.
+- **Automation pipelines** (no LLM): `auto_exits` (enforce stops/targets/trailing
+  stops), `auto_thesis` (promote 5/5 calls to theses), `risk_circuit` (pause new
+  opens on −15% wallet drawdown), `call_review` (post matured verdicts),
+  `auto_research_pre_earnings` (queue research ahead of earnings).
 
 ---
 
-## 7. The accountability spine (how it's *all* tied together)
+## 7. The accountability spine (how it's all tied together)
 
 This is the part to understand — it's why the system is a loop, not a feed.
 
-1. **A call is made.** `synthesis`, `why_moved`, `convergence`, and
-   `macro_themes` emit machine lines `CALL: $TICKER LONG|SHORT <1-5>`.
-2. **One chokepoint: `scorecard.record_call(...)`.** Every call funnels
-   here. It:
-   - de-dupes a re-emitted standing idea (won't double-count);
-   - **auto-fades**: if that *source* has a measured negative edge over ≥12
-     scored calls, conviction is mechanically reduced (fade-only, floors at
-     1, never inflates, self-heals via the 90d window). Tagged in the thesis
-     (`⚖︎ faded why_moved 4/19`) so it's visible.
-   - stores a `TradingCall` with the price at call time.
-3. **It propagates for free.** Because conviction lives on the `TradingCall`
-   the auto-fade automatically shrinks fund position size
-   (`size = equity·size_pct·conviction/5`), can drop a call below a fund's
-   `min_conviction` gate, lowers its `call_review` notability, and rebuckets
-   `wallet_meta` — *no other system needed changing*.
-4. **It's marked to market.** `mark_calls` fills 1d/5d/20d returns from
-   `PriceBar` history; an unscoreable call (no/stale price) retires
-   *unscored* rather than get a fabricated grade.
-5. **It's graded & shown.** `scorecard` computes hit-rate by source &
-   conviction (`!scorecard`); `call_review` posts the deterministic verdict
-   on notable matured calls (`📒 Called It`).
+1. **A call is made.** `synthesis`, `why_moved`, `convergence`, `macro_themes`,
+   and `funding_squeeze` emit `CALL: $TICKER LONG|SHORT <1-5>`.
+2. **One chokepoint: `scorecard.record_call`.** It de-dupes a re-emitted standing
+   idea; **auto-fades** (over ≥12 scored calls in a 90-day window, a source with
+   measured negative edge has its conviction mechanically trimmed — −1 at 40–45%
+   hit-rate, −2 at 33–40%, hard fade below 33%, floored at 1, never inflated, and
+   self-healing as the window rolls); and stores a `TradingCall` with the price at
+   call time.
+3. **It propagates for free.** Conviction lives on the call, so the fade
+   automatically shrinks fund position size, can drop a call below a wallet's
+   `min_conviction` gate, lowers `call_review` notability, and rebuckets
+   `wallet_meta`. Nothing else needs changing.
+4. **It's marked to market.** `mark_calls` fills 1d/5d/20d returns from `PriceBar`;
+   an unscoreable call (no/stale price) retires *unscored*, never fabricated.
+5. **It's graded & shown.** `scorecard` computes hit-rate by source and conviction
+   (`!scorecard`); `call_review` posts the deterministic verdict on matured calls.
 6. **It's traded.** The wallets consume the same `TradingCall` stream.
-7. **It's measured as edge.** `wallet_meta` attributes realized P&L by
-   source / conviction / asset and runs the headline experiments.
-8. **It feeds the next read.** `synthesis` ingests its own
-   `track_record_brief` and `wallet_edge` and is told to fade what it's bad
-   at. The loop closes.
+7. **It's measured as edge.** `wallet_meta` attributes realized P&L by source /
+   conviction / asset and runs the headline experiments.
+8. **It feeds the next read.** `synthesis` ingests its own track-record brief and
+   wallet edge and is told to fade what it's bad at. The loop closes.
 
-Other shared chokepoints: `discord_client.post_embed` (every embed gets a
-consistent timestamp + actions view + importance badge); `get_prompt` (DB
-PromptVersion → falls back to the code constant; `seed_prompts` reconciles
-on boot, code-authoritative except the tuning-owned `materiality`);
-`narrative.record_event` (per-ticker dated memory that synthesis and
-`!timeline` read back, and the dedup backbone for story coalescing).
+Other shared chokepoints: `discord_client.post_embed` (consistent timestamp +
+importance badge + actions view); `get_prompt` (DB active row → code constant —
+code-authoritative except the tuner-owned `materiality`); `narrative.record_event`
+(per-ticker dated memory that synthesis and `!timeline` read back, and the
+supersede/dedup backbone for story coalescing).
 
 ---
 
 ## 8. The autonomous wallets (the live experiment)
 
 Seven paper accounts trade the **same** `TradingCall` stream under different
-deterministic policies (`funds._POLICIES`), starting at $10,000 each. No LLM
-in the trade loop — pure rules, reproducible, a clean apples-to-apples
-comparison of which mandate works on the bot's ideas.
+deterministic policies (`funds._POLICIES`), starting at $10,000 each. No LLM in
+the trade loop — pure rules, reproducible, a clean apples-to-apples comparison of
+which mandate works on the bot's ideas. An eighth wallet, **research**, trades
+only when you execute a Research Desk recommendation.
 
 | Wallet | Mandate | Distinguishing rule |
 |---|---|---|
-| 🦍 degen | Fast momentum off why_moved/convergence | aggressive sizing, tight leash |
-| 🎯 catalyst | convergence/synthesis, equities, high-conviction | patient |
-| 🌐 macro | synthesis cross-asset only | few big, long hold |
-| 🪙 crypto | coins only, any source | wide bands for crypto vol |
-| 🔭 sniper | ONLY 5/5-conviction convergence/synthesis | are the best calls elite? |
-| 🪞 contrarian | **FADES** the bot's momentum calls (`invert`) | if it beats degen, the edge is a mirage |
-| 🚀 hype | only momentum calls the crowd is **also** surging on | does retail confirmation help? |
+| 🦍 degen | Fast momentum off why_moved/convergence, crypto-friendly | aggressive sizing, tight leash (min conv 3) |
+| 🎯 catalyst | convergence/synthesis, equities only, high-conviction | patient (min conv 4) |
+| 🌐 macro | synthesis cross-asset only | few big, long hold (max 4 positions) |
+| 🪙 crypto | coins only, 24/7 | requires fresh funding/OI microstructure |
+| 🔭 sniper | ONLY 5/5-conviction convergence/synthesis | are the best calls elite? (max 3) |
+| 📈 leaders | **trend-aligned** momentum; rides names already trending its way | never fades strength (requires trend alignment) |
+| 🚀 hype | only calls the crowd is **also** loud about (≥4 Reddit posts/18h) | does retail confirmation help? |
+| 🔬 research | user-directed via the Research Desk | trades only on `execute()`, conviction floor 3, 3/day |
 
-The triangle **degen vs contrarian vs hype** is a designed hypothesis test:
-does the bot's momentum signal have real edge, and does crowd-confirmation
-sharpen or dull it. `wallet_meta` (`!meta`, weekly post) answers it —
-**sample-gated**: it refuses to call an edge real below 15 closed trades.
+> **Note for readers of the old docs:** the earlier "contrarian" wallet has been
+> **retired and replaced with `leaders`** (trend-aligned). On first boot the old
+> contrarian row is renamed in place and its open positions are risk-managed out
+> under the new policy. The current roster is the eight above.
+
+The **degen vs leaders vs hype** triangle is a designed hypothesis test: does the
+bot's momentum signal have real edge, and does trend-structure or crowd
+confirmation sharpen or dull it? `wallet_meta` (`!meta`, the web Portfolio page,
+the weekly Sunday post) answers it — **sample-gated**: it refuses to call an edge
+real below its minimum closed-trade count.
 
 Mechanics, all symmetric long/short and verified by tests:
-- **Cash convention**: long open `cash-=qty·entry`; short open
-  `cash+=qty·entry`; `equity = cash + Σlong·mark − Σshort·mark`.
-- **No leverage, symmetric**: total committed notional + new size ≤ equity
-  (closed the old hole where short proceeds back-doored leverage into longs).
-- **Earnings blackout**: no wallet *opens or flips into* a position when the
-  name reports within 2 days (binary risk). Existing holds ride.
-- **Stale/zero price never invents P&L**: a dead-feed position is force-
-  closed at entry at max-hold, never stopped out at a fabricated −100%.
-- **Reasoning is narrated**: each cycle posts *why* it opened/closed (the
-  triggering call's verbatim thesis + the mechanical exit reason).
 
-Inspect with `!funds` (standings), `!fund <name>` (detail, with a live
-`marks live · updated Nm ago` freshness line), `!meta` (edge readout).
+- **Cash convention:** long open `cash -= qty·entry`; short open `cash += qty·entry`;
+  `equity = cash + Σ long·mark − Σ short·mark`.
+- **No leverage:** committed notional + new size ≤ equity (symmetric; short
+  proceeds can't back-door leverage into longs).
+- **Fixed-risk sizing:** size scales with conviction (`·conviction/5`), a
+  drawdown scale, and a per-source **edge multiplier** (0.3×–1.5×, derived from
+  90-day signal attribution, sample-shrunk toward 1.0 on low n).
+- **Earnings blackout:** no wallet opens or flips into a name reporting within 2
+  days (1 day after). Existing holds ride.
+- **Stale/zero price never invents P&L:** a dead-feed position is force-closed at
+  entry at max-hold, never stopped out at a fabricated −100%.
+- **Reasoning is narrated:** each cycle posts *why* it opened/closed (the
+  triggering call's thesis + the mechanical exit reason).
+
+Inspect with `!funds`, `!fund <name>`, `!meta`, or the web **Portfolio** page
+(standings, per-wallet detail, live policy editor, reset).
 
 ---
 
@@ -296,199 +349,187 @@ Inspect with `!funds` (standings), `!fund <name>` (detail, with a live
 
 These make it an assistant, not a dashboard:
 
-- **book_risk** — watches *your* open paper positions and pings only when
-  one is actually in trouble: adverse drawdown bucket, earnings imminent, or
-  a fresh material filing/news contradicting the thesis. Cooldown +
-  escalation (it won't nag a non-worsening situation; a deeper drawdown or a
-  new trigger breaks through). Deterministic detection; the LLM only writes
-  the *call* (cut/trim/hold/add). Logged as a `book_risk` narrative event so
-  synthesis knows it warned you.
-- **lounge** — the connective-reasoning voice: a grounded
-  `event → mechanism → exposed name` chain ("if this Hormuz thing holds, $X
-  is the trade nobody's pricing"), an absurd-but-true data observation, or a
-  community riff. `SKIP`s when there's nothing real. Twice daily.
-- **macro desk** — the same connective reasoning, but accountable: news →
-  chain → committed read → scored `CALL`. 32 curated feeds feed it.
+- **book_risk** — watches *your* open positions and pings only when one is in
+  trouble (adverse-drawdown bucket, earnings imminent, fresh contradicting
+  filing/news), with cooldown + escalation. Deterministic detection; the LLM only
+  writes the call (cut/trim/hold/add). Logged as a narrative event so synthesis
+  knows it warned you.
+- **position_review** — the 08:00 ET pre-market pass: a deterministic gate flags
+  positions (material filing since entry, opposite high-conviction call, adverse
+  >1.5× ATR move, earnings in 3 days, thesis invalidated), then one batched heavy
+  call writes hold/trim/close/flag verdicts into the trade journal.
+- **macro desk + lounge** — the same connective reasoning in two registers: the
+  macro desk commits an accountable scored call; the lounge drops the
+  non-consensus version in #general.
+- **Research Desk** — you ask a plain-English question (`!research …` or the web
+  Research page); it builds a dossier and a TRADE/WATCHLIST/PASS recommendation
+  with ticker/direction/conviction/size; nothing trades until you `execute` it
+  (conviction floor 3/5, max 3 executions/day). Full audit trail in `ResearchTask`.
 
 ---
 
 ## 10. Operations & self-monitoring
 
-`#meta` is the bot's console. The **daily health diagnostic** (`!health` or
-the 08:00 post) leads with a `✅ / ⚠️ / 🔴` verdict and hunts *silent* rot:
+`#meta` is the bot's console. The **daily health diagnostic** (`!health` or the
+08:00 post, also the web **System** page) leads with a ✅/⚠️/🔴 verdict and hunts
+*silent* rot:
 
-- **dropped/hung jobs** — flagged when a job's gap exceeds 3× its own 7-day
-  median cadence (self-calibrating: a 3-min poller alarms at ~10m, a weekly
-  job only after ~3 weeks — no false alarms);
-- **dead ingest streams** — zero bars in 24h = critical (price feed dead);
-  zero filings/news/reddit = warning;
-- **stale crypto marks** — 24/7 feed, so staleness is unambiguous;
-- **LLM failure rate** — counted at the `complete()` boundary;
+- **dropped/hung jobs** — flagged when a job's gap exceeds 3× its own 7-day median
+  cadence (self-calibrating, so a 3-min poller alarms at ~10m while a weekly job
+  only after ~3 weeks);
+- **dead ingest streams** — zero price bars in 24h = critical; zero
+  filings/news/reddit = warning;
+- **stale crypto marks** — a 24/7 feed, so staleness is unambiguous;
+- **LLM failure rate** — counted at the `complete()` boundary, with a live
+  token-spend and `$` estimate;
 - **auto-fade activity** — which sources are currently being dampened.
 
-Expected, *non-bug* behaviors you'll see in logs: LLM timeouts under local
-compute saturation (degrade gracefully — pipeline skips, no corruption);
-`maximum number of running instances reached` (APScheduler correctly
-skipping an overlapping slow run — not an error).
+Expected, non-bug log lines: LLM timeouts under local compute saturation (the
+pipeline skips, no corruption) and APScheduler "maximum number of running
+instances reached" (correctly skipping an overlapping slow run).
 
 ---
 
-## 11. Chat command reference
+## 11. Chat command reference (Discord)
 
-@-mention the bot or use `!`:
+`@mention` the bot or use `!`:
 
 | Command | Does |
 |---|---|
-| `!ask <q>` / @mention | Free-form Q&A grounded in the bot's DB + research; long answers are chunked, not truncated |
-| `!status` · `!recent` · `!ticker NVDA` · `!news [T]` | Readouts |
-| `!hold T` · `!unhold T` · `!holdings` | Relevance watch (not P&L) |
+| `!ask <q>` / `@mention` | Free-form Q&A grounded in the DB + research; long answers are chunked, not truncated. In a bot-created thread, every message is answered with post + thread history as context |
+| `!status` · `!recent [N]` · `!ticker NVDA` · `!news [T] [N]` · `!filing <accession>` | Readouts (ticker accepts equities, crypto, futures) |
+| `!hold T` · `!unhold T` · `!holdings` | Relevance watch (tags a ticker everywhere; not P&L) |
 | `!buy T QTY [px] [note]` · `!short T QTY` · `!close T` | Manual paper book (one open position per ticker; positive price enforced) |
 | `!positions` · `!pnl` | Book + net unrealized/realized |
 | `!tv` | Importable TradingView watchlist + chart links |
-| `!scorecard` | Aggregate call track record (by source/conviction) |
-| `!calls` | Itemized: maturing + recently-resolved verdicts |
+| `!scorecard` · `!calls` | Call track record (by source/conviction) and itemized maturing + resolved verdicts |
 | `!funds` · `!fund <name>` · `!meta` | Wallet standings / detail / edge readout |
-| `!watch <plain English>` · `!watches` · `!unwatch <id>` | Custom NL alerts |
-| `!timeline T` | The bot's dated memory for a ticker |
-| `!catalysts` | Upcoming computed calendar + earnings |
-| `!filing <accession>` · `!health` · `!help` | Misc |
+| `!theses` · `!thesis <id>` | Active running hypotheses and their detail |
+| `!research <plain English>` | Kick off a Research Desk task (dossier + recommendation appear on the web Research page) |
+| `!watch <plain English>` · `!watches` · `!unwatch <id>` | Custom NL alerts compiled to a constrained spec |
+| `!timeline T` · `!catalysts` · `!world` · `!health` · `!help` | Per-ticker memory, forward calendar, grounding anchor, diagnostic, help |
 
-Post reactions: 👍 / 👎 feed the monthly materiality tuner; 🤖 "Ask AI"
-opens a discussion thread on any post.
-
----
-
-## 12. Data model (tables)
-
-`Watchlist`, `TrackedEntity` (the universe) · `Filing`, `SeenFiling` ·
-`RedditMention`, `HnMention`, `NewsItem` (social/news) · `PriceBar`,
-`PriceContext`, `CryptoMicro`, `EarningsDate` (market) · `SocialPulse` ·
-`Feedback` (👍/👎) · `PaperTrade`, `Holding` (your book) · `Fund`,
-`FundTrade`, `FundEquity` (wallets) · `TradingCall` (the accountability
-spine) · `NarrativeEvent` (per-ticker memory) · `JobRun` (health) ·
-`Watch` (NL alerts) · `PromptVersion` (live-tunable prompts) ·
-`PendingTuning` (durable tuning proposal). New tables auto-create; column
-adds are additive migrations.
+Post buttons: **🤖 Ask AI** opens a discussion thread on any post; **👍 Useful** /
+**👎 Noise** feed the monthly materiality tuner.
 
 ---
 
-## 13. The prompt system
+## 12. The web dashboard
 
-18 registered prompts live in `prompts.py`, are DB-seeded into
-`PromptVersion`, and resolved via `get_prompt` (DB active row → code
-constant). All are **code-authoritative** (edit the constant, restart, it
-reconciles) **except `materiality`**, which the monthly feedback tuner owns
-at runtime. Literal `$` in prompt bodies is escaped `$$`. Tests pin that
-every prompt registers and substitutes cleanly.
+The same process serves a web app on `127.0.0.1:8730` (configurable, localhost by
+design). It reads through the same WAL engine and shares accessors with the
+Discord bot — one voice, no second writer. A mount failure logs and the bot runs
+on.
 
----
+- **SvelteKit app at `/app`** (Svelte 5 + SvelteKit 2 + Tailwind 4 + TanStack
+  Query, built static into `frontend/build/`). Pages: **Overview** (KPIs, equity
+  curve, activity), **Markets** (watchlist + funding screener + movers),
+  **Symbol** detail, **Crypto** (screener + funding setups + BTC regime),
+  **Book** (open positions + risk controls), **Journal** (closed trades + notes),
+  **Calls**, **Intel** (news + filings + Reddit), **Feed**, **Analytics**,
+  **Theses**, **Research**, **Copilot** (the same grounded chat as Discord),
+  **Lookup**, **Watches**, **Portfolio** (wallets + policy editor), **Compare**,
+  **Settings** (prompt editor), **System** (health, resources, tool-call log,
+  log tail).
+- **FastAPI at `/api`** — ~22 routers backing those pages, plus `/api/events`, a
+  Server-Sent-Events stream (with `Last-Event-ID` replay) so the UI updates live
+  as pipelines publish.
+- **NiceGUI at `/`** — the original in-process cockpit, still mounted at root. The
+  swap to make SvelteKit primary is planned but not yet flipped.
 
-## 14. Worked examples (a day in the life)
-
-- **An 8-K drops.** `filings` summarizes it (light) + scores materiality
-  (LLM, tunable prompt); if material it posts to filings/priority, records a
-  `NarrativeEvent`. If social is also spiking on the name, `convergence`
-  later stacks the signals into a `CALL` → `record_call` (auto-fade may
-  trim conviction) → wallets size a position → 5 days on, `mark_calls` +
-  `call_review` post the verdict → `wallet_meta` attributes the P&L to
-  source `convergence`.
-- **"Iran-Israel strikes escalate" hits the feeds.** It's tagged
-  `is_macro`. 4h later the **macro desk** walks
-  `strikes → tanker insurance → crude → $XOM/$XLE`, commits a lean, emits a
-  scored `CALL`. The **lounge** may drop the non-consensus version in
-  #general that evening. If you're long an exposed name, **book_risk** flags
-  it.
-- **You `!buy NVDA 50`.** It enters your paper book. **book_risk** now
-  watches it; if NVDA reports in 2 days or an 8-K breaks the thesis or it
-  draws down, you get a ping with the actual call. `synthesis` leads its
-  next read with your held names.
-- **why_moved has been wrong a lot.** After 12+ scored calls at <45%
-  hit-rate, `record_call` auto-fades every new why_moved call's conviction;
-  wallets size them smaller or skip them; the health digest shows
-  "Auto-fade active: why_moved …"; the contrarian wallet (which fades them)
-  starts visibly out-performing degen in `!meta`.
+To develop the frontend live, run `pnpm dev` in `frontend/` (Vite proxies `/api`
+to the running bot). For production it's pre-built and committed, so a deploy
+target needs no Node.
 
 ---
 
-## 15. Possibilities, ideas & roadmap
+## 13. Data model & prompts
 
-The system is at a **maturity inflection** — more arms now has diminishing
-returns and fights the spine. The honest next moves, in rough value order:
+**Tables (34):** see `ARCHITECTURE.md §3` for the grouped list. The spine is
+`TradingCall` (every call, marked to market) with `Thesis`/`ThesisEvent` (running
+hypotheses) and `NarrativeEvent` (per-ticker memory) around it; `Fund`/`FundTrade`/
+`FundEquity` for the wallets; `Filing`, `NewsItem`, `RedditMention`, `HnMention`,
+`PriceBar`/`PriceContext`/`CryptoMicro` for inputs; and `PromptVersion`,
+`Feedback`, `JobRun` for ops. New tables auto-create; column adds are additive
+migrations.
 
-**Shipped since first draft** (kept here so the doc stays the source of truth)
-- ✅ **SQLite concurrency**: WAL + `busy_timeout` engine config, *and* the
-  root fix — `_persist_bars` is now one bulk `INSERT … ON CONFLICT DO
-  NOTHING` (lock held ms, not seconds; dedup via the existing constraint).
-- ✅ **Reddit top comments**: lazy, breaker-aware enrichment of notable
-  candidates — the curator now judges the discussion, not just the post.
-- ✅ **Ask-AI thread ordering**: deterministic seed-first (placeholder →
-  edited-in brief; follow-ups held until the brief lands).
-- ✅ **In-process cockpit** (`dashboard/`, NiceGUI): a localhost-only web
-  console mounted on the bot's own event loop (uvicorn as a loop task;
-  reads through the same WAL engine — no second writer). Live health/jobs/
-  wallets/scorecard/book/resources/log-tail, a control surface (pause·
-  resume·run-now a job, manual CALL via `scorecard.record_call`), and a
-  chatbox on the **shared** `chat.answer_question` path (one voice with
-  Discord). Isolated: a mount failure logs and the bot runs on. Flags:
-  `DASHBOARD_ENABLED/HOST/PORT`. Presentation rule: panels render real
-  structured components (tables, stat tiles, a level-coloured log viewer,
-  chat bubbles) fed by the **structured** accessors — never by dumping a
-  Discord markdown string into a card. To that end `health.health_report()`
-  is the structured twin of `health_text()` (same detectors/verdict; the
-  text fn is left byte-identical because its output is pinned + shipped to
-  Discord). One injected stylesheet (`app._THEME_CSS`, `shared=True`) is
-  the single source of visual truth (tokens, card chrome, tables, alerts).
+**Prompts** live in `prompts.py` as module constants, are DB-seeded into
+`PromptVersion`, and resolve via `get_prompt` (DB active row → code constant). All
+are **code-authoritative** (edit the constant, restart, it reconciles) **except
+`materiality`**, which the monthly feedback tuner owns at runtime. Literal `$` in
+prompt bodies is escaped `$$`. Tests pin that every prompt registers and
+substitutes cleanly. The filing summarizers are form-typed (`summarize_8k`,
+`summarize_form4`, `summarize_10q`, `summarize_10k`, `summarize_13f`,
+`summarize_offering`, `summarize_proxy`, `summarize_generic`); the scorer is
+`materiality` (0–3 with reason); plus `tag_sentiment`, `social_pulse`,
+`daily_digest`, `tuning_suggest`, the synthesis/why_moved/convergence/macro reads,
+and the dossier/copilot prompts.
 
-**Operational / low-risk (open)**
-- **Preflight `--preflight`.** Boot-time go/no-go: Ollama + models present,
-  channels resolve, DB writable. The boot-half of the self-diagnostic.
+---
 
-**Quality / intelligence**
-- **Pre-mortem on bold calls.** Before a conviction≥4 call is logged, a
-  cheap "argue the other side" pass; indefensible → conviction cut. A
-  proactive complement to the reactive auto-fade.
-- **User memory.** A lightweight store of your stated views / risk
-  tolerance / decisions ("I don't short", "took profits on X") that
-  synthesis / book_risk / chat consult — turns a stateless oracle into a
-  copilot that knows *you*.
+## 14. A day in the life
+
+- **An 8-K drops.** `filings` triages it, summarizes (form-typed), scores
+  materiality (tunable prompt); if material it posts to filings/priority and
+  records a `NarrativeEvent`. If social is also spiking on the name, `convergence`
+  stacks the signals into a `CALL` → `record_call` (auto-fade may trim conviction)
+  → wallets size a position → 5 days on, `mark_calls` + `call_review` post the
+  verdict → `wallet_meta` attributes the P&L to source `convergence`.
+- **"Iran–Israel strikes escalate" hits the feeds.** Tagged `is_macro`. 4h later
+  the macro desk walks `strikes → tanker insurance → crude → $XOM/$XLE`, commits a
+  lean, emits a scored call. The lounge may drop the non-consensus version in
+  #general that evening. If you're long an exposed name, `book_risk` flags it.
+- **You `!buy NVDA 50`.** It enters your paper book. `book_risk` now watches it; if
+  NVDA reports in 2 days or an 8-K breaks the thesis or it draws down, you get a
+  ping with the actual call. `synthesis` leads its next read with your held names.
+- **why_moved has been wrong a lot.** After 12+ scored calls under 45% hit-rate,
+  `record_call` auto-fades every new why_moved call's conviction; wallets size them
+  smaller or skip them; the health digest shows "Auto-fade active: why_moved …";
+  and `leaders`/`hype` vs `degen` in `!meta` starts telling you whether the
+  momentum signal has edge at all.
+
+---
+
+## 15. Non-goals & stance
+
+**Deliberately not built** (it fights the spine): auto-trading or broker
+integration (paper-only, by design), backtesting framework (the wallets *are* the
+forward test), multi-user / permissions / ACLs, a *public or remote* web surface
+(the dashboard is single-user localhost), paid news APIs, X/Twitter scraping, and
+adding raw feeds purely for breadth.
+
+**On opinions, calls, and advice.** This is a single-user, personal, paper-only
+copilot — not a regulated product and not a neutral newswire. It is *expected* to
+think: form conclusions, take directional views, size conviction, and own the
+outcome. The scorecard and the autonomous wallets exist to keep it honest about
+those calls — accountability, not abstention, is the discipline. So: no
+disclaimers, no refusing a take, predictions and directional calls are core. The
+one rule that is never relaxed: **never fabricate a number, price, or fact.**
+Ground every claim in the data or real market knowledge, separate fact from
+inference from bet — but still bet.
+
+---
+
+## 16. Where the project can go next
+
+The system is at a maturity inflection — more arms now has diminishing returns and
+fights the spine. Honest next moves, roughly in value order:
+
+- **Pre-mortem on bold calls.** Before a conviction-≥4 call is logged, a cheap
+  "argue the other side" pass; indefensible → conviction cut. A proactive
+  complement to the reactive auto-fade.
+- **User memory.** A lightweight store of your stated views / risk tolerance /
+  decisions ("I don't short", "took profits on X") that synthesis / book_risk /
+  copilot consult — turning a stateless oracle into a copilot that knows *you*.
 - **Unified morning game-plan.** One synthesized pre-open brief (book risk +
-  catalysts + overnight macro + maturing calls + what I'd do) — must
-  genuinely dedupe across pipelines, not stack them.
-
-**Experiments the data will unlock (weeks in)**
-- Opt the **macro** wallet into trading `macro_themes` calls if their
-  scorecard edge proves out (one-line `_POLICIES` change).
-- Read `wallet_meta`'s momentum verdict to **auto-tilt** synthesis
-  conviction (currently it only reads it as text).
-- Per-source/regime edge decay analysis → dynamic cadence (poll/think more
-  where edge is live).
-
-**Deliberately *not* doing** (fights the spine): more raw feeds for
-breadth's sake, auto-trading/broker integration, multi-user, a *public or
-remote* web surface (the cockpit is single-user localhost by design — it
-augments Discord, it doesn't become a product), backtesting framework (the
-wallets *are* the forward test).
-
----
-
-## 16. Where to look in the code
-
-| Concern | File |
-|---|---|
-| Orchestration (all cadences) | `scheduler.py` |
-| Manual single-cycle / entrypoint | `main.py` |
-| Accountability + auto-fade | `scorecard.py` |
-| The wallets + meta-analysis | `funds.py` |
-| The brain | `pipelines/synthesis.py` |
-| News desk | `pipelines/macro_themes.py` + `config/news_feeds.yaml` |
-| Proactive risk | `pipelines/book_risk.py` |
-| All prompts | `prompts.py` |
-| Embed/timestamp/colors | `discord_client.py`, `ui.py` |
-| DB engine / concurrency | `db.py` |
-| Per-ticker memory | `narrative.py` |
-| Self-diagnostic | `health.py` (`health_text` → Discord, `health_report` → cockpit) |
-| In-process cockpit | `dashboard/` (`app.py` page+theme, `sysinfo.py`, `logbuf.py`) |
-| Tests (the behavioral spec) | `tests/` (~159) |
+  catalysts + overnight macro + maturing calls + what I'd do) that genuinely
+  dedupes across pipelines rather than stacking them.
+- **Let the data drive the wallets.** Opt the macro wallet into trading
+  `macro_themes` calls if their scorecard edge proves out; auto-tilt synthesis
+  conviction from `wallet_meta`'s momentum verdict; per-source/regime edge-decay
+  analysis → dynamic cadence.
+- **Flip the UI.** Finish SvelteKit feature parity and make `/app` primary,
+  retiring (or demoting) the NiceGUI cockpit.
 
 ---
 
