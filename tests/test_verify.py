@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from sentinel import verify
 from sentinel.config import settings
 from sentinel.db import session_scope
 from sentinel.models import PriceContext
@@ -194,3 +195,79 @@ def test_mixed_batch_aggregates_and_flags():
     assert (r.n_supported, r.n_contradicted, r.n_unverifiable) == (1, 1, 1)
     assert r.n_checked == 3
     assert r.grounded is False
+
+
+# ── extraction + verify_text orchestration (fake LLM) ───────────────────────
+
+
+class _FakeLLM:
+    def __init__(self, out):
+        self._out = out
+
+    def complete(self, *a, **k):
+        if isinstance(self._out, Exception):
+            raise self._out
+        return self._out
+
+
+def _patch_llm(monkeypatch, out):
+    import sentinel.llm as _llm
+
+    monkeypatch.setattr(_llm, "get_llm", lambda: _FakeLLM(out))
+
+
+def test_extract_filters_universe_and_metric(monkeypatch):
+    _patch_llm(
+        monkeypatch,
+        '[{"ticker":"AAPL","metric":"price","value":201,"raw":"at 201"},'
+        '{"ticker":"ZZZZ","metric":"price","value":5},'             # off-universe
+        '{"ticker":"AAPL","metric":"pe_ratio","value":30}]',        # bad metric
+    )
+    claims = verify.extract_claims("AAPL trading at 201", ["AAPL"])
+    assert len(claims) == 1
+    assert claims[0].ticker == "AAPL" and claims[0].metric == "price"
+    assert claims[0].value == 201.0
+
+
+def test_extract_coerces_string_values(monkeypatch):
+    _patch_llm(
+        monkeypatch,
+        '[{"ticker":"AAPL","metric":"change_1d_pct","value":"+11.6%"},'
+        '{"ticker":"AAPL","metric":"vol_mult","value":"2.3x"}]',
+    )
+    claims = verify.extract_claims("x", ["AAPL"])
+    by_metric = {c.metric: c.value for c in claims}
+    assert by_metric["change_1d_pct"] == 11.6
+    assert by_metric["vol_mult"] == 2.3
+
+
+def test_verify_text_contradiction_end_to_end(monkeypatch):
+    _seed("AAPL", last_price=200.0)
+    _patch_llm(
+        monkeypatch,
+        '[{"ticker":"AAPL","metric":"price","value":260,"raw":"at 260"}]',
+    )
+    r = verify.verify_text(
+        "AAPL is trading at 260", ["AAPL"], surface="post", source="test"
+    )
+    assert r.ok is True            # extraction ran
+    assert r.grounded is False     # but the figure is wrong
+    assert r.n_contradicted == 1
+
+
+def test_verify_text_failopen_on_extractor_error(monkeypatch):
+    _seed("AAPL")
+    _patch_llm(monkeypatch, RuntimeError("model down"))
+    r = verify.verify_text("AAPL at 260", ["AAPL"], surface="call", source="test")
+    assert r.ok is False           # extraction unavailable → unverified
+    assert r.grounded is True      # nothing contradicted (nothing checked)
+    assert r.n_checked == 0
+
+
+def test_verify_text_llm_error_sentinel_is_unavailable(monkeypatch):
+    from sentinel.llm import LLM_ERROR_SENTINEL
+
+    _seed("AAPL")
+    _patch_llm(monkeypatch, LLM_ERROR_SENTINEL)
+    r = verify.verify_text("AAPL at 260", ["AAPL"], surface="post", source="test")
+    assert r.ok is False

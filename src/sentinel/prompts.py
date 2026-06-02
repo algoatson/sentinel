@@ -536,6 +536,37 @@ Output strict JSON only, nothing else:
 {"primary": "TICKER" or null, "tickers": ["TICKER", ...]}""")
 
 
+EXTRACT_CLAIMS = Template("""You extract HARD, CHECKABLE, TICKER-BOUND numeric claims from a piece of generated market commentary, so a downstream system can verify them against real price data. Be conservative: a false extraction causes a false alarm, so when in doubt, leave it out.
+
+Only return claims that are ALL of:
+- about one of these tickers: $tickers
+- a concrete, currently-true assertion about that ticker's RECENT PRICE ACTION
+- exactly one of these metrics:
+  - "price"          — a stated last / current share price (a dollar number)
+  - "change_1d_pct"  — the 1-day percent move
+  - "change_5d_pct"  — the 5-day (about a week) percent move
+  - "vol_mult"       — volume as a multiple of its average (e.g. "2.3x average volume")
+  - "direction"      — the stock is "up" or "down" (today / on the day)
+
+For each claim, output an object shaped exactly like:
+  {"ticker": "AAPL", "metric": "price", "value": 203.4, "direction_word": null, "raw": "trading at $$203.40"}
+- "value": the number as a PLAIN number. For percent moves use percentage POINTS, signed: 11.6 for "up 11.6%", -3.2 for "down 3.2%". For "price", the dollar number ($$203.40 becomes 203.4). For "vol_mult", the multiple (2.3). For "direction", set value to null.
+- "direction_word": ONLY for metric "direction" — "up" or "down". null for every other metric.
+- "raw": the short verbatim phrase you pulled it from.
+
+DO NOT extract:
+- forward-looking targets, predictions, or hypotheticals ("could hit 250", "targeting +20%", "support at 190")
+- qualitative or macro statements, valuation ratios, market caps, or anything not in the metric list above
+- a number with no ticker, or any ticker not in the list above
+
+If there are no such claims, return [].
+
+COMMENTARY:
+$text
+
+Output a strict JSON array only, nothing else.""")
+
+
 ALL_PROMPTS: dict[str, Template] = {
     "summarize_8k": SUMMARIZE_8K,
     "summarize_form4": SUMMARIZE_FORM4,
@@ -556,6 +587,7 @@ ALL_PROMPTS: dict[str, Template] = {
     "book_risk": BOOK_RISK,
     "macro_themes": MACRO_THEMES,
     "tag_article_tickers": TAG_ARTICLE_TICKERS,
+    "extract_claims": EXTRACT_CLAIMS,
 }
 
 

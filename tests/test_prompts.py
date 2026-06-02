@@ -30,6 +30,7 @@ EXPECTED_PROMPT_NAMES = {
     "book_risk",
     "macro_themes",
     "tag_article_tickers",
+    "extract_claims",
 }
 
 
@@ -76,6 +77,7 @@ def test_every_prompt_substitutes_cleanly():
         key: "X"
         for key in [
             "text",
+            "tickers",
             "form_type",
             "ticker",
             "title",

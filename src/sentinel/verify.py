@@ -31,10 +31,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
+from loguru import logger
 
 from .config import settings
 from .db import session_scope
 from .models import PriceContext
+
+# Cap on how much generated text we hand the extractor — keeps the light-LLM
+# token cost bounded; the hard numbers worth checking live in the lead anyway.
+_MAX_EXTRACT_CHARS = 2400
 
 # The closed, ground-truthable metric set. Anything else is unverifiable.
 Metric = Literal["price", "change_1d_pct", "change_5d_pct", "vol_mult", "direction"]
@@ -240,3 +245,120 @@ def check_claims(claims: list[Claim], *, session=None) -> VerifyResult:
         return _check_claims(claims, session)
     with session_scope() as s:
         return _check_claims(claims, s)
+
+
+# ── extraction (light LLM, fail-open) ──────────────────────────────────────
+
+
+def _coerce_float(v) -> Optional[float]:
+    """Tolerantly pull a float out of whatever the model emitted (number,
+    or a string like '+11.6%' / '$203.40' / '2.3x'). None if not numeric."""
+    if isinstance(v, (int, float)):
+        return float(v)
+    if not isinstance(v, str):
+        return None
+    cleaned = v.strip().lstrip("+").replace("$", "").replace("%", "")
+    cleaned = cleaned.replace("x", "").replace("×", "").replace(",", "").strip()
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _claims_from_json(parsed: list, tickers: set[str]) -> list[Claim]:
+    """Build validated Claims from the parsed JSON array. Drops anything whose
+    ticker isn't in the candidate set or whose metric isn't in the closed enum
+    — extraction is allowed to be noisy; this gate is where it gets clean."""
+    out: list[Claim] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        tkr = item.get("ticker")
+        metric = item.get("metric")
+        if not isinstance(tkr, str) or not isinstance(metric, str):
+            continue
+        tkr = tkr.strip().upper()
+        metric = metric.strip()
+        if tkr not in tickers or metric not in _METRICS:
+            continue
+        word = item.get("direction_word")
+        word = word.strip().lower() if isinstance(word, str) else None
+        out.append(
+            Claim(
+                ticker=tkr,
+                metric=metric,
+                value=_coerce_float(item.get("value")),
+                direction_word=word,
+                raw=str(item.get("raw", ""))[:200],
+            )
+        )
+    return out
+
+
+def _run_extraction(text: str, tickers: list[str]) -> tuple[list[Claim], bool]:
+    """Light-LLM claim extraction. Returns (claims, available) — `available`
+    is False when the extractor couldn't run (LLM error / parse failure /
+    exception), which the caller surfaces as an unverified result. Never
+    raises."""
+    from .llm import LLM_ERROR_SENTINEL, get_llm, parse_json_response
+    from .prompts import get_prompt
+
+    cand = {t.strip().upper() for t in tickers if t and t.strip()}
+    if not text or not text.strip() or not cand:
+        return [], True  # nothing to extract, but the extractor was available
+
+    try:
+        rendered = get_prompt("extract_claims").safe_substitute(
+            text=text[:_MAX_EXTRACT_CHARS],
+            tickers=", ".join(sorted(cand)),
+        )
+        raw = get_llm().complete(
+            rendered, model="light", json_mode=True, max_tokens=500,
+            grounded=False,
+        )
+    except Exception as e:
+        logger.debug("extract_claims LLM call failed: {}", e)
+        return [], False
+    if raw == LLM_ERROR_SENTINEL:
+        return [], False
+    parsed = parse_json_response(raw, expect=list)
+    if parsed is None:
+        return [], False
+    return _claims_from_json(parsed, cand), True
+
+
+def extract_claims(text: str, tickers: list[str]) -> list[Claim]:
+    """Public fail-open extractor: the hard, ticker-bound numeric claims in
+    `text`, constrained to `tickers` and the closed metric enum. Returns []
+    on any failure (the caller can't tell 'none found' from 'unavailable' —
+    use `verify_text` when that distinction matters)."""
+    return _run_extraction(text, tickers)[0]
+
+
+def verify_text(
+    text: str,
+    tickers: list[str],
+    *,
+    surface: str,
+    source: str,
+    session=None,
+) -> VerifyResult:
+    """Extract claims from `text` and check them against ground truth.
+
+    `surface` ("call"|"post") and `source` are recorded for telemetry. Sync-
+    callable and fully fail-open: extraction unavailable → `ok=False` (the
+    call sites treat that as *unverified*, never as a contradiction). Never
+    raises."""
+    try:
+        claims, available = _run_extraction(text, tickers)
+    except Exception as e:  # belt-and-suspenders — _run_extraction is fail-open
+        logger.debug("verify_text extraction failed: {}", e)
+        claims, available = [], False
+    try:
+        result = check_claims(claims, session=session)
+    except Exception as e:
+        logger.debug("verify_text check failed: {}", e)
+        result = VerifyResult(grounded=True, ok=False)
+    if not available:
+        result.ok = False
+    return result
