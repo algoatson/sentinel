@@ -58,6 +58,10 @@
 
   let confirmId = $state<number | null>(null);
   let bulkConfirm = $state(false);
+  // "Cut losers" / "Lock winners" route through an explicit confirm modal
+  // (previously they silently armed the toolbar bulk-confirm far away, which
+  // read as "the button does nothing").
+  let bulkAction = $state<{ kind: 'losers' | 'winners'; ids: number[] } | null>(null);
   /** When true, clicking a row toggles selection. When false, click
    * opens the drawer. Mirrors how IBKR TWS / TOS work — a "select
    * mode" pill keeps the day-to-day click-to-inspect flow clean. */
@@ -72,10 +76,14 @@
     queryFn: walletsApi,
     refetchInterval: 60_000
   });
-  // Risk-form draft (controlled inputs).
-  let dStop = $state<string>('');
-  let dTarget = $state<string>('');
-  let dTrail = $state<string>('');
+  // Risk-form draft. The numeric fields bind to <input type="number">, which
+  // writes a `number` back (or `null` when the field is empty) — NOT a string.
+  // (The old `string` typing here was the bug: saveRisk called `.trim()` on the
+  // value, which throws on a number/null, so editing a stop/target then saving
+  // silently did nothing.) `null` = field cleared.
+  let dStop = $state<number | null>(null);
+  let dTarget = $state<number | null>(null);
+  let dTrail = $state<number | null>(null); // whole percent, e.g. 10 = 10%
   let dNotes = $state<string>('');
 
   const positionsQ = createQuery({
@@ -114,9 +122,11 @@
       );
       selected.clear();
       bulkConfirm = false;
+      bulkAction = null;
       qc.invalidateQueries({ queryKey: ['positions-open'] });
       qc.invalidateQueries({ queryKey: ['wallets'] });
       qc.invalidateQueries({ queryKey: ['kpi'] });
+      qc.invalidateQueries({ queryKey: ['risk-monitor'] });
     },
     onError: (err) =>
       toast.error(err instanceof Error ? err.message : String(err))
@@ -128,6 +138,7 @@
     onSuccess: () => {
       toast.success('Risk settings saved');
       qc.invalidateQueries({ queryKey: ['positions-open'] });
+      qc.invalidateQueries({ queryKey: ['risk-monitor'] });
     },
     onError: (err) =>
       toast.error(err instanceof Error ? err.message : String(err))
@@ -173,12 +184,12 @@
   // Pre-seed the risk-form draft when a row opens.
   $effect(() => {
     if (drawerRow) {
-      dStop = drawerRow.stop_price != null ? String(drawerRow.stop_price) : '';
-      dTarget = drawerRow.target_price != null ? String(drawerRow.target_price) : '';
+      dStop = drawerRow.stop_price ?? null;
+      dTarget = drawerRow.target_price ?? null;
       dTrail =
         drawerRow.trailing_stop_pct != null
-          ? String(Math.round(drawerRow.trailing_stop_pct * 100))
-          : '';
+          ? Math.round(drawerRow.trailing_stop_pct * 100)
+          : null;
       dNotes = drawerRow.notes ?? '';
     }
   });
@@ -186,13 +197,11 @@
   function saveRisk() {
     if (drawerId === null) return;
     const body: Parameters<typeof updateRisk>[1] = { clear: [] };
-    const stop = dStop.trim() ? Number(dStop) : NaN;
-    const tgt = dTarget.trim() ? Number(dTarget) : NaN;
-    const trail = dTrail.trim() ? Number(dTrail) / 100 : NaN;
-    if (Number.isFinite(stop) && stop > 0) body.stop_price = stop;
+    if (typeof dStop === 'number' && dStop > 0) body.stop_price = dStop;
     else body.clear!.push('stop_price');
-    if (Number.isFinite(tgt) && tgt > 0) body.target_price = tgt;
+    if (typeof dTarget === 'number' && dTarget > 0) body.target_price = dTarget;
     else body.clear!.push('target_price');
+    const trail = typeof dTrail === 'number' ? dTrail / 100 : NaN;
     if (Number.isFinite(trail) && trail > 0 && trail < 1)
       body.trailing_stop_pct = trail;
     else body.clear!.push('trailing_stop_pct');
@@ -200,6 +209,39 @@
     else body.clear!.push('notes');
     $riskM.mutate({ id: drawerId, body });
   }
+
+  // ── drawer risk helpers (quick presets + live R:R preview) ──────────────
+  /** Stop price `pct`% on the loss side of entry, rounded to a cent. */
+  function stopFromPct(pct: number): number {
+    const e = drawerRow!.entry;
+    const px = drawerRow!.side === 'long' ? e * (1 - pct / 100) : e * (1 + pct / 100);
+    return Math.round(px * 100) / 100;
+  }
+  /** Target at `r` × (entry→stop distance) on the profit side. Needs a stop. */
+  function targetFromR(r: number): number | null {
+    if (typeof dStop !== 'number' || dStop <= 0) return null;
+    const risk = Math.abs(drawerRow!.entry - dStop);
+    if (!risk) return null;
+    const px = drawerRow!.side === 'long'
+      ? drawerRow!.entry + r * risk
+      : drawerRow!.entry - r * risk;
+    return px > 0 ? Math.round(px * 100) / 100 : null;
+  }
+  /** Live risk/reward preview from the current draft, in $ and R:R. */
+  const rrPreview = $derived.by(() => {
+    if (!drawerRow) return null;
+    const qty = drawerRow.qty;
+    const entry = drawerRow.entry;
+    const riskPx = typeof dStop === 'number' && dStop > 0 ? Math.abs(entry - dStop) : null;
+    const rewardPx =
+      typeof dTarget === 'number' && dTarget > 0 ? Math.abs(dTarget - entry) : null;
+    return {
+      risk$: riskPx !== null ? riskPx * qty : null,
+      riskPct: riskPx !== null ? (riskPx / entry) * 100 : null,
+      reward$: rewardPx !== null ? rewardPx * qty : null,
+      rr: riskPx && rewardPx ? rewardPx / riskPx : null
+    };
+  });
 
   const funds = $derived(
     Array.from(new Set(($positionsQ.data ?? []).map((p) => p.fund))).sort()
@@ -336,12 +378,11 @@
       >
         <button
           type="button"
-          onclick={() => {
+          onclick={(e) => {
+            (e.currentTarget.closest('details') as HTMLDetailsElement | null)?.removeAttribute('open');
             const losers = ($positionsQ.data ?? []).filter((p) => p.upnl < 0).map((p) => p.id);
             if (!losers.length) { toast.info('No losing positions to close'); return; }
-            selected.clear();
-            losers.forEach((id) => selected.add(id));
-            bulkConfirm = true;
+            bulkAction = { kind: 'losers', ids: losers };
           }}
           class="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-bad hover:bg-bad-soft"
         >
@@ -350,12 +391,11 @@
         </button>
         <button
           type="button"
-          onclick={() => {
+          onclick={(e) => {
+            (e.currentTarget.closest('details') as HTMLDetailsElement | null)?.removeAttribute('open');
             const winners = ($positionsQ.data ?? []).filter((p) => p.upnl > 0).map((p) => p.id);
             if (!winners.length) { toast.info('No winning positions to lock in'); return; }
-            selected.clear();
-            winners.forEach((id) => selected.add(id));
-            bulkConfirm = true;
+            bulkAction = { kind: 'winners', ids: winners };
           }}
           class="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-[12px] text-good hover:bg-good-soft"
         >
@@ -924,6 +964,19 @@
               placeholder="—"
               class="mt-1 w-full rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[13px] tabular text-text placeholder:text-faint/60 focus:border-primary/60 focus:outline-none"
             />
+            <div class="mt-1.5 flex flex-wrap items-center gap-1">
+              {#each [3, 5, 8, 10] as pct (pct)}
+                <button
+                  type="button"
+                  onclick={() => (dStop = stopFromPct(pct))}
+                  class="rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[10.5px] tabular text-muted transition-colors hover:border-bad/50 hover:text-bad"
+                  title={`Stop ${pct}% ${drawerRow.side === 'long' ? 'below' : 'above'} entry → ${price(stopFromPct(pct))}`}
+                >−{pct}%</button>
+              {/each}
+              {#if dStop !== null}
+                <button type="button" onclick={() => (dStop = null)} class="ml-auto text-[10.5px] text-faint hover:text-text">clear</button>
+              {/if}
+            </div>
           </label>
 
           <label class="block">
@@ -943,6 +996,26 @@
               placeholder="—"
               class="mt-1 w-full rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[13px] tabular text-text placeholder:text-faint/60 focus:border-primary/60 focus:outline-none"
             />
+            <div class="mt-1.5 flex flex-wrap items-center gap-1">
+              {#if typeof dStop === 'number' && dStop > 0}
+                {#each [1, 2, 3] as r (r)}
+                  {@const tp = targetFromR(r)}
+                  {#if tp !== null}
+                    <button
+                      type="button"
+                      onclick={() => (dTarget = tp)}
+                      class="rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[10.5px] tabular text-muted transition-colors hover:border-good/50 hover:text-good"
+                      title={`${r}R target (${r}× the entry→stop distance) → ${price(tp)}`}
+                    >{r}R</button>
+                  {/if}
+                {/each}
+              {:else}
+                <span class="text-[10.5px] text-faint italic">set a stop for R-based targets</span>
+              {/if}
+              {#if dTarget !== null}
+                <button type="button" onclick={() => (dTarget = null)} class="ml-auto text-[10.5px] text-faint hover:text-text">clear</button>
+              {/if}
+            </div>
           </label>
 
           <label class="block">
@@ -982,11 +1055,36 @@
           </label>
         </div>
 
+        <!-- live risk / reward preview from the current draft -->
+        {#if rrPreview && (rrPreview.risk$ !== null || rrPreview.reward$ !== null)}
+          <div class="mt-2.5 flex items-center justify-between gap-2 rounded-md border border-border-soft bg-surface-2/50 px-2.5 py-1.5 text-[11px] tabular">
+            <span class="flex items-center gap-1 text-bad">
+              <Shield class="h-3 w-3" />
+              {rrPreview.risk$ !== null
+                ? `−${usd(rrPreview.risk$)}${rrPreview.riskPct !== null ? ` (${rrPreview.riskPct.toFixed(1)}%)` : ''}`
+                : 'no stop'}
+            </span>
+            <span class="flex items-center gap-1 text-good">
+              <TargetIcon class="h-3 w-3" />
+              {rrPreview.reward$ !== null ? `+${usd(rrPreview.reward$)}` : 'no target'}
+            </span>
+            <span class={[
+              'rounded px-1.5 py-0.5 font-semibold',
+              rrPreview.rr === null ? 'text-faint'
+                : rrPreview.rr >= 2 ? 'bg-good-soft text-good'
+                : rrPreview.rr >= 1 ? 'bg-warn-soft text-warn'
+                : 'bg-bad-soft text-bad'
+            ].join(' ')}>
+              {rrPreview.rr !== null ? `1 : ${rrPreview.rr.toFixed(2)} R:R` : '— R:R'}
+            </span>
+          </div>
+        {/if}
+
         <button
           type="button"
           onclick={saveRisk}
           disabled={$riskM.isPending}
-          class="mt-3 flex w-full items-center justify-center gap-1.5 rounded-md border border-primary/40 bg-primary-soft px-3 py-2 text-[12.5px] font-medium text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
+          class="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-md border border-primary/40 bg-primary-soft px-3 py-2 text-[12.5px] font-medium text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
         >
           {#if $riskM.isPending}<Spinner size={12} />{:else}<Save class="h-3.5 w-3.5" />{/if}
           Save risk settings
@@ -1017,6 +1115,57 @@
     </div>
   {/if}
 </Drawer>
+
+<!-- ── Cut losers / Lock winners confirmation ───────────── -->
+{#if bulkAction}
+  {@const isLosers = bulkAction.kind === 'losers'}
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <button
+      type="button"
+      aria-label="Cancel"
+      class="absolute inset-0 cursor-default bg-black/55 backdrop-blur-sm"
+      onclick={() => (bulkAction = null)}
+    ></button>
+    <div class="relative w-full max-w-sm rounded-lg border border-border bg-surface p-4 shadow-2xl">
+      <div class="flex items-center gap-2 text-sm font-semibold">
+        {#if isLosers}
+          <TrendingDown class="h-4 w-4 text-bad" /><span>Cut losing positions</span>
+        {:else}
+          <TrendingUp class="h-4 w-4 text-good" /><span>Lock in winners</span>
+        {/if}
+      </div>
+      <p class="mt-2 text-[12.5px] leading-relaxed text-muted">
+        Close <span class="font-semibold text-text">{bulkAction.ids.length}</span>
+        {isLosers ? 'losing' : 'winning'} position{bulkAction.ids.length === 1 ? '' : 's'}
+        at the current mark across all wallets. This realises their P&L and can't be undone.
+      </p>
+      <div class="mt-4 flex justify-end gap-2">
+        <button
+          type="button"
+          onclick={() => (bulkAction = null)}
+          class="rounded-md border border-border bg-surface-2 px-3 py-1.5 text-[12px] text-muted transition-colors hover:text-text"
+        >Cancel</button>
+        <button
+          type="button"
+          disabled={$bulkM.isPending}
+          onclick={() => $bulkM.mutate({
+            ids: bulkAction!.ids,
+            reason: isLosers ? 'cut losers via /book' : 'lock winners via /book'
+          })}
+          class={[
+            'flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-50',
+            isLosers
+              ? 'border-bad/50 bg-bad-soft text-bad hover:bg-bad/20'
+              : 'border-good/50 bg-good-soft text-good hover:bg-good/20'
+          ].join(' ')}
+        >
+          {#if $bulkM.isPending}<Spinner size={12} />{/if}
+          Close {bulkAction.ids.length}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <!-- ── manual paper-trade open drawer ───────────────────── -->
 <OpenPositionDrawer
