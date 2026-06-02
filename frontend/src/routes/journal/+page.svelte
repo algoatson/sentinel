@@ -20,7 +20,7 @@
   import { base } from '$app/paths';
   import Card from '$components/Card.svelte';
   import EmptyState from '$components/EmptyState.svelte';
-  import Spinner from '$components/Spinner.svelte';
+  import Skeleton from '$components/Skeleton.svelte';
   import TickerLink from '$components/TickerLink.svelte';
   import TradeLifecycle from '$components/TradeLifecycle.svelte';
   import { toast } from '$lib/toast.svelte';
@@ -331,7 +331,7 @@
 </Card>
 
 {#if $q.isLoading}
-  <div class="mt-4 flex items-center justify-center py-12"><Spinner /></div>
+  <Card class="mt-4 px-3 py-3"><Skeleton class="h-9 w-full rounded" lines={9} /></Card>
 {:else if !rows.length}
   <Card class="mt-4">
     <EmptyState

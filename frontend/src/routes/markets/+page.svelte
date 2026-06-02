@@ -10,6 +10,7 @@
   import Delta from '$components/Delta.svelte';
   import EmptyState from '$components/EmptyState.svelte';
   import Spinner from '$components/Spinner.svelte';
+  import Skeleton from '$components/Skeleton.svelte';
   import CandleChart from '$components/CandleChart.svelte';
   import Sparkline from '$components/Sparkline.svelte';
   import Heatmap from '$components/Heatmap.svelte';
@@ -182,7 +183,7 @@
 <div class="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_18rem]">
   <Card class="overflow-hidden p-2">
     {#if $chartQ?.isLoading}
-      <div class="flex h-[480px] items-center justify-center"><Spinner /></div>
+      <Skeleton class="h-[480px] w-full rounded-md" />
     {:else if !$chartQ?.data?.bars?.length}
       <div class="h-[480px]"><EmptyState title={`No price history for $${selectedTicker}`} description="The bot needs at least one PriceBar to draw — try a more liquid ticker (SPY/QQQ/NVDA) or wait for the next daily bar poll." /></div>
     {:else}
@@ -362,7 +363,7 @@
   </div>
 
   {#if $wlQ.isLoading}
-    <div class="flex items-center justify-center py-12"><Spinner /></div>
+    <div class="space-y-2 p-4"><Skeleton class="h-9 w-full rounded" lines={12} /></div>
   {:else if !sortedRows.length}
     <EmptyState title="Watchlist empty" />
   {:else if wlView === 'heatmap'}
