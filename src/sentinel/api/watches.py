@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from sqlmodel import select
 
 from ..db import session_scope
 from ..models import Watch

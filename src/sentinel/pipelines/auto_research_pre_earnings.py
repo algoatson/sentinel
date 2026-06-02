@@ -106,7 +106,7 @@ async def run() -> dict:
     queued: list[dict] = []
     for ticker, date in candidates[:_MAX_PER_RUN]:
         prompt = (
-            f"$" + ticker + f" reports earnings on {date.isoformat()} — should I "
+            "$" + ticker + f" reports earnings on {date.isoformat()} — should I "
             f"trade it into the print? Consider: positioning (long vs short vs "
             f"flat), conviction, sizing. Pull the latest news, filings, options "
             f"flow (if any), and historical earnings-day moves. Be decisive."

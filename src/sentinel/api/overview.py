@@ -10,7 +10,6 @@ from fastapi import APIRouter, Query
 from sqlmodel import select
 
 from .. import funds as _funds
-from .. import portfolio as _portfolio
 from .. import scorecard
 from ..db import session_scope
 from ..llm import llm_stats

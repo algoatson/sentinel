@@ -103,9 +103,7 @@ def briefing_today() -> dict:
     if today's run hasn't happened yet — useful when the dashboard
     loads pre-08:30 ET or on a weekend). Empty body means the
     pipeline hasn't produced one yet."""
-    from datetime import date as _date  # avoid shadowing
     from sqlmodel import select as _select
-    today_et_iso: str | None = None
     with session_scope() as s:
         # Pick the latest row regardless of date — the dashboard
         # surfacing should show the most recent briefing the user

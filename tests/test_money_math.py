@@ -766,7 +766,8 @@ def test_reset_wallet_wipes_to_baseline_keeps_config():
     with session_scope() as s:
         d = s.exec(select(Fund).where(Fund.name == "degen")).first()
         d.cash, d.last_call_id, d.size_pct = 4321.0, 0, 0.5   # cash drift + override
-        s.add(d); s.flush()
+        s.add(d)
+        s.flush()
         did = d.id
         s.add(FundTrade(fund_id=did, ticker="AAA", side="long", qty=1,
                         entry_price=10, entry_at=_now(), status="open"))

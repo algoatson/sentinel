@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from .. import portfolio as _portfolio
-from .. import thesis as _thesis
 from ..db import session_scope
 from ..models import (
     CryptoMicro,

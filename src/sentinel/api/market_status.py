@@ -14,7 +14,7 @@ endpoint just reports "closed" on that date — degrade is safe.
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter

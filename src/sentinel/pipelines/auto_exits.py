@@ -17,7 +17,6 @@ distinctive close_reason ("stop hit @ 123.45", "target hit", etc).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 
 from loguru import logger
 from sqlmodel import select
