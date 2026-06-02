@@ -14,7 +14,7 @@ from sqlmodel import select
 
 from sentinel import funds, narrative
 from sentinel.db import session_scope
-from sentinel.models import EarningsDate, Fund, FundTrade, TradingCall
+from sentinel.models import EarningsDate, Fund, FundTrade, TradingCall, Watchlist
 from sentinel.pipelines import game_plan
 
 UTC = timezone.utc
@@ -82,6 +82,18 @@ def test_fresh_ideas_ranked_by_conviction_times_edge_and_deduped():
     # deduped vs the open book — NVDA is held, must not appear as a fresh idea
     assert "NVDA" not in tickers
     assert ideas[0]["score"] >= ideas[1]["score"]
+
+
+def test_catalysts_surface_watchlist_earnings():
+    # a watchlist name (not held) reporting in 3 days should appear as a catalyst
+    with session_scope() as s:
+        s.add(Watchlist(cik="0000001", ticker="MSFT", source="index", added_at=_now()))
+        s.add(EarningsDate(
+            ticker="MSFT", report_date=date.today() + timedelta(days=3), fetched_at=_now(),
+        ))
+    b = game_plan.build_inputs()
+    cats = b["catalysts"]
+    assert any(c.get("ticker") == "MSFT" and c["kind"] == "earnings" for c in cats)
 
 
 def test_prior_flags_already_narrated_idea():

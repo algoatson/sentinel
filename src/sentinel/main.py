@@ -53,6 +53,7 @@ from .pipelines import (
     convergence,
     digest,
     filings,
+    game_plan,
     lounge,
     macro_themes,
     hot_movers,
@@ -110,6 +111,7 @@ _RUN_ONCE_REGISTRY = {
     "watches": watches.run_watch_cycle,
     "catalysts": catalysts.run_catalyst_radar,
     "lounge": lounge.run_lounge_cycle,
+    "game_plan": game_plan.run_game_plan_job,
     "reddit_feed": reddit_feed.run_reddit_feed,
 }
 

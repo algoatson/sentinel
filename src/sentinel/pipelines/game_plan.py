@@ -216,9 +216,10 @@ def _catalysts_section(held: set[str]) -> list[dict]:
     # (network-free; populated by the catalyst radar).
     held_u = {h.upper() for h in held}
     with session_scope() as s:
+        # Single-column select → scalar rows (the ticker strings), not tuples.
         wl = {
             t.upper()
-            for (t,) in s.exec(
+            for t in s.exec(
                 select(Watchlist.ticker).where(Watchlist.ticker != None)  # noqa: E711
             ).all()
             if t

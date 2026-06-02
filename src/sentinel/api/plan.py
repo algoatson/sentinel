@@ -9,13 +9,15 @@ ghost row.
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ..db import session_scope
-from ..models import Briefing, DailyPlan
+from ..models import Briefing, DailyPlan, GamePlan
+from ..pipelines.game_plan import et_date_str
 
 
 router = APIRouter()
@@ -44,6 +46,56 @@ def get_today() -> dict:
     with session_scope() as s:
         p = s.get(DailyPlan, today)
     return _serialize(p, today)
+
+
+# ── Morning Game Plan (pipelines/game_plan.py) ───────────────────────────────
+# Registered before the /plan/{ymd} catch-all is irrelevant (two path segments
+# vs one), but kept here for locality. Returns the structured, ranked plan.
+
+
+def _serialize_gameplan(g: GamePlan | None, plan_date: str) -> dict:
+    if g is None:
+        return {
+            "plan_date": plan_date, "generated_at": None,
+            "the_read": "", "sections": [], "model": "", "exists": False,
+        }
+    try:
+        sections = json.loads(g.sections_json or "[]")
+    except Exception:
+        sections = []
+    gen = g.generated_at
+    return {
+        "plan_date": g.plan_date,
+        "generated_at": (
+            (gen if gen.tzinfo else gen.replace(tzinfo=timezone.utc)).isoformat()
+            if gen else None
+        ),
+        "the_read": g.the_read or "",
+        "sections": sections,
+        "model": g.model or "",
+        "exists": True,
+    }
+
+
+@router.get("/plan/gameplan/today")
+def get_gameplan_today() -> dict:
+    """Today's Morning Game Plan (ET date). `exists=false` until it's generated."""
+    pd = et_date_str()
+    with session_scope() as s:
+        g = s.get(GamePlan, pd)
+    return _serialize_gameplan(g, pd)
+
+
+@router.get("/plan/gameplan/{ymd}")
+def get_gameplan_for(ymd: str) -> dict:
+    """Game Plan for an arbitrary YYYY-MM-DD (ET) date."""
+    try:
+        date.fromisoformat(ymd)
+    except ValueError:
+        raise HTTPException(400, f"invalid date {ymd!r} — use YYYY-MM-DD")
+    with session_scope() as s:
+        g = s.get(GamePlan, ymd)
+    return _serialize_gameplan(g, ymd)
 
 
 @router.get("/plan/{ymd}")

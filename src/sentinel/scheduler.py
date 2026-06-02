@@ -42,6 +42,7 @@ from .pipelines import (
     digest,
     filings,
     funding_squeeze,
+    game_plan,
     hot_movers,
     lounge,
     macro_themes,
@@ -185,6 +186,14 @@ def make_scheduler() -> AsyncIOScheduler:
         briefing.run_premarket_briefing,
         CronTrigger(hour=8, minute=30, timezone=ET),
         id="premarket_briefing",
+        **_COMMON,
+    )
+    # Morning Game Plan — 08:45 ET weekdays, after the risk scan, position
+    # review, briefing and catalysts it synthesises are fresh.
+    sched.add_job(
+        game_plan.run_game_plan_job,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=45, timezone=ET),
+        id="game_plan",
         **_COMMON,
     )
     sched.add_job(
