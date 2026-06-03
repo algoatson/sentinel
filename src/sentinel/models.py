@@ -102,6 +102,11 @@ class NewsItem(SQLModel, table=True):
     # tags both. Format: ",NVDA,AMD," (leading/trailing commas to make
     # LIKE '%,X,%' substring search safe).
     tickers_csv: Optional[str] = Field(default=None, index=True)
+    # How the tickers were resolved: "search+ai" (Yahoo relatedTickers anchored
+    # the LLM), "html+ai" (article-page tags anchored it), "ai" (LLM from
+    # title+heuristic only, e.g. RSS), or "heuristic" (deterministic fallback).
+    # NULL on pre-migration rows. Provenance for the dashboard + the retag job.
+    tag_source: Optional[str] = Field(default=None)
     is_macro: bool = Field(default=False)
     published_at: datetime = Field(index=True)
     fetched_at: datetime
@@ -288,6 +293,12 @@ class ArticleBody(SQLModel, table=True):
     source: str = Field(max_length=16)  # "direct" | "jina" | "stub"
     fetched_at: datetime
     char_count: int = Field(default=0)
+    # Curated ticker set scraped off the article PAGE (Yahoo stockTickers /
+    # ticker-tag anchors / $cashtag meta), comma-packed ",NVDA,AMD," like
+    # NewsItem.tickers_csv. Computed from the same direct-fetch HTML as `body`
+    # (no extra request). NULL = never extracted (old row / Jina-only); "" =
+    # extracted, page carried none. Consumed by the news_retag upgrade job.
+    tags_csv: Optional[str] = Field(default=None)
 
 
 class CallSummary(SQLModel, table=True):

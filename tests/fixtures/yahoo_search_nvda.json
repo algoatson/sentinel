@@ -1,0 +1,44 @@
+{
+  "_fixture_note": "Trimmed Yahoo v1-search response, mirroring the live schema of GET https://query2.finance.yahoo.com/v1/finance/search?q=NVDA&newsCount=10&quotesCount=0 . Authored to the documented field shape (title/link/publisher/providerPublishTime/uuid/relatedTickers) because the live capture host was IP-rate-limited (HTTP 429) at fixture time. relatedTickers preserves the documented contamination behaviour: the query ticker (NVDA) is injected into every item, subject-first otherwise. Junk symbols (2454.TW foreign, ^GSPC index, BRK-B class share, BTC-USD crypto) are included to exercise normalization.",
+  "explains": "stockNews",
+  "count": 4,
+  "quotes": [],
+  "news": [
+    {
+      "uuid": "11111111-aaaa-bbbb-cccc-000000000001",
+      "title": "Walmart raises full-year forecast as grocery and ad units power past expectations",
+      "publisher": "Reuters",
+      "link": "https://finance.yahoo.com/news/walmart-raises-forecast-grocery-ads-120000001.html",
+      "providerPublishTime": 1748000000,
+      "type": "STORY",
+      "relatedTickers": ["WMT", "NVDA", "COST", "TGT"]
+    },
+    {
+      "uuid": "22222222-aaaa-bbbb-cccc-000000000002",
+      "title": "Nvidia unveils next-gen Blackwell accelerators, suppliers rally",
+      "publisher": "CNBC",
+      "link": "https://finance.yahoo.com/news/nvidia-unveils-blackwell-accelerators-140000002.html",
+      "providerPublishTime": 1748003600,
+      "type": "STORY",
+      "relatedTickers": ["NVDA", "TSM", "AMD"]
+    },
+    {
+      "uuid": "33333333-aaaa-bbbb-cccc-000000000003",
+      "title": "Berkshire trims stake while broad index drifts; chipmaker 2454.TW slips",
+      "publisher": "Bloomberg",
+      "link": "https://finance.yahoo.com/news/berkshire-trims-stake-index-drifts-160000003.html",
+      "providerPublishTime": 1748007200,
+      "type": "STORY",
+      "relatedTickers": ["BRK-B", "NVDA", "^GSPC", "2454.TW"]
+    },
+    {
+      "uuid": "44444444-aaaa-bbbb-cccc-000000000004",
+      "title": "Bitcoin tops prior range as MicroStrategy adds to treasury",
+      "publisher": "CoinDesk",
+      "link": "https://finance.yahoo.com/news/bitcoin-tops-range-microstrategy-adds-180000004.html",
+      "providerPublishTime": 1748010800,
+      "type": "STORY",
+      "relatedTickers": ["BTC-USD", "MSTR", "NVDA"]
+    }
+  ]
+}

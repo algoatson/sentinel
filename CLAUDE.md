@@ -158,3 +158,18 @@ docs/      ARCHITECTURE.md, HANDBOOK.md
   way. The verifier is gated by `VERIFY_ENABLED` (+ the `VERIFY_*` tolerances);
   with it off, behavior is byte-identical to before (no calls, fields, or
   `ClaimCheck` rows). It is **inline at the chokepoints — no scheduled job.**
+- **News ticker tagging** (`news_tickers.resolve_article_tickers` is the funnel)
+  anchors the LLM with a structured candidate set, then validates **LLM output ∩
+  watchlist** (never stores an untracked ticker). Sources of candidates:
+  `source_tags.related_tickers_for` (Yahoo v1-search `relatedTickers`, used by
+  the yfinance poll when `NEWS_SEARCH_TAGS_ENABLED`) and `source_tags.from_html`
+  (article-page tags, used by the `news_retag` job). `NewsItem.tag_source`
+  records provenance (`search+ai`/`html+ai`/`ai`/`heuristic`). Two gotchas:
+  (1) when the v1-search path succeeds it is the article source and carries **no
+  `summary`** (empty `summary` on those rows; it falls back to the tickerless
+  `Ticker(t).news` — which *does* have summaries — when search is off/empty);
+  (2) `source_tags.normalize` deliberately does **not** alias bare crypto/futures
+  roots to `-USD`/`=F` — `ES`/`CL`/`NG` are equities (Eversource/Colgate/
+  NovaGold), and Yahoo already emits the suffixed form, so aliasing them mistags.
+  `news_retag` is a budget-bounded scheduled job (run-once: `news_retag`) that
+  only ADDS tags (strict superset), never removes.

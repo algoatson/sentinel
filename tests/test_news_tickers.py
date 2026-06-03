@@ -12,7 +12,8 @@ import pytest
 from sentinel import news_tickers
 from sentinel.news_tickers import resolve_article_tickers
 
-WATCHLIST = {"NVDA", "ARM", "RTX", "COIN", "SNOW", "AMZN", "AMD", "AAPL"}
+WATCHLIST = {"NVDA", "ARM", "RTX", "COIN", "SNOW", "AMZN", "AMD", "AAPL",
+             "WMT", "COST", "TGT", "TSM"}
 
 
 class _StubLLM:
@@ -144,3 +145,85 @@ def test_ai_garbage_output_falls_back(stub_llm):
         WATCHLIST, allow_ai=True,
     )
     assert set(r.ranked) <= {"NVDA", "AMD"} and r.ranked
+
+
+# ── structured source candidates (Yahoo relatedTickers) ──────────────────
+
+
+def test_search_contamination_demoted_primary_is_real_subject(stub_llm):
+    """The WMT-under-NVDA case: a Walmart story surfaced from the NVDA feed
+    carries source_tickers=['WMT','NVDA',...] (query contamination). The model,
+    seeing the headline, returns WMT primary and drops the query ticker."""
+    stub_llm('{"primary": "WMT", "tickers": ["WMT", "COST", "TGT"]}')
+    r = resolve_article_tickers(
+        "Walmart raises full-year forecast as grocery and ads beat",
+        "",
+        WATCHLIST,
+        source_tickers=["WMT", "NVDA", "COST", "TGT"],
+        feed_ticker="NVDA",
+        allow_ai=True,
+    )
+    assert r.primary == "WMT"
+    assert "NVDA" not in r.ranked
+    assert set(r.ranked) == {"WMT", "COST", "TGT"}
+    assert r.tag_source == "search+ai"
+    assert r.used_ai is True
+
+
+def test_ai_adds_affected_name_beyond_candidates(stub_llm):
+    """The model MAY add a materially-affected name absent from the structured
+    candidates; it survives because it's watchlisted."""
+    stub_llm('{"primary": "NVDA", "tickers": ["NVDA", "TSM"]}')
+    r = resolve_article_tickers(
+        "Nvidia unveils next-gen accelerators",
+        "Foundry partners stand to benefit.",
+        WATCHLIST,
+        source_tickers=["NVDA"],      # TSM not in the structured set
+        feed_ticker="NVDA",
+        allow_ai=True,
+    )
+    assert r.primary == "NVDA"
+    assert r.ranked == ["NVDA", "TSM"]  # TSM added by the model, validated
+
+
+def test_non_watchlist_source_hints_dropped(stub_llm):
+    """Structured candidates that aren't tracked never reach tickers_csv —
+    source_cand is watchlist-gated before it anchors anything."""
+    stub_llm('{"primary": "WMT", "tickers": ["WMT"]}')
+    r = resolve_article_tickers(
+        "Walmart raises forecast", "",
+        {"WMT", "NVDA"},
+        source_tickers=["WMT", "KR", "DG"],   # KR/DG untracked
+        feed_ticker="NVDA",
+        allow_ai=True,
+    )
+    assert r.primary == "WMT"
+    assert r.ranked == ["WMT"]
+
+
+def test_no_ai_fallback_union_source_and_heuristic_feed_demoted(stub_llm):
+    """allow_ai=False: the deterministic fallback is source_cand ∪ heuristic,
+    with the unbacked feed/query ticker (NVDA) demoted out of the set."""
+    r = resolve_article_tickers(
+        "Snowflake's Partnership With Amazon", "",
+        WATCHLIST,
+        source_tickers=["WMT", "NVDA"],   # search contamination, no heuristic backing
+        feed_ticker="NVDA",
+        allow_ai=False,
+    )
+    # heuristic recovers SNOW + AMZN from the headline; WMT rides in from
+    # search; NVDA (the unbacked query ticker) is dropped.
+    assert "NVDA" not in r.ranked
+    assert set(r.ranked) == {"SNOW", "AMZN", "WMT"}
+    assert r.ranked[0] in {"SNOW", "AMZN"}   # title-backed name stays primary
+    assert r.tag_source == "heuristic"
+    assert r.used_ai is False
+
+
+def test_tag_source_ai_when_no_structured_candidates(stub_llm):
+    """RSS-equivalent (source_tickers=None): a successful LLM tag is 'ai'."""
+    stub_llm('{"primary": "COIN", "tickers": ["COIN"]}')
+    r = resolve_article_tickers(
+        "Coinbase launches new product", "", WATCHLIST, allow_ai=True,
+    )
+    assert r.tag_source == "ai"

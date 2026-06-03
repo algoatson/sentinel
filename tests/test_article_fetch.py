@@ -224,3 +224,68 @@ def test_force_bypasses_cache(monkeypatch):
     b = article_fetch.fetch_article_text("https://example.com/refetch", force=True)
     assert b != a
     assert "x x x" in b
+
+
+# ── page ticker tags (Phase 2) ────────────────────────────────────────────
+
+
+_YAHOO_TAGGED = """
+<html><head>
+<meta name="keywords" content="$bnb-usd;$h;$btc-usd">
+</head><body>
+<script>window.x = {"stockTickers":[{"symbol":"H"},{"symbol":"BTC-USD"}]};</script>
+<article><p>%s</p></article>
+<a class="ticker-tag" data-symbol="BNB-USD">BNB</a>
+</body></html>
+""" % ("Body paragraph with enough content to clear the stub threshold. " * 12)
+
+
+def test_fetch_article_tags_extracts_and_caches(monkeypatch):
+    _purge_cache()
+    _stub_httpx(monkeypatch, direct_status=200, direct_body=_YAHOO_TAGGED)
+    tags = article_fetch.fetch_article_tags("https://finance.yahoo.com/news/x")
+    assert set(tags) == {"H", "BTC-USD", "BNB-USD"}
+    # Cached on the body row — a second read returns the same set with NO
+    # further HTTP (flip httpx to raise to prove it).
+    _stub_httpx(monkeypatch, direct_raises=True, jina_raises=True)
+    again = article_fetch.fetch_article_tags("https://finance.yahoo.com/news/x")
+    assert set(again) == {"H", "BTC-USD", "BNB-USD"}
+
+
+def test_fetch_article_tags_empty_page_marks_computed(monkeypatch):
+    """A page with no tags caches tags_csv='' (computed, none) so we don't
+    re-fetch it forever — the second call must not hit the network."""
+    _purge_cache()
+    plain = "<html><body><article><p>" + ("y " * 400) + "</p></article></body></html>"
+    _stub_httpx(monkeypatch, direct_status=200, direct_body=plain)
+    assert article_fetch.fetch_article_tags("https://finance.yahoo.com/news/plain") == []
+    _stub_httpx(monkeypatch, direct_raises=True, jina_raises=True)
+    # No re-fetch (would raise/return [] anyway) — and still [].
+    assert article_fetch.fetch_article_tags("https://finance.yahoo.com/news/plain") == []
+    row = article_fetch._cache_get_row("https://finance.yahoo.com/news/plain")
+    assert row is not None and row.tags_csv == ""   # computed-empty marker, not NULL
+
+
+def test_fetch_article_tags_bad_url():
+    assert article_fetch.fetch_article_tags("") == []
+    assert article_fetch.fetch_article_tags("javascript:alert(1)") == []
+
+
+def test_refetch_does_not_downgrade_good_body_to_stub(monkeypatch):
+    """A tags re-fetch (or transient paywall) must not wipe a good cached body.
+    Cache a substantive direct body, then force a re-fetch that only yields a
+    stub + dead Jina — the body survives, the row stays 'direct'."""
+    _purge_cache()
+    _stub_httpx(monkeypatch, direct_status=200, direct_body=_GOOD_ARTICLE)
+    good = article_fetch.fetch_article_text("https://finance.yahoo.com/news/keep")
+    assert good and "quantum computing" in good
+
+    # Now direct returns only a paywall stub and Jina is dead; force a re-fetch.
+    _stub_httpx(monkeypatch, direct_status=200, direct_body=_STUB_PAYWALL,
+                jina_status=500, jina_body="")
+    article_fetch.fetch_article_text("https://finance.yahoo.com/news/keep", force=True)
+
+    meta = article_fetch.cache_meta("https://finance.yahoo.com/news/keep")
+    assert meta["source"] == "direct"          # not downgraded to "stub"
+    body = article_fetch._cache_get("https://finance.yahoo.com/news/keep")
+    assert "quantum computing" in body          # original body preserved

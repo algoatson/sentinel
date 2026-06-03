@@ -511,26 +511,29 @@ Headlines (JSON array):
 $headlines_json""")
 
 
-TAG_ARTICLE_TICKERS = Template("""You identify which publicly-traded companies a news item is actually about, and return their stock tickers.
+TAG_ARTICLE_TICKERS = Template("""You identify which publicly-traded companies a news item is actually about OR would materially affect, and return their stock tickers.
 
-You get a headline, a short summary, and CANDIDATES — tickers a keyword matcher flagged. Candidates are NOISY in both directions:
+You get a headline, a short summary, CANDIDATES — an anchored shortlist of tickers (from structured "related tickers" + a keyword matcher) — and a sample of the TRACKED universe. CANDIDATES are a strong prior but NOISY in both directions:
+- QUERY CONTAMINATION: a candidate may be present only because it was the search/feed query, not because the text is about it. e.g. a Walmart story pulled from an NVDA feed lists ['WMT','NVDA','COST','TGT'] — NVDA is contamination here. DROP a candidate when the headline/summary doesn't support it.
 - FALSE matches, where a word collides with a ticker symbol. e.g. Nvidia's "RTX" graphics/PC brand is NOT Raytheon ($$RTX); "ARM" the architecture vs Arm Holdings; a coin name vs an equity.
 - MISSES, where a company is named in plain prose ("Coinbase launched…", "Arm's stock") but wasn't flagged — so the real ticker may not be in CANDIDATES at all.
 
 Return:
 - "primary": the ticker of the one company the story centers on — its main subject. null when no single public company is at the core (macro, industry-wide, or about PRIVATE companies like OpenAI / Anthropic / Stripe).
-- "tickers": the tickers of every public company the story genuinely concerns, primary first.
+- "tickers": every public company the story is genuinely ABOUT or would MATERIALLY AFFECT, primary first.
 
 Rules:
-- Use the correct official US stock ticker from your own knowledge (Coinbase→COIN, Arm Holdings→ARM, Nvidia→NVDA). INCLUDE companies you recognize even if they're absent from CANDIDATES.
-- DROP a candidate you believe is a false match (a product/brand name, a passing mention) — don't echo it just because it was flagged.
+- Return tickers the article is about OR would materially affect (a supplier, a direct competitor, an acquirer). You MAY add an affected name beyond CANDIDATES when you're confident.
+- Use the correct official US stock ticker from your own knowledge (Coinbase→COIN, Arm Holdings→ARM, Nvidia→NVDA). Name ANY public company you're confident about — never omit a real subject just because it isn't in the partial TRACKED list below (that list is only a small sample; untracked names are dropped silently downstream, so you lose nothing by including a genuine one).
+- DROP a candidate that's only there because it was the search/feed query and the text doesn't back it; DROP a false match (a product/brand name, a passing mention).
 - Exclude private companies (no ticker) and anything only mentioned in passing.
-- When unsure whether a company is a genuine subject, leave it out.
+- When unsure whether a company is a genuine subject or materially affected, leave it out.
 - "primary" must appear in "tickers", unless it is null.
 
 Headline: $title
 Summary: $summary
 CANDIDATES: $candidates
+TRACKED (a PARTIAL sample of names we follow — illustrative only, NOT the full set and NOT a filter to apply yourself): $watchlist_sample
 
 Output strict JSON only, nothing else:
 {"primary": "TICKER" or null, "tickers": ["TICKER", ...]}""")

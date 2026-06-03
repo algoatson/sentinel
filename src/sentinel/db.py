@@ -150,7 +150,15 @@ def init_db() -> None:
                 # Comma-joined extra-tickers column for multi-ticker stories.
                 # Format ",NVDA,AMD," — LIKE '%,X,%' is safe substring search.
                 ("tickers_csv", "VARCHAR"),
+                # Ticker-resolution provenance (search+ai / html+ai / ai /
+                # heuristic). See models.NewsItem.tag_source.
+                ("tag_source", "VARCHAR"),
             ],
+        )
+        # Article-page ticker tags cached alongside the body (Phase 2 retag).
+        _migrate_add_columns(
+            "articlebody",
+            [("tags_csv", "VARCHAR")],
         )
         _migrate_add_columns(
             "watchlist",

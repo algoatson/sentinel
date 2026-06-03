@@ -49,6 +49,7 @@ from .pipelines import (
     movers,
     news_alerts,
     news_impact,
+    news_retag,
     position_review,
     reddit_feed,
     risk_circuit,
@@ -233,6 +234,14 @@ def make_scheduler() -> AsyncIOScheduler:
         news_impact.run_news_impact_tagging,
         _every(hours=1),
         id="news_impact_tag",
+        **_COMMON,
+    )
+    # Upgrade tag-poor recent Yahoo-page news items from the curated page
+    # ticker tags (reuses the article_fetch cache; budget-bounded, fail-open).
+    sched.add_job(
+        news_retag.run_news_retag,
+        _every(hours=2),
+        id="news_retag",
         **_COMMON,
     )
     sched.add_job(

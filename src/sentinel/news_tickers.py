@@ -39,52 +39,92 @@ class ResolvedTickers:
     """Outcome of resolution. `ranked` is primary-first and is what goes into
     `tickers_csv`; `primary` is the single-`ticker` column (None for a macro /
     private-company / unattributable story). `used_ai` lets the caller
-    decrement its per-cycle LLM budget."""
+    decrement its per-cycle LLM budget. `tag_source` records HOW the tags were
+    decided (search+ai / html+ai / ai / heuristic) so a NewsItem can carry its
+    provenance for the dashboard + the news_retag upgrade job."""
 
     primary: Optional[str]
     ranked: list[str]
     used_ai: bool = False
+    tag_source: Optional[str] = None
 
 
 def _fallback(
-    content_cand: list[str], feed_ticker: Optional[str]
+    source_cand: list[str],
+    heuristic: list[str],
+    feed_ticker: Optional[str],
 ) -> tuple[Optional[str], list[str]]:
-    """Deterministic resolution when the LLM isn't used. Heuristic content
-    candidates, with a yfinance feed-ticker the content doesn't support demoted
-    so it never silently wins as primary."""
-    cand = content_cand
-    feed_suspect = False
-    if feed_ticker:
-        fu = feed_ticker.upper()
-        if fu in cand:
-            pass                       # content backs the feed ticker
-        elif not cand:
-            cand = [fu]                # nothing else — trust the feed
-        else:
-            cand = cand + [fu]         # feed says fu, content says other
-            feed_suspect = True
-    if not cand:
+    """Deterministic resolution when the LLM isn't used. Union of the
+    (already watchlist-gated) structured search candidates and the heuristic
+    content candidates — heuristic first so a title-backed name stays primary.
+
+    The feed/query ticker is special: it's ALWAYS present in `source_cand`
+    (the search was keyed on it), so "is it in the candidate set" can't tell us
+    whether the story is actually about it. We judge "backed" against the
+    CONTENT heuristic only; an unbacked feed/query ticker is the contamination
+    we're fixing, so it's dropped entirely (never primary, never a tag) unless
+    nothing else surfaced. Primary = title rank | source_cand[0] | feed."""
+    fu = feed_ticker.upper() if feed_ticker else None
+    backed = fu is not None and fu in heuristic
+    ranked: list[str] = []
+    for t in [*heuristic, *source_cand]:
+        if t == fu and not backed:
+            continue                   # unbacked feed/query contamination
+        if t not in ranked:
+            ranked.append(t)
+    if fu and not ranked:
+        ranked = [fu]                  # nothing else surfaced — trust the feed
+    if not ranked:
         return None, []
-    ranked = cand[:-1] if feed_suspect and len(cand) > 1 else cand
     return ranked[0], ranked
 
 
+# Cap on the tracked-universe sample handed to the model. Bounds prompt token
+# cost on this high-volume per-article call. The sample is purely illustrative
+# (the prompt says so) and the FULL watchlist is the real gate in code — so a
+# name's absence from the sample must never make the model drop it.
+_WATCH_CONTEXT_CAP = 60
+
+
+def _watch_context(watch_set: set[str]) -> str:
+    """A short, deterministic, alphabetically-SPREAD sample of the watchlist for
+    the prompt. When the watchlist exceeds the cap we stride-sample across the
+    sorted set (not just the first N) so the sample spans A–Z rather than the
+    alphabet's head — a head-only slice could nudge a light model into treating
+    a mid-alphabet name as 'untracked'. Deterministic (stride by length); the
+    prompt frames it as a partial, non-authoritative hint."""
+    if not watch_set:
+        return ""
+    ordered = sorted(watch_set)
+    if len(ordered) <= _WATCH_CONTEXT_CAP:
+        return ", ".join(ordered)
+    step = len(ordered) / _WATCH_CONTEXT_CAP
+    sample = [ordered[int(i * step)] for i in range(_WATCH_CONTEXT_CAP)]
+    return ", ".join(sample) + ", …"
+
+
 def _ai_resolve(
-    title: str, summary: str, candidates: list[str]
+    title: str, summary: str, candidates: list[str], watch_context: str
 ) -> Optional[tuple[Optional[str], list[str]]]:
     """One light-model JSON call. Returns ``(primary, tickers)`` — uppercased,
     primary-first — or None on any failure. NOT constrained to `candidates`
     (the model may add a subject the keyword matcher missed); the caller
-    validates against the watchlist. `candidates` is passed only as a hint."""
+    validates against the watchlist. `candidates` is the anchored hint set;
+    `watch_context` is a short sample of the tracked universe."""
     try:
         tmpl = get_prompt("tag_article_tickers")
         rendered = tmpl.safe_substitute(
             title=title[:300],
             summary=summary[:800],
             candidates=", ".join(candidates) if candidates else "(none detected)",
+            watchlist_sample=watch_context or "(unavailable)",
         )
         raw = get_llm().complete(
-            rendered, model="light", json_mode=True, max_tokens=120,
+            # 160 (was 120): the prompt now invites listing every materially-
+            # affected name, so a multi-ticker story's JSON can run a little
+            # longer; the extra headroom avoids mid-array truncation (which is
+            # fail-open to the heuristic, but loses the AI's richer tagging).
+            rendered, model="light", json_mode=True, max_tokens=160,
             grounded=False,
         )
     except Exception as e:
@@ -118,30 +158,60 @@ def resolve_article_tickers(
     summary: str,
     watchlist: Iterable[str],
     *,
+    source_tickers: Optional[list[str]] = None,
     feed_ticker: Optional[str] = None,
+    source_label: str = "search",
     allow_ai: bool = True,
 ) -> ResolvedTickers:
     """Decide the primary + relevant tickers for one article.
 
-    `feed_ticker` is the symbol whose yfinance feed surfaced the article (None
-    for RSS) — used only in the heuristic fallback, since the LLM judges the
-    subject from content directly. `allow_ai` is the caller's per-cycle LLM
-    budget gate; when False, resolution is purely heuristic.
+    `source_tickers` is a structured, already-normalised, subject-first
+    candidate set (Yahoo search `relatedTickers` for the yfinance path, article
+    HTML tags for the retag job; None for RSS). It's intersected with the
+    watchlist and unioned with the keyword heuristic to form the ANCHORED hint
+    set the LLM reasons from — the model still reads title+summary and may add
+    an affected name beyond the hints OR drop a query-contaminated one. The
+    final set is always the LLM output ∩ watchlist, so an untracked ticker is
+    never stored.
+
+    `feed_ticker` is the symbol whose feed/search surfaced the article — used
+    to demote query contamination in the fallback (and the model is told to
+    drop it when the text doesn't back it). `source_label` tags the provenance
+    string ("search"/"html") when structured candidates drove resolution.
+    `allow_ai` is the caller's per-cycle LLM budget gate; when False (or on AI
+    failure) resolution is the deterministic union fallback.
     """
     title = (title or "").strip()
     summary = (summary or "").strip()
     watch_set = {t.upper() for t in watchlist}
-    content_cand = extract_tickers_ranked(
+
+    # Structured candidates, watchlist-gated, order (subject-first) preserved.
+    source_cand: list[str] = []
+    for t in source_tickers or []:
+        tu = t.upper()
+        if tu in watch_set and tu not in source_cand:
+            source_cand.append(tu)
+
+    heuristic = extract_tickers_ranked(
         f"{title} {summary}", watch_set, title=title
     )
 
+    # Union hints for the model: structured priors first (the search subject is
+    # a strong prior), then any heuristic names it missed.
+    hints: list[str] = []
+    for t in [*source_cand, *heuristic]:
+        if t not in hints:
+            hints.append(t)
+
     if allow_ai:
-        ai = _ai_resolve(title, summary, content_cand)
+        ai = _ai_resolve(title, summary, hints, _watch_context(watch_set))
         if ai is not None:
             primary, tickers = ai
             # Validate against the watchlist allowlist: drops anything we
             # don't track (and any hallucinated / malformed symbol), keeping
-            # tagging scoped and safe. Order (primary-first) preserved.
+            # tagging scoped and safe. Order (primary-first) preserved. The LLM
+            # MAY have added an affected name absent from the hints — that's
+            # allowed as long as it's watchlisted.
             ranked = [t for t in tickers if t in watch_set]
             if primary and primary in watch_set:
                 if primary in ranked:
@@ -149,13 +219,21 @@ def resolve_article_tickers(
                 ranked.insert(0, primary)
             else:
                 primary = ranked[0] if ranked else None
-            return ResolvedTickers(primary=primary, ranked=ranked, used_ai=True)
-        # AI attempted but failed — fall back to the heuristic, and still count
-        # the attempt against the caller's budget so an LLM outage can't make
-        # us retry (and re-bill) every article in the cycle.
-        primary, ranked = _fallback(content_cand, feed_ticker)
-        return ResolvedTickers(primary=primary, ranked=ranked, used_ai=True)
+            tag_source = f"{source_label}+ai" if source_cand else "ai"
+            return ResolvedTickers(
+                primary=primary, ranked=ranked, used_ai=True,
+                tag_source=tag_source,
+            )
+        # AI attempted but failed — fall back to the union heuristic, and still
+        # count the attempt against the caller's budget so an LLM outage can't
+        # make us retry (and re-bill) every article in the cycle.
+        primary, ranked = _fallback(source_cand, heuristic, feed_ticker)
+        return ResolvedTickers(
+            primary=primary, ranked=ranked, used_ai=True, tag_source="heuristic",
+        )
 
-    # No AI (over budget / disabled) — pure heuristic.
-    primary, ranked = _fallback(content_cand, feed_ticker)
-    return ResolvedTickers(primary=primary, ranked=ranked, used_ai=False)
+    # No AI (over budget / disabled) — deterministic union fallback.
+    primary, ranked = _fallback(source_cand, heuristic, feed_ticker)
+    return ResolvedTickers(
+        primary=primary, ranked=ranked, used_ai=False, tag_source="heuristic",
+    )

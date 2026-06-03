@@ -169,6 +169,80 @@ _NAME_PATTERNS: tuple[tuple[re.Pattern, str], ...] = tuple(
 )
 
 
+# ── symbol normalization (one canonical funnel) ──────────────────────────────
+# Structured ticker tags (Yahoo search `relatedTickers`, article-page hashtags)
+# arrive in yfinance/Yahoo notation that doesn't always match how the watchlist
+# stores a symbol — class shares use a dash (BRK-B) where the watchlist uses a
+# dot (BRK.B), crypto/futures come with a `-USD`/`=F` suffix, and the result set
+# is littered with foreign listings (2454.TW), private placeholders (ANTH.PVT)
+# and indices (^GSPC) we never trade. `normalize_symbol` canonicalises to the
+# watchlist's storage form and drops the obvious non-equities early; the
+# watchlist allowlist downstream is still the final gate. Keeping this here
+# means `source_tags` and `news_tickers` share ONE normalizer.
+#
+# DELIBERATELY NOT aliasing bare bases (BTC→BTC-USD, ES→ES=F): every source we
+# read (Yahoo `relatedTickers`, the `$btc-usd` page hashtags) already emits the
+# SUFFIXED canonical form, so the bare-base branch bought ~zero real recall —
+# and it actively MISTAGGED, because 2-letter futures/crypto roots collide with
+# real equity tickers ("ES" = Eversource, "CL" = Colgate, "NG" = NovaGold). A
+# bare "ES" from Yahoo means Eversource, not the S&P future. Trusting Yahoo's
+# suffix and leaving bare tokens alone keeps Eversource = ES and only costs the
+# (non-existent) bare-crypto-base case. Never mistag > marginal recall.
+
+
+def normalize_symbol(sym: Optional[str]) -> Optional[str]:
+    """Canonicalize a raw ticker-ish token to the watchlist's storage form, or
+    return None for tokens we never track.
+
+    - strips a leading ``$``/``#``, uppercases, trims surrounding space
+    - keeps the suffixed canonical forms sources emit: ``BTC-USD``, ``ES=F``
+      (and ``$btc-usd`` → ``BTC-USD``)
+    - dash class-share ``BRK-B`` → the dot form ``BRK.B`` the watchlist stores
+    - drops indices (``^GSPC``), foreign listings (``2454.TW``), private
+      placeholders (``ANTH.PVT``), digit-bearing or otherwise odd-shaped tokens
+
+    Bare 2–4 letter tokens pass through unchanged (``ES`` stays ``ES``): they're
+    treated as equities, and the watchlist gate decides if we track them. This
+    only canonicalises + prunes; the watchlist intersection downstream is what
+    ultimately decides whether a symbol is stored.
+    """
+    if not sym:
+        return None
+    s = sym.strip().upper().lstrip("$#").strip()
+    if not s:
+        return None
+    # Suffixed canonical forms sources actually emit — keep as-is. (Crypto
+    # before the dash-class-share rule so a "-USD" tail isn't mistaken for one.)
+    if s.endswith("-USD"):
+        base = s[:-4]
+        return f"{base}-USD" if base and base.isalnum() else None
+    if s.endswith("=F"):
+        return s
+    # Indices / digit-bearing foreign listings → junk.
+    if s.startswith("^"):
+        return None
+    if any(ch.isdigit() for ch in s):
+        return None
+    # Dotted: a US class share (single-letter suffix, BRK.B) is kept; any other
+    # dotted suffix is a foreign/private listing (2454.TW, ANTH.PVT) → dropped.
+    if "." in s:
+        root, _, suffix = s.partition(".")
+        if root.isalpha() and len(suffix) == 1 and suffix.isalpha():
+            return s
+        return None
+    # Dashed class share in Yahoo notation (BRK-B) → dot form (BRK.B).
+    if "-" in s:
+        root, _, suffix = s.partition("-")
+        if root.isalpha() and len(suffix) == 1 and suffix.isalpha():
+            return f"{root}.{suffix}"
+        return None
+    # Plain alpha equity ticker (bare crypto/futures roots fall here unchanged
+    # and are resolved — or dropped — by the watchlist gate, never re-suffixed).
+    if s.isalpha() and 1 <= len(s) <= 5:
+        return s
+    return None
+
+
 # ── chat reply highlighting ─────────────────────────────────────────────────
 # Deterministic post-formatter for conversational replies: makes the
 # scannable bits pop (tickers, % moves, a tight set of unambiguous trading

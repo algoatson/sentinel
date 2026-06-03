@@ -24,8 +24,8 @@ import yfinance as yf
 from loguru import logger
 from sqlmodel import select
 
-from .. import discord_client
-from ..config import CONFIG_DIR
+from .. import discord_client, source_tags
+from ..config import CONFIG_DIR, settings
 from ..db import session_scope
 from ..models import NewsItem, Watchlist
 from ..news_tickers import resolve_article_tickers
@@ -264,6 +264,7 @@ def _poll_rss() -> None:
                     summary=summary,
                     ticker=ticker,
                     tickers_csv=tickers_csv,
+                    tag_source=resolved.tag_source,
                     is_macro=is_macro and ticker is None,
                     published_at=published_at,
                     fetched_at=datetime.now(timezone.utc),
@@ -285,6 +286,99 @@ def _poll_rss() -> None:
         "news RSS: inserted {} new items across {} feeds (skipped {} url dups)",
         new_count, len(feeds), skipped_dup,
     )
+
+
+def _to_published(pub) -> datetime:
+    """Best-effort parse of a yfinance/search publish stamp (epoch int, ISO
+    string, or missing) into a UTC datetime. Never raises."""
+    try:
+        if isinstance(pub, (int, float)):
+            return datetime.fromtimestamp(int(pub), tz=timezone.utc)
+        if isinstance(pub, str):
+            return datetime.fromisoformat(pub.replace("Z", "+00:00"))
+    except (TypeError, ValueError, OSError):
+        pass
+    return datetime.now(timezone.utc)
+
+
+def _yfinance_articles(ticker: str, yf_ticker: str) -> list[dict]:
+    """Uniform article list for one watchlist ticker — exactly ONE network call.
+
+    When NEWS_SEARCH_TAGS_ENABLED, the Yahoo v1-search API is the source: it
+    carries the structured, subject-first `relatedTickers` the tickerless
+    `Ticker(t).news` feed drops, so each article comes with a `source` ticker
+    set the LLM can anchor on. If search yields nothing (error / no news /
+    flag off) we fall back to the legacy `Ticker(t).news` parse — `source` is
+    None there (RSS-equivalent: LLM + heuristic only). Either way, fail-open.
+
+    Each entry: {title, url, summary, published_at, external_id, source}."""
+    if settings.NEWS_SEARCH_TAGS_ENABLED:
+        try:
+            items = source_tags.related_tickers_for(yf_ticker)
+        except Exception as e:                       # belt-and-suspenders
+            logger.debug("source_tags search failed for {}: {}", ticker, e)
+            items = []
+        if items:
+            out: list[dict] = []
+            for it in items:
+                title = (it.get("title") or "").strip()
+                url = (it.get("url") or "").strip()
+                if not title or not url:
+                    continue
+                out.append({
+                    "title": title,
+                    "url": url,
+                    "summary": "",                   # v1-search carries no body
+                    "published_at": _to_published(it.get("pub")),
+                    "external_id": it.get("uuid") or url,
+                    "source": it.get("related") or [],
+                })
+            if out:
+                return out
+        # Empty → fall through to the legacy path (fail-open coverage).
+    return _legacy_yfinance_articles(ticker, yf_ticker)
+
+
+def _legacy_yfinance_articles(ticker: str, yf_ticker: str) -> list[dict]:
+    """The pre-search `Ticker(t).news` path — title/summary/url/id only, no
+    structured tickers (`source` = None). Used when search tagging is disabled
+    or the search API returned nothing."""
+    try:
+        yt = yf.Ticker(yf_ticker)
+        news_items = getattr(yt, "news", None) or []
+    except Exception as e:
+        logger.debug("yfinance news failed for {}: {}", ticker, e)
+        return []
+
+    out: list[dict] = []
+    for item in news_items[:10]:
+        # yfinance changed shape over versions — try both styles.
+        content = item.get("content") if isinstance(item, dict) else None
+        if isinstance(content, dict):
+            title = content.get("title") or ""
+            url = (content.get("canonicalUrl") or {}).get("url") or content.get("clickThroughUrl", {}).get("url", "")
+            summary = content.get("summary") or content.get("description") or ""
+            pub = content.get("pubDate") or content.get("displayTime")
+            external_id = content.get("id") or item.get("uuid") or url
+        else:
+            title = item.get("title") or ""
+            url = item.get("link") or item.get("url") or ""
+            summary = item.get("summary") or ""
+            pub = item.get("providerPublishTime")
+            external_id = item.get("uuid") or item.get("id") or url
+        title = (title or "").strip()
+        url = (url or "").strip()
+        if not title or not url:
+            continue
+        out.append({
+            "title": title,
+            "url": url,
+            "summary": (summary or "")[:1000],
+            "published_at": _to_published(pub),
+            "external_id": str(external_id),
+            "source": None,
+        })
+    return out
 
 
 def _poll_yfinance() -> None:
@@ -312,44 +406,20 @@ def _poll_yfinance() -> None:
     for ticker in tickers:
         # yfinance uses dashes for class shares (BRK-B); watchlist stores dots.
         yf_ticker = ticker.replace(".", "-")
-        try:
-            yt = yf.Ticker(yf_ticker)
-            news_items = getattr(yt, "news", None) or []
-        except Exception as e:
-            logger.debug("yfinance news failed for {}: {}", ticker, e)
-            continue
+        # ONE network call per poll ticker (search API or legacy .news).
+        articles = _yfinance_articles(ticker, yf_ticker)
 
-        for item in news_items[:10]:
-            # yfinance changed shape over versions — try both styles.
-            content = item.get("content") if isinstance(item, dict) else None
-            if isinstance(content, dict):
-                title = content.get("title") or ""
-                url = (content.get("canonicalUrl") or {}).get("url") or content.get("clickThroughUrl", {}).get("url", "")
-                summary = content.get("summary") or content.get("description") or ""
-                pub = content.get("pubDate") or content.get("displayTime")
-                external_id = content.get("id") or item.get("uuid") or url
-            else:
-                title = item.get("title") or ""
-                url = item.get("link") or item.get("url") or ""
-                summary = item.get("summary") or ""
-                pub = item.get("providerPublishTime")
-                external_id = item.get("uuid") or item.get("id") or url
+        for art in articles:
+            title = art["title"]
+            url = art["url"]
+            summary = art["summary"]
+            published_at = art["published_at"]
+            source_tickers = art["source"]      # normalised related set or None
 
-            if not title or not url:
-                continue
             if is_routine_payout_headline(title):
                 continue
-            try:
-                if isinstance(pub, (int, float)):
-                    published_at = datetime.fromtimestamp(int(pub), tz=timezone.utc)
-                elif isinstance(pub, str):
-                    published_at = datetime.fromisoformat(pub.replace("Z", "+00:00"))
-                else:
-                    published_at = datetime.now(timezone.utc)
-            except (TypeError, ValueError):
-                published_at = datetime.now(timezone.utc)
 
-            ext_id = _stable_id("yfinance", str(external_id))
+            ext_id = _stable_id("yfinance", art["external_id"])
 
             # Dedup FIRST (cheap) so we never spend an LLM tag-call on an
             # item we're about to drop as already-seen / cross-source dup.
@@ -369,13 +439,15 @@ def _poll_yfinance() -> None:
             # The yfinance feed-ticker is only a HINT: its per-ticker feed
             # carries syndicated / loosely-related stories, so it must NOT be
             # forced as the primary (that's how "Snowflake's Partnership With
-            # Amazon" got stamped $NVDA). `resolve_article_tickers` keeps it
-            # primary only when the content backs it; otherwise it demotes the
-            # feed tag and — for ambiguous items — asks the light model which
-            # ticker the story is really about. Runs outside the txn (may hit
-            # the network). `tickers` is the watchlist universe from the top.
+            # Amazon" got stamped $NVDA). `source_tickers` is Yahoo's structured
+            # `relatedTickers` — a high-recall, subject-first shortlist that
+            # anchors the LLM; the query ticker rides along in it and is demoted
+            # by `feed_ticker`. `resolve_article_tickers` returns the LLM output
+            # ∩ watchlist. Runs outside the txn (may hit the network). `tickers`
+            # is the watchlist universe from the top.
             resolved = resolve_article_tickers(
-                title, summary, tickers, feed_ticker=ticker,
+                title, summary, tickers,
+                source_tickers=source_tickers, feed_ticker=ticker,
                 allow_ai=ai_budget > 0,
             )
             if resolved.used_ai:
@@ -393,6 +465,7 @@ def _poll_yfinance() -> None:
                     summary=(summary or "")[:1000],
                     ticker=primary,
                     tickers_csv=tickers_csv,
+                    tag_source=resolved.tag_source,
                     is_macro=False,
                     published_at=published_at,
                     fetched_at=datetime.now(timezone.utc),

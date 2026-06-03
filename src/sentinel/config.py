@@ -147,6 +147,13 @@ class Settings(BaseSettings):
     POLL_PRICES_MINUTES: int = 3
     POLL_NEWS_MINUTES: int = 5
     NEWS_ALERTS_MINUTES: int = 10
+    # Anchor the per-name news ticker resolver with Yahoo's v1-search
+    # `relatedTickers`: the yfinance path uses the search API as the article
+    # source (one network call per poll-ticker) and hands the structured,
+    # subject-first ticker set to the LLM as a high-recall candidate shortlist.
+    # Off → byte-identical to the old tickerless `Ticker(t).news` path (LLM +
+    # heuristic from title/summary only). Fail-open regardless.
+    NEWS_SEARCH_TAGS_ENABLED: bool = True
     DIGEST_HOUR_ET: int = 16
     DIGEST_MINUTE_ET: int = 30
 
