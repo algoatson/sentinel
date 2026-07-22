@@ -50,6 +50,11 @@ _GNEWS_TMPL = (
 _PER_FEED_SLEEP = 0.8  # politeness; runs off the event loop in a thread
 _MAX_ENTRIES = 25
 
+_CLIENT = httpx.Client(
+    timeout=20.0,
+    follow_redirects=True,
+)
+
 # Reddit's RSS block keys partly on a stale/datacenter-looking UA. Rotate a
 # small pool of current desktop-browser strings so the fetcher doesn't look
 # like one fixed scraper hammering 58 feeds on a fixed cadence.
@@ -200,12 +205,10 @@ def fetch_top_comments(permalink: str, *, limit: int = _COMMENT_LIMIT) -> list[s
         return []
     url = permalink.rstrip("/") + "/.json"
     try:
-        r = httpx.get(
+        r = _CLIENT.get(
             url,
             params={"sort": "top", "limit": limit, "raw_json": 1},
             headers={"User-Agent": _pick_ua()},
-            timeout=12.0,
-            follow_redirects=True,
         )
         if r.status_code != 200:
             return []
@@ -275,11 +278,9 @@ def _fetch_entries(sub: str, *, direct_ok: bool = True) -> tuple[list[dict], str
     blocked = False
     if direct_ok:
         try:
-            r = httpx.get(
+            r = _CLIENT.get(
                 _DIRECT_TMPL.format(sub=sub),
                 headers={"User-Agent": _pick_ua()},
-                timeout=15.0,
-                follow_redirects=True,
             )
             if r.status_code == 200:
                 parsed = feedparser.parse(r.content)
@@ -298,11 +299,9 @@ def _fetch_entries(sub: str, *, direct_ok: bool = True) -> tuple[list[dict], str
             logger.debug("reddit r/{} direct fetch failed: {}", sub, e)
 
     try:
-        r = httpx.get(
+        r = _CLIENT.get(
             _GNEWS_TMPL.format(sub=sub),
             headers={"User-Agent": _BROWSER_UA},
-            timeout=20.0,
-            follow_redirects=True,
         )
         if r.status_code == 200:
             parsed = feedparser.parse(r.content)
