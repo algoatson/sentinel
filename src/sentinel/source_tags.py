@@ -40,6 +40,11 @@ from .utils import normalize_symbol
 _SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
 _SEARCH_TIMEOUT = 8.0
 
+_CLIENT = httpx.Client(
+    timeout=_SEARCH_TIMEOUT,
+    follow_redirects=True,
+)
+
 # Browser-ish UA — Yahoo's JSON endpoints 403 obvious bot UAs (python-httpx/…).
 _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) "
@@ -66,12 +71,10 @@ def related_tickers_for(query: str, *, news_count: int = 10) -> list[dict]:
     if not q:
         return []
     try:
-        r = httpx.get(
+        r = _CLIENT.get(
             _SEARCH_URL,
             params={"q": q, "newsCount": news_count, "quotesCount": 0},
             headers={"User-Agent": _UA},
-            timeout=_SEARCH_TIMEOUT,
-            follow_redirects=True,
         )
         if r.status_code >= 400:
             logger.debug("source_tags search {} → HTTP {}", q, r.status_code)
