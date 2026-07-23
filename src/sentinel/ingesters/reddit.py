@@ -50,11 +50,6 @@ _GNEWS_TMPL = (
 _PER_FEED_SLEEP = 0.8  # politeness; runs off the event loop in a thread
 _MAX_ENTRIES = 25
 
-_CLIENT = httpx.Client(
-    timeout=20.0,
-    follow_redirects=True,
-)
-
 # Reddit's RSS block keys partly on a stale/datacenter-looking UA. Rotate a
 # small pool of current desktop-browser strings so the fetcher doesn't look
 # like one fixed scraper hammering 58 feeds on a fixed cadence.
@@ -68,6 +63,17 @@ _UA_POOL = (
     "Firefox/124.0",
 )
 _UA_CYCLE = itertools.cycle(_UA_POOL)
+
+_BROWSER_UA = random.choice(_UA_POOL)
+
+_CLIENT = httpx.Client(
+    timeout=20.0,
+    follow_redirects=True,
+    headers={
+        "User-Agent": _BROWSER_UA,
+        "Accept": "application/atom+xml,application/rss+xml",
+    }
+)
 
 
 def _pick_ua() -> str:
@@ -208,7 +214,7 @@ def fetch_top_comments(permalink: str, *, limit: int = _COMMENT_LIMIT) -> list[s
         r = _CLIENT.get(
             url,
             params={"sort": "top", "limit": limit, "raw_json": 1},
-            headers={"User-Agent": _pick_ua()},
+            # headers={"User-Agent": _pick_ua()},
         )
         if r.status_code != 200:
             return []
@@ -280,7 +286,7 @@ def _fetch_entries(sub: str, *, direct_ok: bool = True) -> tuple[list[dict], str
         try:
             r = _CLIENT.get(
                 _DIRECT_TMPL.format(sub=sub),
-                headers={"User-Agent": _pick_ua()},
+                # headers={"User-Agent": _pick_ua()},
             )
             if r.status_code == 200:
                 parsed = feedparser.parse(r.content)
@@ -301,7 +307,7 @@ def _fetch_entries(sub: str, *, direct_ok: bool = True) -> tuple[list[dict], str
     try:
         r = _CLIENT.get(
             _GNEWS_TMPL.format(sub=sub),
-            headers={"User-Agent": _BROWSER_UA},
+            # headers={"User-Agent": _BROWSER_UA},
         )
         if r.status_code == 200:
             parsed = feedparser.parse(r.content)
